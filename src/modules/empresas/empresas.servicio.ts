@@ -3,7 +3,7 @@ import { CODIGO_PG, esErrorPg } from '../../db/pool.js';
 import { errores } from '../../shared/errores.js';
 import { type CambiosEmpresa, MENSAJE_HORARIO } from './empresas.esquemas.js';
 import * as repositorio from './empresas.repositorio.js';
-import type { AlmacenFotos } from './fotos.js';
+import { type AlmacenFotos, urlFoto } from './fotos.js';
 import type { FilaEmpresa, FilaPerfilEmpresa } from './empresas.repositorio.js';
 
 const CODIGO_VALIDO = /^[A-Z0-9_-]{1,32}$/;
@@ -15,7 +15,7 @@ type Visibilidad = {
 };
 
 export const crearServicioEmpresas = ({ pool, fotos }: { pool: pg.Pool; fotos: AlmacenFotos }) => {
-  const armarNegocio = async (empresa: FilaEmpresa, { incluirUsuarios }: Visibilidad) => {
+  const armarNegocio = async (empresa: FilaEmpresa, { incluirUsuarios }: Visibilidad, urlBase: string) => {
     const [barberos, servicios] = await Promise.all([
       repositorio.listarBarberos(pool, empresa.id),
       repositorio.listarServicios(pool, empresa.id),
@@ -41,7 +41,7 @@ export const crearServicioEmpresas = ({ pool, fotos }: { pool: pg.Pool; fotos: A
         especialidad: b.especialidad ?? '',
         equipo: `${empresa.nombre} TEAM`,
         porcentajeGanancia: Number(b.porcentaje_ganancia),
-        foto: b.foto_url ?? undefined,
+        foto: urlFoto(urlBase, b.foto_url) ?? undefined,
       })),
       servicios: servicios.map((s) => ({
         id: s.id,
@@ -54,20 +54,20 @@ export const crearServicioEmpresas = ({ pool, fotos }: { pool: pg.Pool; fotos: A
 
   return {
     // Vista pública para clientes que reservan con el código del negocio
-    async negocioPorCodigo(codigo: string) {
+    async negocioPorCodigo(codigo: string, urlBase: string) {
       const limpio = codigo.trim().toUpperCase();
       const empresa = CODIGO_VALIDO.test(limpio)
         ? await repositorio.buscarEmpresaPorCodigo(pool, limpio)
         : undefined;
       if (!empresa) throw errores.noEncontrado('Establecimiento no encontrado');
-      return armarNegocio(empresa, { incluirUsuarios: false });
+      return armarNegocio(empresa, { incluirUsuarios: false }, urlBase);
     },
 
     // Vista para el personal con sesión iniciada: su propio negocio
-    async negocioDeSesion(empresaId: string) {
+    async negocioDeSesion(empresaId: string, urlBase: string) {
       const empresa = await repositorio.buscarEmpresaPorId(pool, empresaId);
       if (!empresa) throw errores.noEncontrado('Establecimiento no encontrado');
-      return armarNegocio(empresa, { incluirUsuarios: true });
+      return armarNegocio(empresa, { incluirUsuarios: true }, urlBase);
     },
 
     // Información del negocio para clientes: sin NIT, datos internos ni suscripción.
@@ -110,7 +110,7 @@ export const crearServicioEmpresas = ({ pool, fotos }: { pool: pg.Pool; fotos: A
         throw errores.noEncontrado('Establecimiento no encontrado');
       }
       await fotos.borrar(cambio.foto_anterior);
-      return { mensaje: 'Foto del negocio actualizada', fotoUrl: urlCompleta(urlBase, ruta) };
+      return { mensaje: 'Foto del negocio actualizada', fotoUrl: urlFoto(urlBase, ruta) };
     },
 
     // Días de prueba gratuita que le quedan a la empresa (null si no está en prueba)
@@ -130,9 +130,6 @@ export const crearServicioEmpresas = ({ pool, fotos }: { pool: pg.Pool; fotos: A
 // "08:00:00" de la base → "08:00" como lo usa la app
 const horaCorta = (hora: string) => String(hora).slice(0, 5);
 
-// La base guarda "/uploads/empresas/<archivo>"; la app necesita la dirección completa
-const urlCompleta = (urlBase: string, ruta: string | null) => (ruta ? `${urlBase}${ruta}` : null);
-
 const armarPerfilPublico = (p: FilaPerfilEmpresa, urlBase: string) => ({
   id: p.id,
   nombre: p.nombre,
@@ -146,7 +143,7 @@ const armarPerfilPublico = (p: FilaPerfilEmpresa, urlBase: string) => ({
   horarioApertura: horaCorta(p.horario_apertura),
   horarioCierre: horaCorta(p.horario_cierre),
   logoUrl: p.logo_url,
-  fotoUrl: urlCompleta(urlBase, p.foto_url),
+  fotoUrl: urlFoto(urlBase, p.foto_url),
   colorPrimario: p.color_primario,
   colorSecundario: p.color_secundario,
 });
@@ -167,7 +164,7 @@ const armarPerfil = (p: FilaPerfilEmpresa, urlBase: string) => ({
   nombreAdministradora: p.nombre_administradora,
   numeroEmpleados: p.numero_empleados,
   logoUrl: p.logo_url,
-  fotoUrl: urlCompleta(urlBase, p.foto_url),
+  fotoUrl: urlFoto(urlBase, p.foto_url),
   colorPrimario: p.color_primario,
   colorSecundario: p.color_secundario,
   estadoSuscripcion: p.estado_suscripcion,

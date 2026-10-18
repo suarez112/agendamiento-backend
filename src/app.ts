@@ -5,16 +5,29 @@ import type { Entorno } from './config/entorno.js';
 import { crearRutasAuth } from './modules/auth/auth.rutas.js';
 import { crearServicioAuth } from './modules/auth/auth.servicio.js';
 import { crearGuardias } from './modules/auth/guardias.js';
+import { crearPermisos } from './modules/auth/permisos.js';
 import { crearServicioTokens } from './modules/auth/tokens.js';
+import { crearRutasBloqueos } from './modules/bloqueos/bloqueos.rutas.js';
+import { crearServicioBloqueos } from './modules/bloqueos/bloqueos.servicio.js';
+import { crearRutasCartera } from './modules/cartera/cartera.rutas.js';
+import { crearServicioCartera } from './modules/cartera/cartera.servicio.js';
 import { crearRutasCitas } from './modules/citas/citas.rutas.js';
 import { crearServicioCitas } from './modules/citas/citas.servicio.js';
+import { crearRutasClientes } from './modules/clientes/clientes.rutas.js';
+import { crearServicioClientes } from './modules/clientes/clientes.servicio.js';
 import { crearRutasCuentas } from './modules/cuentas/cuentas.rutas.js';
 import { crearServicioCuentas } from './modules/cuentas/cuentas.servicio.js';
 import { crearGuardiasCuenta } from './modules/cuentas/cuentas.guardias.js';
 import { crearRutasAdminEmpresa, crearRutasEmpresas } from './modules/empresas/empresas.rutas.js';
 import { crearServicioEmpresas } from './modules/empresas/empresas.servicio.js';
-import { crearAlmacenFotos, crearUrlBase, PREFIJO_FOTOS } from './modules/empresas/fotos.js';
+import { crearAlmacenesFotos, crearUrlBase, PREFIJO_SUBIDAS } from './modules/empresas/fotos.js';
 import { crearGuardiaSuscripcion } from './modules/empresas/suscripcion.js';
+import { crearRutasEquipo } from './modules/equipo/equipo.rutas.js';
+import { crearServicioEquipo } from './modules/equipo/equipo.servicio.js';
+import { crearRutasProductos } from './modules/productos/productos.rutas.js';
+import { crearServicioProductos } from './modules/productos/productos.servicio.js';
+import { crearRutasServicios } from './modules/servicios/servicios.rutas.js';
+import { crearServicioServicios } from './modules/servicios/servicios.servicio.js';
 import { crearCors } from './shared/http/cors.js';
 import { type ConfigLimites, crearLimitadores, LIMITES_POR_DEFECTO } from './shared/http/limitadores.js';
 import { manejadorErrores, rutaNoEncontrada } from './shared/http/manejadorErrores.js';
@@ -35,9 +48,10 @@ export const crearApp = ({ pool, entorno, limites = LIMITES_POR_DEFECTO }: Depen
   const cuentas = crearServicioCuentas({ pool, tokens });
   const guardiasCuenta = crearGuardiasCuenta(cuentas);
   const suscripcion = crearGuardiaSuscripcion({ pool });
-  const fotos = crearAlmacenFotos(entorno.CARPETA_SUBIDAS);
+  const permisos = crearPermisos(guardias, suscripcion);
+  const fotos = crearAlmacenesFotos(entorno.CARPETA_SUBIDAS);
   const urlBase = crearUrlBase(entorno.URL_PUBLICA);
-  const empresas = crearServicioEmpresas({ pool, fotos });
+  const empresas = crearServicioEmpresas({ pool, fotos: fotos.empresas });
   const limitadores = crearLimitadores(limites);
 
   const app = express();
@@ -47,10 +61,10 @@ export const crearApp = ({ pool, entorno, limites = LIMITES_POR_DEFECTO }: Depen
   app.use(express.json({ limit: '10kb' }));
   app.use('/api', limitadores.general);
 
-  // Fotos subidas. Los nombres son aleatorios y nunca se reutilizan, así que se
+  // Fotos subidas (empresas, equipo y productos). Los nombres son aleatorios y nunca se reutilizan, así que se
   // pueden guardar en caché. Cross-origin permite mostrarlas en la app web.
   app.use(
-    PREFIJO_FOTOS,
+    PREFIJO_SUBIDAS,
     express.static(fotos.carpeta, {
       index: false,
       dotfiles: 'deny',
@@ -80,6 +94,16 @@ export const crearApp = ({ pool, entorno, limites = LIMITES_POR_DEFECTO }: Depen
   app.use('/api/v1/empresas', crearRutasEmpresas(empresas, guardias, limitadores, urlBase));
   app.use('/api/v1/admin/empresa', crearRutasAdminEmpresa(empresas, guardiasCuenta, suscripcion, urlBase));
   app.use('/api/v1/citas', crearRutasCitas(crearServicioCitas({ pool }), guardias, suscripcion, limitadores));
+  // Gestión del negocio: personal (barberos) o la cuenta del administrador de la empresa
+  app.use('/api/v1/clientes', crearRutasClientes(crearServicioClientes({ pool }), permisos));
+  app.use('/api/v1/equipo', crearRutasEquipo(crearServicioEquipo({ pool, fotos: fotos.barberos }), permisos, urlBase));
+  app.use('/api/v1/servicios', crearRutasServicios(crearServicioServicios({ pool }), permisos));
+  app.use(
+    '/api/v1/productos',
+    crearRutasProductos(crearServicioProductos({ pool, fotos: fotos.productos }), permisos, limitadores, urlBase),
+  );
+  app.use('/api/v1/bloqueos', crearRutasBloqueos(crearServicioBloqueos({ pool }), permisos));
+  app.use('/api/v1/cartera', crearRutasCartera(crearServicioCartera({ pool }), permisos));
 
   app.use(rutaNoEncontrada);
   app.use(manejadorErrores);

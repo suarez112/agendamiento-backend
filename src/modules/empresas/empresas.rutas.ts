@@ -17,7 +17,7 @@ export const crearRutasEmpresas = (
   const rutas = Router();
 
   rutas.get('/validar/:codigo', limitadores.codigoNegocio, async (req, res) => {
-    res.json(await empresas.negocioPorCodigo(String(req.params.codigo)));
+    res.json(await empresas.negocioPorCodigo(String(req.params.codigo), urlBase(req)));
   });
 
   // Información del negocio con su foto, para los clientes (público)
@@ -25,8 +25,9 @@ export const crearRutasEmpresas = (
     res.json(await empresas.perfilPublico(String(req.params.codigo), urlBase(req)));
   });
 
-  rutas.get('/actual', guardias.requerirSesion, async (_req, res) => {
-    res.json(await empresas.negocioDeSesion(sesionDe(res).empresaId));
+  // Personal o cuenta del administrador de la empresa
+  rutas.get('/actual', guardias.requerirSesion, async (req, res) => {
+    res.json(await empresas.negocioDeSesion(sesionDe(res).empresaId, urlBase(req)));
   });
 
   return rutas;

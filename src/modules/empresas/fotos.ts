@@ -7,19 +7,22 @@ import multer from 'multer';
 import { ErrorApp, errores } from '../../shared/errores.js';
 import { registro } from '../../shared/registro.js';
 
-// Fotos de las empresas: se guardan en <CARPETA_SUBIDAS>/empresas con un nombre
-// aleatorio y la base solo guarda su ruta pública (/uploads/empresas/<archivo>).
+// Fotos subidas (empresas, equipo y productos): se guardan en
+// <CARPETA_SUBIDAS>/<tipo> con un nombre aleatorio y la base solo guarda su ruta
+// pública (/uploads/<tipo>/<archivo>).
 
-export const PREFIJO_FOTOS = '/uploads/empresas';
+export const PREFIJO_SUBIDAS = '/uploads';
 export const MAX_BYTES_FOTO = 5 * 1024 * 1024;
+
+export type TipoFoto = 'empresas' | 'barberos' | 'productos';
 
 const MENSAJE_TIPO = 'La foto debe ser una imagen JPG, PNG o WEBP';
 const MENSAJE_TAMANO = 'La foto no puede pesar más de 5 MB';
 const MENSAJE_CAMPO = 'Envía la imagen en el campo "foto" (multipart/form-data)';
 
 const TIPOS_PERMITIDOS = new Set(['image/jpeg', 'image/png', 'image/webp']);
-// Igual que la restricción empresas_foto_url_valida de la migración 004
-const RUTA_FOTO = /^\/uploads\/empresas\/([a-f0-9-]{36}\.(jpg|png|webp))$/;
+// Para empresas, igual que la restricción empresas_foto_url_valida de la migración 004
+const rutaFoto = (tipo: TipoFoto) => new RegExp(`^${PREFIJO_SUBIDAS}/${tipo}/([a-f0-9-]{36}\\.(jpg|png|webp))$`);
 
 type Extension = 'jpg' | 'png' | 'webp';
 
@@ -40,9 +43,11 @@ const extensionPorContenido = (datos: Buffer): Extension | undefined => {
   return undefined;
 };
 
-export const crearAlmacenFotos = (carpetaSubidas: string) => {
-  const carpeta = resolve(carpetaSubidas, 'empresas');
+export const crearAlmacenFotos = (carpetaSubidas: string, tipo: TipoFoto) => {
+  const carpeta = resolve(carpetaSubidas, tipo);
   mkdirSync(carpeta, { recursive: true });
+  const prefijo = `${PREFIJO_SUBIDAS}/${tipo}`;
+  const RUTA_FOTO = rutaFoto(tipo);
 
   return {
     carpeta,
@@ -53,10 +58,11 @@ export const crearAlmacenFotos = (carpetaSubidas: string) => {
       if (!extension) throw errores.solicitudInvalida(MENSAJE_TIPO);
       const archivo = `${randomUUID()}.${extension}`;
       await writeFile(join(carpeta, archivo), datos, { flag: 'wx' });
-      return `${PREFIJO_FOTOS}/${archivo}`;
+      return `${prefijo}/${archivo}`;
     },
 
     // Borra una foto anterior. Si falla, solo queda en el log: la foto nueva ya está guardada.
+    // Ignora rutas que no sean de esta carpeta (ej. direcciones web antiguas del equipo).
     async borrar(ruta: string | null | undefined) {
       const archivo = ruta ? RUTA_FOTO.exec(ruta)?.[1] : undefined;
       if (!archivo) return;
@@ -115,3 +121,20 @@ export const crearUrlBase = (urlPublica: string | undefined) => (req: Request) =
   urlPublica ?? `${req.protocol}://${req.get('host')}`;
 
 export type UrlBase = ReturnType<typeof crearUrlBase>;
+
+// La base guarda "/uploads/<tipo>/<archivo>"; la app necesita la dirección completa.
+// Las fotos antiguas del equipo pueden ser direcciones web completas: se devuelven tal cual.
+export const urlFoto = (urlBase: string, ruta: string | null | undefined) => {
+  if (!ruta) return null;
+  return ruta.startsWith(`${PREFIJO_SUBIDAS}/`) ? `${urlBase}${ruta}` : ruta;
+};
+
+// Todas las carpetas de fotos, listas para usar en los servicios
+export const crearAlmacenesFotos = (carpetaSubidas: string) => ({
+  carpeta: resolve(carpetaSubidas),
+  empresas: crearAlmacenFotos(carpetaSubidas, 'empresas'),
+  barberos: crearAlmacenFotos(carpetaSubidas, 'barberos'),
+  productos: crearAlmacenFotos(carpetaSubidas, 'productos'),
+});
+
+export type AlmacenesFotos = ReturnType<typeof crearAlmacenesFotos>;

@@ -1,0 +1,47 @@
+import { Router } from 'express';
+import { z } from 'zod';
+import { conAlMenosUnDato, esquemaId, precio, texto } from '../../shared/http/esquemas.js';
+import { parsear } from '../../shared/http/validacion.js';
+import { sesionDe } from '../auth/guardias.js';
+import type { Permisos } from '../auth/permisos.js';
+import type { ServicioServicios } from './servicios.servicio.js';
+
+const MENSAJE_DURACION = 'La duración debe ser un número entero de minutos entre 1 y 1440';
+
+const esquemaServicio = z.object(
+  {
+    nombre: texto('nombre', 100),
+    duracionMin: z.number({ error: MENSAJE_DURACION }).int(MENSAJE_DURACION).min(1, MENSAJE_DURACION).max(1440, MENSAJE_DURACION),
+    precio: precio('precio'),
+  },
+  { error: 'Envía los datos del servicio' },
+);
+
+const esquemaCambios = conAlMenosUnDato(esquemaServicio.partial());
+const esquemaIdServicio = esquemaId('Identificador de servicio inválido');
+
+// Servicios del negocio de la sesión. Ver: todo el equipo; cambiar: solo administradores.
+export const crearRutasServicios = (servicios: ServicioServicios, permisos: Permisos) => {
+  const rutas = Router();
+
+  rutas.get('/', ...permisos.personal, async (_req, res) => {
+    res.json(await servicios.listar(sesionDe(res).empresaId));
+  });
+
+  rutas.post('/', ...permisos.admin, async (req, res) => {
+    const datos = parsear(esquemaServicio, req.body);
+    res.status(201).json(await servicios.crear(sesionDe(res).empresaId, datos));
+  });
+
+  rutas.patch('/:id', ...permisos.admin, async (req, res) => {
+    const { id } = parsear(esquemaIdServicio, req.params);
+    res.json(await servicios.actualizar(sesionDe(res).empresaId, id, parsear(esquemaCambios, req.body)));
+  });
+
+  rutas.delete('/:id', ...permisos.admin, async (req, res) => {
+    const { id } = parsear(esquemaIdServicio, req.params);
+    res.json(await servicios.borrar(sesionDe(res).empresaId, id));
+  });
+
+  return rutas;
+};
