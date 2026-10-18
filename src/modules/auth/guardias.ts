@@ -1,14 +1,18 @@
-import type { RequestHandler, Response } from 'express';
+import type { Request, RequestHandler, Response } from 'express';
 import { errores } from '../../shared/errores.js';
 import type { Sesion, ServicioAuth } from './auth.servicio.js';
+
+// Token enviado como "Authorization: Bearer <token>"
+export const tokenDe = (req: Request): string | undefined => {
+  const encabezado = req.headers.authorization;
+  return encabezado?.startsWith('Bearer ') ? encabezado.slice(7) : undefined;
+};
 
 // Middlewares de permisos. Los datos del negocio y del barbero salen siempre
 // de la sesión, nunca de lo que envíe la app.
 export const crearGuardias = (auth: ServicioAuth) => {
   const requerirSesion: RequestHandler = async (req, res, next) => {
-    const encabezado = req.headers.authorization;
-    const token = encabezado?.startsWith('Bearer ') ? encabezado.slice(7) : undefined;
-    res.locals.sesion = await auth.validarSesion(token);
+    res.locals.sesion = await auth.validarSesion(tokenDe(req));
     next();
   };
 

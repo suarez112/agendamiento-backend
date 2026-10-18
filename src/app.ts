@@ -8,6 +8,8 @@ import { crearGuardias } from './modules/auth/guardias.js';
 import { crearServicioTokens } from './modules/auth/tokens.js';
 import { crearRutasCitas } from './modules/citas/citas.rutas.js';
 import { crearServicioCitas } from './modules/citas/citas.servicio.js';
+import { crearRutasCuentas } from './modules/cuentas/cuentas.rutas.js';
+import { crearServicioCuentas } from './modules/cuentas/cuentas.servicio.js';
 import { crearRutasEmpresas } from './modules/empresas/empresas.rutas.js';
 import { crearServicioEmpresas } from './modules/empresas/empresas.servicio.js';
 import { crearCors } from './shared/http/cors.js';
@@ -27,6 +29,8 @@ export const crearApp = ({ pool, entorno, limites = LIMITES_POR_DEFECTO }: Depen
   const tokens = crearServicioTokens(entorno.JWT_SECRET, entorno.JWT_EXPIRA_EN);
   const auth = crearServicioAuth({ pool, tokens });
   const guardias = crearGuardias(auth);
+  const cuentas = crearServicioCuentas({ pool, tokens });
+  const empresas = crearServicioEmpresas({ pool });
   const limitadores = crearLimitadores(limites);
 
   const app = express();
@@ -51,7 +55,8 @@ export const crearApp = ({ pool, entorno, limites = LIMITES_POR_DEFECTO }: Depen
   });
 
   app.use('/api/v1/auth', crearRutasAuth(auth, limitadores));
-  app.use('/api/v1/empresas', crearRutasEmpresas(crearServicioEmpresas({ pool }), guardias, limitadores));
+  app.use('/api/v1/cuentas', crearRutasCuentas(cuentas, limitadores));
+  app.use('/api/v1/empresas', crearRutasEmpresas(empresas, guardias, limitadores));
   app.use('/api/v1/citas', crearRutasCitas(crearServicioCitas({ pool }), guardias, limitadores));
 
   app.use(rutaNoEncontrada);

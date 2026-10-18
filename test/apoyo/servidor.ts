@@ -16,6 +16,7 @@ const LIMITES_PRUEBA: ConfigLimites = {
   login: 1_000,
   codigoNegocio: 1_000,
   reservas: 1_000,
+  registro: 1_000,
 };
 
 export type Contexto = { url: string; pool: pg.Pool; cerrar: () => Promise<void> };
@@ -116,6 +117,34 @@ export const iniciarSesion = async (ctx: Contexto, usuario: string, clave: strin
   if (r.estado !== 200) throw new Error(`Login de ${usuario} falló con ${r.estado}`);
   return r.json.token;
 };
+
+// Datos completos para registrar una empresa con su administrador
+export const empresaValida = (cambios: Record<string, unknown> = {}) => ({
+  nombre: 'Barbería Central',
+  categoria: 'Barbería',
+  nit: '900123456-7',
+  telefono: '3001234567',
+  correo: 'admin@central.co',
+  direccion: 'Calle 10 # 20-30',
+  ciudad: 'Bucaramanga',
+  diasAtencion: [1, 2, 3, 4, 5, 6],
+  horarioApertura: '08:00',
+  horarioCierre: '19:00',
+  nombreAdministradora: 'Ana Pérez',
+  numeroEmpleados: 4,
+  logoUrl: 'https://cdn.central.co/logo.png',
+  clave: 'clave-segura-123',
+  ...cambios,
+});
+
+export const registrarEmpresa = (ctx: Contexto, cambios: Record<string, unknown> = {}) =>
+  pedir(ctx, '/api/v1/cuentas/registro/empresa', { method: 'POST', body: empresaValida(cambios) });
+
+export const registrarCliente = (ctx: Contexto, correo: unknown, clave: unknown) =>
+  pedir(ctx, '/api/v1/cuentas/registro/cliente', { method: 'POST', body: { correo, clave } });
+
+export const iniciarSesionCuenta = (ctx: Contexto, correo: unknown, clave: unknown) =>
+  pedir(ctx, '/api/v1/cuentas/login', { method: 'POST', body: { correo, clave } });
 
 export const reservaValida = (cambios: Record<string, unknown> = {}) => ({
   empresaId: 'emp_a',

@@ -9,6 +9,7 @@ export type ConfigLimites = {
   login: number; // solo cuentan los intentos fallidos
   codigoNegocio: number;
   reservas: number;
+  registro: number; // empresas y cuentas nuevas
 };
 
 export const LIMITES_POR_DEFECTO: ConfigLimites = {
@@ -17,6 +18,7 @@ export const LIMITES_POR_DEFECTO: ConfigLimites = {
   login: 10,
   codigoNegocio: 60,
   reservas: 20,
+  registro: 10,
 };
 
 const limitar = (ventanaMs: number, limite: number, mensaje: string, soloFallidos = false) =>
@@ -41,6 +43,7 @@ export const crearLimitadores = (c: ConfigLimites) => ({
   ),
   codigoNegocio: limitar(c.ventanaMs, c.codigoNegocio, 'Demasiados intentos. Intenta de nuevo en unos minutos.'),
   reservas: limitar(c.ventanaMs, c.reservas, 'Demasiadas reservas seguidas. Intenta de nuevo en unos minutos.'),
+  registro: limitar(c.ventanaMs, c.registro, 'Demasiados registros seguidos. Intenta de nuevo en unos minutos.'),
 });
 
 export type Limitadores = ReturnType<typeof crearLimitadores>;
