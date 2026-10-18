@@ -1,5 +1,6 @@
 -- Registro de empresas: perfil del negocio, periodo de prueba y roles de usuario.
--- Solo agrega columnas, una tabla y restricciones; los datos actuales no cambian.
+-- Solo agrega columnas, una tabla, restricciones y la normalización del NIT;
+-- los datos actuales no cambian.
 -- La hora de apertura y cierre reutiliza empresas.horario_apertura / horario_cierre
 -- y la fecha de creación reutiliza empresas.created_at (ya existen).
 
@@ -24,9 +25,21 @@ ALTER TABLE empresas
 
 ALTER TABLE empresas ALTER COLUMN estado_suscripcion SET DEFAULT 'trial';
 
+-- true si el arreglo no tiene elementos repetidos (un CHECK no admite subconsultas).
+-- Ignora los NULL: de esos se encarga empresas_dias_atencion_validos.
+CREATE FUNCTION sin_repetidos(arreglo anyarray) RETURNS boolean
+  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
+    SELECT count(DISTINCT x) = count(x) FROM unnest(arreglo) AS x
+  $$;
+
 ALTER TABLE empresas
   ADD CONSTRAINT empresas_estado_suscripcion_valido
     CHECK (estado_suscripcion IN ('trial', 'activa', 'vencida', 'cancelada')),
+  -- Una empresa en prueba siempre sabe cuándo termina su prueba
+  ADD CONSTRAINT empresas_trial_con_fecha_fin
+    CHECK (estado_suscripcion <> 'trial' OR trial_ends_at IS NOT NULL),
+  ADD CONSTRAINT empresas_dias_atencion_sin_repetir
+    CHECK (dias_atencion IS NULL OR sin_repetidos(dias_atencion)),
   ADD CONSTRAINT empresas_dias_atencion_validos
     CHECK (
       dias_atencion IS NULL
@@ -40,6 +53,20 @@ ALTER TABLE empresas
     CHECK (correo IS NULL OR correo ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$'),
   ADD CONSTRAINT empresas_logo_url_valida
     CHECK (logo_url IS NULL OR logo_url ~ '^https?://');
+
+-- El NIT se guarda sin guiones ni espacios; si queda vacío se guarda NULL.
+-- Así "900123456-7" y "900 123 456 7" son el mismo NIT.
+CREATE FUNCTION empresas_normalizar_nit() RETURNS trigger
+  LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.nit := NULLIF(regexp_replace(NEW.nit, '[\s-]', '', 'g'), '');
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER empresas_normalizar_nit
+  BEFORE INSERT OR UPDATE OF nit ON empresas
+  FOR EACH ROW EXECUTE FUNCTION empresas_normalizar_nit();
 
 -- El NIT es opcional, pero dos empresas no pueden tener el mismo
 CREATE UNIQUE INDEX empresas_nit_key ON empresas (nit) WHERE nit IS NOT NULL;

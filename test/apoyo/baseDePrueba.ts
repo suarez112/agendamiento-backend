@@ -40,6 +40,8 @@ const sembrar = async (pool: pg.Pool) => {
   `);
 };
 
+const VERSION_SEMILLA = '002';
+
 export type BaseDePrueba = { nombre: string; pool: pg.Pool; destruir: () => Promise<void> };
 
 // Crea una base temporal, la migra y la llena; destruir() la elimina
@@ -64,8 +66,12 @@ export const crearBaseDePrueba = async (opciones: { hasta?: string } = {}): Prom
 
   await conAdmin(`CREATE DATABASE "${nombre}"`);
   const pool = crearPool({ ...entornoDb, DB_NAME: nombre });
-  await aplicarMigraciones(pool, opciones);
+  // Los datos sembrados son negocios que ya existían antes del registro de
+  // empresas (003): se insertan con el esquema 002 y luego se migra el resto.
+  const hastaSemilla = opciones.hasta && opciones.hasta < VERSION_SEMILLA ? opciones.hasta : VERSION_SEMILLA;
+  await aplicarMigraciones(pool, { hasta: hastaSemilla });
   await sembrar(pool);
+  await aplicarMigraciones(pool, opciones);
 
   return {
     nombre,

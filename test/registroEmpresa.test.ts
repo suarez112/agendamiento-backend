@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
-import { aplicarMigraciones } from '../src/db/migraciones.js';
 import { type BaseDePrueba, crearBaseDePrueba } from './apoyo/baseDePrueba.js';
 
 // Migración 003: perfil de empresa, periodo de prueba y roles de usuario
@@ -8,8 +7,7 @@ describe('migración 003: registro de empresa', () => {
   let base: BaseDePrueba;
   before(async () => {
     // Las empresas sembradas existen antes de la 003, como en producción
-    base = await crearBaseDePrueba({ hasta: '002' });
-    await aplicarMigraciones(base.pool);
+    base = await crearBaseDePrueba();
   });
   after(() => base.destruir());
 
@@ -22,8 +20,10 @@ describe('migración 003: registro de empresa', () => {
     });
   };
 
+  // Empresa nueva en periodo de prueba (estado por defecto 'trial')
   const nuevaEmpresa = (id: string, columnas = '', valores = '') =>
-    `INSERT INTO empresas (id, nombre, codigo_acceso${columnas}) VALUES ('${id}', 'Empresa ${id}', '${id.toUpperCase()}'${valores})`;
+    `INSERT INTO empresas (id, nombre, codigo_acceso, trial_ends_at${columnas})
+     VALUES ('${id}', 'Empresa ${id}', '${id.toUpperCase()}', now() + interval '14 days'${valores})`;
 
   test('las empresas existentes conservan sus datos y quedan activas', async () => {
     const { rows } = await ejecutar(
@@ -56,6 +56,43 @@ describe('migración 003: registro de empresa', () => {
     await rechaza(nuevaEmpresa('e5', ', numero_empleados', ', 0'), 'empresas_numero_empleados_valido');
     await rechaza(nuevaEmpresa('e6', ', correo', ", 'sin-arroba'"), 'empresas_correo_valido');
     await rechaza(nuevaEmpresa('e7', ', logo_url', ", 'javascript:alert(1)'"), 'empresas_logo_url_valida');
+  });
+
+  test('ninguna empresa queda en prueba sin trial_ends_at', async () => {
+    await rechaza(
+      "INSERT INTO empresas (id, nombre, codigo_acceso) VALUES ('sin_fin', 'Sin fin', 'SINFIN')",
+      'empresas_trial_con_fecha_fin',
+    );
+    await rechaza(
+      "INSERT INTO empresas (id, nombre, codigo_acceso, estado_suscripcion, trial_ends_at) VALUES ('nula', 'Nula', 'NULA', 'trial', NULL)",
+      'empresas_trial_con_fecha_fin',
+    );
+    await rechaza("UPDATE empresas SET estado_suscripcion = 'trial' WHERE id = 'emp_a'", 'empresas_trial_con_fecha_fin');
+    await ejecutar(nuevaEmpresa('en_prueba'));
+    await rechaza("UPDATE empresas SET trial_ends_at = NULL WHERE id = 'en_prueba'", 'empresas_trial_con_fecha_fin');
+    // Al pasar a activa ya no necesita fecha de fin
+    await ejecutar("UPDATE empresas SET estado_suscripcion = 'activa', trial_ends_at = NULL WHERE id = 'en_prueba'");
+  });
+
+  test('los días de atención no se repiten', async () => {
+    await rechaza(nuevaEmpresa('dias_rep', ', dias_atencion', ", '{1,1}'"), 'empresas_dias_atencion_sin_repetir');
+    await rechaza(nuevaEmpresa('dias_rep2', ', dias_atencion', ", '{1,2,3,2}'"), 'empresas_dias_atencion_sin_repetir');
+    await ejecutar(nuevaEmpresa('dias_ok', ', dias_atencion', ", '{0,1,2,3,4,5,6}'"));
+  });
+
+  test('el NIT se guarda sin guiones ni espacios y vacío queda nulo', async () => {
+    const nitDe = async (id: string) =>
+      (await ejecutar('SELECT nit FROM empresas WHERE id = $1', [id])).rows[0].nit as string | null;
+    await ejecutar(nuevaEmpresa('nit_formato', ', nit', ", ' 901 234-567-8 '"));
+    assert.equal(await nitDe('nit_formato'), '9012345678');
+    await ejecutar(nuevaEmpresa('nit_vacio', ', nit', ", ''"));
+    assert.equal(await nitDe('nit_vacio'), null);
+    await ejecutar(nuevaEmpresa('nit_solo_simbolos', ', nit', ", ' - - '"));
+    assert.equal(await nitDe('nit_solo_simbolos'), null);
+    await ejecutar("UPDATE empresas SET nit = '811-222 333' WHERE id = 'nit_vacio'");
+    assert.equal(await nitDe('nit_vacio'), '811222333');
+    // Con y sin guion es el mismo NIT
+    await rechaza(nuevaEmpresa('nit_igual', ', nit', ", '901234567-8'"), 'empresas_nit_key');
   });
 
   test('el NIT es opcional pero no se repite', async () => {
