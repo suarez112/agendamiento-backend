@@ -86,4 +86,6 @@ Cada módulo separa **rutas** (HTTP y validación), **servicio** (reglas de nego
 | GET | `/api/v1/admin/empresa` | cuenta admin, suscripción vigente |
 | PATCH | `/api/v1/admin/empresa` | cuenta admin, suscripción vigente |
 
+La cuenta del administrador de la empresa también usa los endpoints del personal. Gestión del negocio (`/api/v1/clientes`, `/equipo`, `/servicios`, `/productos`, `/bloqueos`, `/cartera`) y fotos: ver `AGENTS.md`.
+
 Datos que recibe y responde cada endpoint de cuentas y administración: ver `AGENTS.md`.

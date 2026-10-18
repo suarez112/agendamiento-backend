@@ -13,7 +13,7 @@ src/
   config/entorno.ts  variables de entorno validadas con zod
   db/                pool, migraciones (migrar.ts) y scripts de mantenimiento
   shared/            errores, logs JSON, middlewares HTTP (CORS, límites, validación, errores)
-  modules/<modulo>/  auth, cuentas, empresas, citas: <m>.rutas.ts (HTTP + zod) → <m>.servicio.ts (reglas) → <m>.repositorio.ts (SQL)
+  modules/<modulo>/  auth, cuentas, empresas, citas, clientes, equipo, servicios, productos, bloqueos, cartera: <m>.rutas.ts (HTTP + zod) → <m>.servicio.ts (reglas) → <m>.repositorio.ts (SQL)
 db/migraciones/      SQL numerado NNN_nombre.sql; cada archivo en su propia transacción
 test/                node:test; cada archivo crea y borra su propia base temporal
 odd/tasks/           bitácoras de trabajo (specs, tareas, evidencia)
@@ -50,10 +50,11 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | GET | `/api/v1/empresas/validar/:codigo` | público, limitado |
 | GET | `/api/v1/empresas/perfil/:codigo` | público, limitado. Información del negocio con su foto, para clientes |
 | GET | `/api/v1/empresas/actual` | sesión del personal |
-| POST | `/api/v1/citas` | público, limitado |
+| POST | `/api/v1/citas` | público, limitado. 403 si el teléfono está en la lista negra; 409 si choca con un bloqueo |
 | GET | `/api/v1/citas/ocupadas?empresaId=` | público (sin datos de clientes) |
+| GET | `/api/v1/citas/bloqueos?empresaId=` | público. Horarios bloqueados del equipo (sin el motivo) |
 | GET | `/api/v1/citas/agenda` | sesión del personal (admin: todo el negocio; barbero: sus citas) |
-| PATCH | `/api/v1/citas/:id/completar` | sesión del personal, solo el profesional de la cita |
+| PATCH | `/api/v1/citas/:id/completar` | sesión del personal: el barbero de la cita, o la cuenta admin (cualquier cita del negocio) |
 | PATCH | `/api/v1/citas/:id/cancelar` | sesión del personal, solo admin del negocio, suscripción vigente (402 si no) |
 | POST | `/api/v1/cuentas/registro/empresa` | público, limitado. Crea empresa + administrador |
 | POST | `/api/v1/cuentas/registro/cliente` | público, limitado |
@@ -62,14 +63,41 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | GET | `/api/v1/admin/empresa` | cuenta admin, suscripción vigente |
 | PATCH | `/api/v1/admin/empresa` | cuenta admin, suscripción vigente |
 | PUT | `/api/v1/admin/empresa/foto` | cuenta admin, suscripción vigente. Sube o cambia la foto del negocio |
-| GET | `/uploads/empresas/<archivo>` | público. La imagen guardada (se usa la `fotoUrl` que devuelve la API) |
+| GET | `/api/v1/clientes` | personal admin, suscripción vigente. Clientes del negocio |
+| GET | `/api/v1/clientes/:id/historial` | personal admin, suscripción vigente |
+| GET | `/api/v1/clientes/lista-negra` | personal admin, suscripción vigente |
+| POST | `/api/v1/clientes/lista-negra` | personal admin, suscripción vigente |
+| DELETE | `/api/v1/clientes/lista-negra/:id` | personal admin, suscripción vigente |
+| GET | `/api/v1/equipo` | personal admin, suscripción vigente |
+| POST | `/api/v1/equipo` | personal admin, suscripción vigente |
+| PATCH | `/api/v1/equipo/:id` | personal admin, suscripción vigente |
+| DELETE | `/api/v1/equipo/:id` | personal admin, suscripción vigente |
+| PUT | `/api/v1/equipo/:id/foto` | personal admin, suscripción vigente |
+| GET | `/api/v1/servicios` | personal (cualquiera), suscripción vigente |
+| POST | `/api/v1/servicios` | personal admin, suscripción vigente |
+| PATCH | `/api/v1/servicios/:id` | personal admin, suscripción vigente |
+| DELETE | `/api/v1/servicios/:id` | personal admin, suscripción vigente |
+| GET | `/api/v1/productos/catalogo/:codigo` | público, limitado. Catálogo para clientes |
+| GET | `/api/v1/productos` | personal admin, suscripción vigente |
+| POST | `/api/v1/productos` | personal admin, suscripción vigente |
+| PATCH | `/api/v1/productos/:id` | personal admin, suscripción vigente |
+| DELETE | `/api/v1/productos/:id` | personal admin, suscripción vigente |
+| PUT | `/api/v1/productos/:id/foto` | personal admin, suscripción vigente |
+| DELETE | `/api/v1/productos/:id/foto` | personal admin, suscripción vigente |
+| GET | `/api/v1/bloqueos` | personal (admin: todo el equipo; barbero: los suyos), suscripción vigente |
+| POST | `/api/v1/bloqueos` | personal (admin: cualquier barbero; barbero: el suyo), suscripción vigente |
+| DELETE | `/api/v1/bloqueos/:id` | personal (admin: cualquiera; barbero: los suyos), suscripción vigente |
+| GET | `/api/v1/cartera?desde=&hasta=` | personal (admin: todo el negocio; barbero: lo suyo), suscripción vigente |
+| GET | `/uploads/empresas/<archivo>`, `/uploads/barberos/<archivo>`, `/uploads/productos/<archivo>` | público. La imagen guardada (se usa la dirección que devuelve la API) |
+
+"Sesión del personal" acepta **dos tokens**: el del barbero (`/api/v1/auth/login`) y el de la **cuenta del administrador de la empresa** (`/api/v1/cuentas/login`, `rol = admin`). La cuenta admin cuenta como administrador del negocio (`esAdmin`), siempre de su propia empresa. "Personal admin" = barbero con `esAdmin` o cuenta admin. Detalle en "Gestión del negocio".
 
 ### Contrato de cuentas, prueba gratuita y administración
 
-Hay dos tipos de sesión y sus tokens **no se mezclan** (usar uno en los endpoints del otro responde 401):
+Hay dos tipos de sesión:
 
-- **Personal** (`/api/v1/auth/login`, tabla `barberos`): sirve en `/empresas/actual` y `/citas/...`.
-- **Cuenta** (`/api/v1/cuentas/...`, tabla `usuarios`, `rol` = `admin` | `cliente`): sirve en `/api/v1/admin/...`.
+- **Personal** (`/api/v1/auth/login`, tabla `barberos`): sirve en `/empresas/actual`, `/citas/...` y los endpoints de gestión (`/clientes`, `/equipo`, `/servicios`, `/productos`, `/bloqueos`, `/cartera`). En `/api/v1/admin/...` responde 401.
+- **Cuenta** (`/api/v1/cuentas/...`, tabla `usuarios`, `rol` = `admin` | `cliente`): sirve en `/api/v1/admin/...`. La cuenta **admin** también sirve en todos los endpoints del personal, como administradora de su empresa. La de un **cliente** responde 403 `Esta función es solo para el personal del negocio.` en los endpoints del personal.
 
 Ambos se envían como `Authorization: Bearer <token>`.
 
@@ -174,9 +202,128 @@ Ambos se envían como `Authorization: Bearer <token>`.
   - `vencida`: `La suscripción de tu empresa venció. Renuévala para seguir usando las funciones de administrador.`
   - `cancelada`: `La suscripción de tu empresa está cancelada. Actívala para seguir usando las funciones de administrador.`
 
+### Gestión del negocio (personal y cuenta del administrador)
+
+Todos usan `Authorization: Bearer <token>` del barbero o de la cuenta admin. El negocio sale siempre de la sesión: nunca va en la URL ni en el cuerpo, y un `:id` de otro negocio responde 404.
+
+**Errores comunes de estos endpoints**
+
+- **401** `Sesión no válida. Inicia sesión de nuevo.` o `Sesión vencida. Inicia sesión de nuevo.`
+- **403** `Esta función es solo para el personal del negocio.` (token de cliente) o `Solo el administrador del negocio puede usar esta función.` (barbero sin `esAdmin` en un endpoint de admin).
+- **402**: prueba gratuita vencida o suscripción no vigente, con los mismos mensajes de `/api/v1/admin/...`. Aplica a todos estos endpoints (también a los barberos), menos a los públicos.
+- **400** `Envía al menos un dato para actualizar` en un `PATCH` sin campos, y el mensaje de validación del campo (ej. `El campo "nombre" es obligatorio`).
+
+**Fotos de equipo y productos**: `PUT .../foto` recibe `multipart/form-data` con un solo archivo en el campo `foto`, igual que la foto del negocio: JPG, PNG o WEBP (se comprueba por el contenido), máximo 5 MB. Errores **400** `La foto debe ser una imagen JPG, PNG o WEBP` o `Envía la imagen en el campo "foto" (multipart/form-data)`; **413** `La foto no puede pesar más de 5 MB`. La foto anterior se borra del servidor. Los archivos quedan en `<CARPETA_SUBIDAS>/barberos/` o `<CARPETA_SUBIDAS>/productos/`; la API devuelve la dirección completa (`https://…/uploads/barberos/<uuid>.jpg`). Las fotos antiguas del equipo que ya eran direcciones web se devuelven tal cual. `/empresas/actual` y `/empresas/validar/:codigo` también devuelven `foto` del equipo como dirección completa.
+
+#### Clientes (solo admin)
+
+**GET `/api/v1/clientes`**: **200** clientes del negocio, del más reciente al más antiguo:
+
+```json
+[{ "id": "…", "nombre": "Juan", "telefono": "3001234567", "indicativo": "57", "totalCitas": 4,
+   "fechaUltimaCita": "2026-10-10", "enListaNegra": false, "listaNegraId": null }]
+```
+
+**GET `/api/v1/clientes/:id/historial`**: **200** `{ "cliente": { …misma forma que la lista… }, "citas": [{ "id", "fecha": "2026-10-10", "hora": "03:30 PM", "servicio", "barberoId", "barberoNombre", "precio": 25000, "estado": "COMPLETADA" }] }`, citas de la más reciente a la más antigua. **404** `Cliente no encontrado`.
+
+**GET `/api/v1/clientes/lista-negra`**: **200** `[{ "id", "nombre", "telefono", "agregadoEn": "<fecha ISO>" }]`.
+
+**POST `/api/v1/clientes/lista-negra`**: recibe `{ "clienteId": "…" }` y guarda el nombre y teléfono de ese cliente. **201** `{ "mensaje": "Cliente agregado a la lista negra", "id", "nombre", "telefono", "agregadoEn" }`. Errores: **400** `Envía el identificador del cliente en "clienteId"`; **404** `Cliente no encontrado`; **409** `Este cliente ya está en la lista negra`.
+
+**DELETE `/api/v1/clientes/lista-negra/:id`** (`:id` = `id` de la lista negra, o `listaNegraId` del cliente): **200** `{ "mensaje": "Cliente quitado de la lista negra" }`. **404** `Ese registro no está en la lista negra`.
+
+Un teléfono de la lista negra (se comparan solo los dígitos) no puede reservar: `POST /api/v1/citas` responde **403** `No es posible agendar con este número. Comunícate con el negocio.`
+
+#### Equipo (solo admin)
+
+Forma de un profesional: `{ "id", "nombre", "usuario", "esAdmin": false, "especialidad": "Barbero" | null, "porcentajeGanancia": 50, "foto": "<url>" | null }`.
+
+**GET `/api/v1/equipo`**: **200** lista del equipo activo.
+
+**POST `/api/v1/equipo`**: recibe
+
+```jsonc
+{
+  "nombre": "Carlos",            // obligatorio, máx. 100
+  "usuario": "carlos.r",         // obligatorio, 3 a 60: letras, números, . _ -; único (sin distinguir mayúsculas)
+  "clave": "clave-segura",       // obligatorio, 8 a 64 caracteres; con ella entra en /api/v1/auth/login
+  "esAdmin": false,              // opcional, por defecto false
+  "especialidad": "Barbero",     // opcional (o null), máx. 100
+  "porcentajeGanancia": 50       // opcional, 0 a 100, por defecto 50
+}
+```
+
+**201** con el profesional. Errores: **400** validación (ej. `La contraseña debe tener entre 8 y 64 caracteres`); **409** `Ese usuario ya está en uso. Elige otro.`
+
+**PATCH `/api/v1/equipo/:id`**: uno o más campos del POST (`clave` cambia la contraseña; `especialidad: null` la quita). **200** con el profesional. Errores: **400** `No puedes quitarte a ti mismo el rol de administrador.`; **404** `Profesional no encontrado`; **409** usuario repetido.
+
+**DELETE `/api/v1/equipo/:id`**: **200** `{ "mensaje": "Profesional eliminado" }`. Ya no inicia sesión ni recibe reservas; sus citas pasadas y la cartera lo siguen mostrando. Errores: **400** `No puedes eliminar tu propio usuario.`; **404** `Profesional no encontrado`; **409** `Este profesional tiene N cita(s) pendiente(s). Cancélalas antes de eliminarlo.`
+
+**PUT `/api/v1/equipo/:id/foto`** (multipart, campo `foto`): **200** `{ "mensaje": "Foto del profesional actualizada", "foto": "<url>" }`. **404** `Profesional no encontrado`.
+
+#### Servicios
+
+Forma: `{ "id", "nombre", "duracionMin": 30, "duracion": "30 min", "precio": 25000 }`.
+
+**GET `/api/v1/servicios`** (cualquier personal): **200** servicios activos.
+
+**POST `/api/v1/servicios`** (admin): recibe `{ "nombre": "Corte", "duracionMin": 30, "precio": 25000 }`, todos obligatorios: `nombre` máx. 100; `duracionMin` entero de 1 a 1440; `precio` 0 o más, máximo 2 decimales. **201** con el servicio.
+
+**PATCH `/api/v1/servicios/:id`** (admin): uno o más de esos campos. **200** con el servicio. Las citas ya agendadas conservan su precio y duración. **404** `Servicio no encontrado`.
+
+**DELETE `/api/v1/servicios/:id`** (admin): **200** `{ "mensaje": "Servicio eliminado" }`. Deja de ofrecerse; las citas pasadas lo siguen mostrando. **404** `Servicio no encontrado`.
+
+#### Productos
+
+Forma: `{ "id", "nombre", "descripcion": "…" | null, "precio": 30000, "fotoUrl": "<url>" | null }`.
+
+**GET `/api/v1/productos/catalogo/:codigo`** (público, sin token; mismo código y límite por IP que `/empresas/validar/:codigo`): **200** productos del negocio (puede ser `[]`). **404** `Establecimiento no encontrado`; **429**.
+
+**GET `/api/v1/productos`** (admin): **200** productos del negocio.
+
+**POST `/api/v1/productos`** (admin): recibe `{ "nombre": "Cera", "precio": 30000, "descripcion": "Fijación fuerte" }`: `nombre` obligatorio (máx. 100), `precio` obligatorio (0 o más, máx. 2 decimales), `descripcion` opcional o null (máx. 500). **201** con el producto, sin foto. La foto (opcional) se agrega después con `PUT /productos/:id/foto`.
+
+**PATCH `/api/v1/productos/:id`** (admin): uno o más de esos campos (`descripcion: null` la quita). **200** con el producto. **404** `Producto no encontrado`.
+
+**DELETE `/api/v1/productos/:id`** (admin): **200** `{ "mensaje": "Producto eliminado" }`; también borra su foto. **404** `Producto no encontrado`.
+
+**PUT `/api/v1/productos/:id/foto`** (admin, multipart, campo `foto`): **200** `{ "mensaje": "Foto del producto actualizada", "fotoUrl": "<url>" }`. **404** `Producto no encontrado`.
+
+**DELETE `/api/v1/productos/:id/foto`** (admin): **200** `{ "mensaje": "Foto del producto eliminada", "fotoUrl": null }`. **404** `Producto no encontrado`.
+
+#### Bloqueos semanales de horario
+
+Un bloqueo se repite cada semana el mismo día (ej. almuerzo de los lunes). Forma: `{ "id", "barberoId", "barberoNombre", "diaSemana": 1, "horaInicio": "12:00", "horaFin": "13:00", "motivo": "Almuerzo" | null }`; `diaSemana`: 0 = domingo … 6 = sábado.
+
+**GET `/api/v1/bloqueos`** (personal): **200** lista. Un admin ve todo el equipo (opcional `?barberoId=` para filtrar); un barbero, solo los suyos.
+
+**POST `/api/v1/bloqueos`** (personal): recibe `{ "barberoId": "…", "diaSemana": 1, "horaInicio": "12:00", "horaFin": "13:00", "motivo": "Almuerzo" }`. Horas HH:MM de 24 h, fin posterior al inicio; `motivo` opcional (máx. 200). Un admin debe enviar `barberoId`; un barbero puede omitirlo (se usa el suyo). **201** con el bloqueo. Errores: **400** `Elige el profesional en "barberoId"` o `La hora de fin debe ser posterior a la hora de inicio`; **403** `Solo puedes bloquear tu propio horario.`; **404** `Profesional no encontrado`.
+
+**DELETE `/api/v1/bloqueos/:id`** (personal; un barbero solo los suyos): **200** `{ "mensaje": "Bloqueo eliminado" }`. **404** `Bloqueo no encontrado`.
+
+**GET `/api/v1/citas/bloqueos?empresaId=`** (público, para la pantalla de reservar): **200** `[{ "barberoId", "diaSemana": 1, "fecha": null, "horaInicio": "12:00", "horaFin": "13:00" }]`, sin motivo. `fecha` solo viene en bloqueos antiguos de un día puntual (entonces `diaSemana` es `null`). Una reserva que cae en un bloqueo responde **409** `El profesional no atiende en ese horario. Por favor elige otra hora.`
+
+#### Cartera
+
+**GET `/api/v1/cartera?desde=2026-10-01&hasta=2026-10-31`** (personal; admin: todo el negocio; barbero: solo lo suyo). Suma las citas **completadas** con fecha entre `desde` y `hasta` (incluidas). La ganancia de cada profesional usa su `porcentajeGanancia` actual; el negocio se queda con el resto.
+
+```json
+{
+  "desde": "2026-10-01", "hasta": "2026-10-31",
+  "totalCitas": 42, "totalVentas": 1050000, "gananciaEquipo": 525000, "gananciaNegocio": 525000,
+  "porProfesional": [
+    { "barberoId": "…", "nombre": "Carlos", "activo": true, "porcentajeGanancia": 50,
+      "citas": 20, "ventas": 500000, "ganancia": 250000 }
+  ]
+}
+```
+
+Errores: **400** `El campo "desde" es obligatorio`, `El campo "desde" debe ser una fecha real con el formato AAAA-MM-DD`, `La fecha "hasta" no puede ser anterior a "desde"` o `El rango no puede ser mayor que 366 días`.
+
 ## Autenticación y roles
 
-- Personal: login con `usuario` + `clave` contra `barberos` (bcrypt, costo 12). El token lleva `sub` (id del barbero) y `empresaId`. `requerirSesion` **lee `es_admin` de la base en cada solicitud**, así que un cambio de rol aplica de inmediato; `requerirAdmin` exige admin.
+- Personal: login con `usuario` + `clave` contra `barberos` activos (bcrypt, costo 12). El token lleva `sub` (id del barbero) y `empresaId`. `requerirSesion` **lee `es_admin` de la base en cada solicitud**, así que un cambio de rol aplica de inmediato; `requerirAdmin` exige admin. Un barbero eliminado (`activo = false`) pierde la sesión.
+- `requerirSesion` también acepta el token de una cuenta `admin`: la sesión queda con `usuarioId`, `barberoId: null`, la empresa de la cuenta y `esAdmin: true` (`src/modules/auth/auth.servicio.ts`). Si la cuenta completó o canceló una cita, queda en `citas.completada_por_usuario` / `cancelada_por_usuario` (migración 005). `crearPermisos` (`src/modules/auth/permisos.ts`) arma las guardias `personal` y `admin` de los módulos de gestión; ambas exigen suscripción vigente.
 - Cuentas: login con `correo` + `clave` contra `usuarios` (bcrypt, costo 12). El token lleva `sub` (id del usuario) y `tipo: "cuenta"`. `requerirCuenta` **lee `rol` y `empresa_id` de la base en cada solicitud**; `requerirAdminEmpresa` exige `rol = admin` con empresa (`src/modules/cuentas/cuentas.guardias.ts`).
 - Los tokens son JWT HS256 y duran `JWT_EXPIRA_EN`.
 - Prueba gratuita (15 días desde el registro): `requerirSuscripcionVigente` (`src/modules/empresas/suscripcion.ts`) va después de la guardia de admin en todo endpoint de administrador. Deja pasar `activa` y `trial` con `trial_ends_at` futuro; lo demás responde 402. Las empresas creadas antes de la 003 quedaron `activa`.
