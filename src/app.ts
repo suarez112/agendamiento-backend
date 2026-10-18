@@ -10,8 +10,10 @@ import { crearRutasCitas } from './modules/citas/citas.rutas.js';
 import { crearServicioCitas } from './modules/citas/citas.servicio.js';
 import { crearRutasCuentas } from './modules/cuentas/cuentas.rutas.js';
 import { crearServicioCuentas } from './modules/cuentas/cuentas.servicio.js';
-import { crearRutasEmpresas } from './modules/empresas/empresas.rutas.js';
+import { crearGuardiasCuenta } from './modules/cuentas/cuentas.guardias.js';
+import { crearRutasAdminEmpresa, crearRutasEmpresas } from './modules/empresas/empresas.rutas.js';
 import { crearServicioEmpresas } from './modules/empresas/empresas.servicio.js';
+import { crearGuardiaSuscripcion } from './modules/empresas/suscripcion.js';
 import { crearCors } from './shared/http/cors.js';
 import { type ConfigLimites, crearLimitadores, LIMITES_POR_DEFECTO } from './shared/http/limitadores.js';
 import { manejadorErrores, rutaNoEncontrada } from './shared/http/manejadorErrores.js';
@@ -30,6 +32,8 @@ export const crearApp = ({ pool, entorno, limites = LIMITES_POR_DEFECTO }: Depen
   const auth = crearServicioAuth({ pool, tokens });
   const guardias = crearGuardias(auth);
   const cuentas = crearServicioCuentas({ pool, tokens });
+  const guardiasCuenta = crearGuardiasCuenta(cuentas);
+  const suscripcion = crearGuardiaSuscripcion({ pool });
   const empresas = crearServicioEmpresas({ pool });
   const limitadores = crearLimitadores(limites);
 
@@ -57,7 +61,8 @@ export const crearApp = ({ pool, entorno, limites = LIMITES_POR_DEFECTO }: Depen
   app.use('/api/v1/auth', crearRutasAuth(auth, limitadores));
   app.use('/api/v1/cuentas', crearRutasCuentas(cuentas, limitadores));
   app.use('/api/v1/empresas', crearRutasEmpresas(empresas, guardias, limitadores));
-  app.use('/api/v1/citas', crearRutasCitas(crearServicioCitas({ pool }), guardias, limitadores));
+  app.use('/api/v1/admin/empresa', crearRutasAdminEmpresa(empresas, guardiasCuenta, suscripcion));
+  app.use('/api/v1/citas', crearRutasCitas(crearServicioCitas({ pool }), guardias, suscripcion, limitadores));
 
   app.use(rutaNoEncontrada);
   app.use(manejadorErrores);

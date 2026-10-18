@@ -47,7 +47,8 @@ src/
   shared/              errores, registro (logs JSON) y middlewares HTTP (CORS, límites, validación, errores)
   modules/
     auth/              login, contraseñas (bcrypt), tokens JWT, guardias de sesión y de admin
-    empresas/          datos públicos del negocio y vista del personal
+    cuentas/           registro de empresas y clientes, login y guardias de cuentas (tabla usuarios)
+    empresas/          datos públicos del negocio, vista del personal, perfil del admin y prueba gratuita
     citas/             reservas, agenda, completar y cancelar
 db/migraciones/        SQL numerado; cada archivo corre en su propia transacción
 test/                  pruebas (node:test) con una base temporal por archivo
@@ -61,7 +62,7 @@ Cada módulo separa **rutas** (HTTP y validación), **servicio** (reglas de nego
 - **Contraseñas con bcrypt** (costo 12). Las heredadas en texto plano se aceptan una vez y se cifran al iniciar sesión.
 - **Doble reserva imposible**: la restricción `citas_sin_solapamiento` (PostgreSQL, `btree_gist`) rechaza la segunda de dos reservas simultáneas que se solapen; la API responde 409.
 - **Aislamiento en la base**: llaves foráneas compuestas `(empresa_id, …)` impiden que una cita apunte a un profesional, servicio o cliente de otro negocio.
-- **Límites por IP** (en memoria): login 10 intentos fallidos / 15 min, código de negocio 60, reservas 20, general 300. Con varias instancias usa un store compartido (Redis).
+- **Límites por IP** (en memoria): login 10 intentos fallidos / 15 min, código de negocio 60, reservas 20, registro 10, general 300. Con varias instancias usa un store compartido (Redis).
 - **Errores**: siempre `{ "error": "mensaje" }`, sin pila ni SQL. Los detalles quedan en el log del servidor.
 - Toda consulta usa parámetros (`$1`, `$2`…); nunca concatenes valores del usuario en SQL.
 
@@ -77,4 +78,12 @@ Cada módulo separa **rutas** (HTTP y validación), **servicio** (reglas de nego
 | GET | `/api/v1/citas/ocupadas?empresaId=` | público (sin datos de clientes) |
 | GET | `/api/v1/citas/agenda` | sesión (admin: todo el negocio; barbero: sus citas) |
 | PATCH | `/api/v1/citas/:id/completar` | sesión, solo el profesional de la cita |
-| PATCH | `/api/v1/citas/:id/cancelar` | sesión, solo admin del negocio |
+| PATCH | `/api/v1/citas/:id/cancelar` | sesión, solo admin del negocio, suscripción vigente |
+| POST | `/api/v1/cuentas/registro/empresa` | público, limitado (crea empresa + administrador, prueba de 15 días) |
+| POST | `/api/v1/cuentas/registro/cliente` | público, limitado |
+| POST | `/api/v1/cuentas/login` | público, limitado (administradores de empresa y clientes) |
+| GET | `/api/v1/admin/empresa/prueba` | cuenta admin (días de prueba restantes) |
+| GET | `/api/v1/admin/empresa` | cuenta admin, suscripción vigente |
+| PATCH | `/api/v1/admin/empresa` | cuenta admin, suscripción vigente |
+
+Datos que recibe y responde cada endpoint de cuentas y administración: ver `AGENTS.md`.

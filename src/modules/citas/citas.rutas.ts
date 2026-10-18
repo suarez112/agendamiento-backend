@@ -2,10 +2,16 @@ import { Router } from 'express';
 import type { Limitadores } from '../../shared/http/limitadores.js';
 import { parsear } from '../../shared/http/validacion.js';
 import { type Guardias, sesionDe } from '../auth/guardias.js';
+import type { GuardiaSuscripcion } from '../empresas/suscripcion.js';
 import { esquemaCrearCita, esquemaHorasOcupadas, esquemaIdCita } from './citas.esquemas.js';
 import type { ServicioCitas } from './citas.servicio.js';
 
-export const crearRutasCitas = (citas: ServicioCitas, guardias: Guardias, limitadores: Limitadores) => {
+export const crearRutasCitas = (
+  citas: ServicioCitas,
+  guardias: Guardias,
+  suscripcion: GuardiaSuscripcion,
+  limitadores: Limitadores,
+) => {
   const rutas = Router();
   const { requerirSesion, requerirAdmin } = guardias;
 
@@ -33,6 +39,7 @@ export const crearRutasCitas = (citas: ServicioCitas, guardias: Guardias, limita
     '/:id/cancelar',
     requerirSesion,
     requerirAdmin('Solo el administrador puede cancelar citas.'),
+    suscripcion.requerirSuscripcionVigente,
     async (req, res) => {
       const { id } = parsear(esquemaIdCita, req.params);
       res.json(await citas.cancelar(sesionDe(res), id));
