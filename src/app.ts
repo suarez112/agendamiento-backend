@@ -13,6 +13,7 @@ import { crearServicioCuentas } from './modules/cuentas/cuentas.servicio.js';
 import { crearGuardiasCuenta } from './modules/cuentas/cuentas.guardias.js';
 import { crearRutasAdminEmpresa, crearRutasEmpresas } from './modules/empresas/empresas.rutas.js';
 import { crearServicioEmpresas } from './modules/empresas/empresas.servicio.js';
+import { crearAlmacenFotos, crearUrlBase, PREFIJO_FOTOS } from './modules/empresas/fotos.js';
 import { crearGuardiaSuscripcion } from './modules/empresas/suscripcion.js';
 import { crearCors } from './shared/http/cors.js';
 import { type ConfigLimites, crearLimitadores, LIMITES_POR_DEFECTO } from './shared/http/limitadores.js';
@@ -34,7 +35,9 @@ export const crearApp = ({ pool, entorno, limites = LIMITES_POR_DEFECTO }: Depen
   const cuentas = crearServicioCuentas({ pool, tokens });
   const guardiasCuenta = crearGuardiasCuenta(cuentas);
   const suscripcion = crearGuardiaSuscripcion({ pool });
-  const empresas = crearServicioEmpresas({ pool });
+  const fotos = crearAlmacenFotos(entorno.CARPETA_SUBIDAS);
+  const urlBase = crearUrlBase(entorno.URL_PUBLICA);
+  const empresas = crearServicioEmpresas({ pool, fotos });
   const limitadores = crearLimitadores(limites);
 
   const app = express();
@@ -43,6 +46,20 @@ export const crearApp = ({ pool, entorno, limites = LIMITES_POR_DEFECTO }: Depen
   app.use(crearCors(entorno));
   app.use(express.json({ limit: '10kb' }));
   app.use('/api', limitadores.general);
+
+  // Fotos subidas. Los nombres son aleatorios y nunca se reutilizan, así que se
+  // pueden guardar en caché. Cross-origin permite mostrarlas en la app web.
+  app.use(
+    PREFIJO_FOTOS,
+    express.static(fotos.carpeta, {
+      index: false,
+      dotfiles: 'deny',
+      redirect: false,
+      maxAge: '30d',
+      immutable: true,
+      setHeaders: (res) => res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin'),
+    }),
+  );
 
   // Comprobación de salud (monitoreo y la app en desarrollo)
   app.get('/api/saludo', async (_req, res) => {
@@ -60,8 +77,8 @@ export const crearApp = ({ pool, entorno, limites = LIMITES_POR_DEFECTO }: Depen
 
   app.use('/api/v1/auth', crearRutasAuth(auth, limitadores));
   app.use('/api/v1/cuentas', crearRutasCuentas(cuentas, limitadores));
-  app.use('/api/v1/empresas', crearRutasEmpresas(empresas, guardias, limitadores));
-  app.use('/api/v1/admin/empresa', crearRutasAdminEmpresa(empresas, guardiasCuenta, suscripcion));
+  app.use('/api/v1/empresas', crearRutasEmpresas(empresas, guardias, limitadores, urlBase));
+  app.use('/api/v1/admin/empresa', crearRutasAdminEmpresa(empresas, guardiasCuenta, suscripcion, urlBase));
   app.use('/api/v1/citas', crearRutasCitas(crearServicioCitas({ pool }), guardias, suscripcion, limitadores));
 
   app.use(rutaNoEncontrada);

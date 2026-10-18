@@ -5,3 +5,6 @@ dist/
 !.env.example
 *.log
 .atl/.skill-registry.cache.json
+
+# Fotos subidas por los negocios (CARPETA_SUBIDAS)
+uploads/

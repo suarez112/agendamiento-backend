@@ -29,6 +29,14 @@ const esquemaEntorno = esquemaBaseDeDatos
     // Número de proxies delante del servidor (0 = conexión directa). Afecta la IP
     // que usa la limitación de solicitudes.
     TRUST_PROXY: z.coerce.number().int().nonnegative().default(0),
+    // Carpeta donde se guardan las fotos subidas (relativa a donde arranca el servidor)
+    CARPETA_SUBIDAS: z.string().min(1).default('uploads'),
+    // Dirección pública del servidor para armar las URL de las fotos
+    // (ej. https://api.mibarberia.co). Si falta, se usa la de cada solicitud.
+    URL_PUBLICA: z
+      .url({ protocol: /^https?$/, error: 'debe ser una dirección http:// o https://' })
+      .transform((url) => url.replace(/\/+$/, ''))
+      .optional(),
   })
   .superRefine((e, ctx) => {
     if (e.NODE_ENV === 'production' && e.JWT_SECRET.length < 32) {

@@ -18,4 +18,5 @@ export const errores = {
   prohibido: (mensaje: string) => new ErrorApp(403, mensaje),
   noEncontrado: (mensaje: string) => new ErrorApp(404, mensaje),
   conflicto: (mensaje: string) => new ErrorApp(409, mensaje),
+  demasiadoGrande: (mensaje: string) => new ErrorApp(413, mensaje),
 };

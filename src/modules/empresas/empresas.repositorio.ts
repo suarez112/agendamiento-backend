@@ -71,6 +71,7 @@ export type FilaPerfilEmpresa = {
   nombre_administradora: string | null;
   numero_empleados: number | null;
   logo_url: string | null;
+  foto_url: string | null;
   color_primario: string | null;
   color_secundario: string | null;
   estado_suscripcion: string;
@@ -80,11 +81,32 @@ export type FilaPerfilEmpresa = {
 
 const COLUMNAS_PERFIL = `id, nombre, codigo_acceso, categoria, nit, telefono, correo, direccion, ciudad,
                          dias_atencion, horario_apertura, horario_cierre, nombre_administradora,
-                         numero_empleados, logo_url, color_primario, color_secundario,
+                         numero_empleados, logo_url, foto_url, color_primario, color_secundario,
                          estado_suscripcion, trial_ends_at, created_at`;
 
 export const buscarPerfilEmpresa = async (db: Consultable, id: string) =>
   (await db.query<FilaPerfilEmpresa>(`SELECT ${COLUMNAS_PERFIL} FROM empresas WHERE id = $1`, [id])).rows[0];
+
+// Vista pública del negocio: los clientes la buscan con el código de acceso
+export const buscarPerfilEmpresaPorCodigo = async (db: Consultable, codigo: string) =>
+  (
+    await db.query<FilaPerfilEmpresa>(`SELECT ${COLUMNAS_PERFIL} FROM empresas WHERE codigo_acceso = $1`, [
+      codigo,
+    ])
+  ).rows[0];
+
+// Cambia la foto y devuelve la ruta de la anterior para poder borrar su archivo.
+// FOR UPDATE hace que dos cambios a la vez se esperen y cada uno vea la foto que reemplaza.
+export const cambiarFotoEmpresa = async (db: Consultable, id: string, fotoUrl: string) =>
+  (
+    await db.query<{ foto_anterior: string | null }>(
+      `UPDATE empresas e SET foto_url = $2
+       FROM (SELECT id, foto_url FROM empresas WHERE id = $1 FOR UPDATE) anterior
+       WHERE e.id = anterior.id
+       RETURNING anterior.foto_url AS foto_anterior`,
+      [id, fotoUrl],
+    )
+  ).rows[0];
 
 // Campo de la API → columna. Solo estas columnas se pueden editar; los nombres
 // de columna nunca vienen del usuario, los valores siempre van como parámetros.
