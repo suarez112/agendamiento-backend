@@ -1,0 +1,54 @@
+import express, { type Express } from 'express';
+import helmet from 'helmet';
+import type pg from 'pg';
+import type { Entorno } from './config/entorno.js';
+import { crearRutasAuth } from './modules/auth/auth.rutas.js';
+import { crearServicioAuth } from './modules/auth/auth.servicio.js';
+import { crearGuardias } from './modules/auth/guardias.js';
+import { crearServicioTokens } from './modules/auth/tokens.js';
+import { crearRutasCitas } from './modules/citas/citas.rutas.js';
+import { crearServicioCitas } from './modules/citas/citas.servicio.js';
+import { crearRutasEmpresas } from './modules/empresas/empresas.rutas.js';
+import { crearServicioEmpresas } from './modules/empresas/empresas.servicio.js';
+import { crearCors } from './shared/http/cors.js';
+import { type ConfigLimites, crearLimitadores, LIMITES_POR_DEFECTO } from './shared/http/limitadores.js';
+import { manejadorErrores, rutaNoEncontrada } from './shared/http/manejadorErrores.js';
+
+export type Dependencias = {
+  pool: pg.Pool;
+  entorno: Entorno;
+  limites?: ConfigLimites;
+};
+
+// Punto de composición: aquí se crean los servicios y se conectan con sus rutas.
+// Recibe sus dependencias para poder probar la app con otra base de datos.
+export const crearApp = ({ pool, entorno, limites = LIMITES_POR_DEFECTO }: Dependencias): Express => {
+  const tokens = crearServicioTokens(entorno.JWT_SECRET, entorno.JWT_EXPIRA_EN);
+  const auth = crearServicioAuth({ pool, tokens });
+  const guardias = crearGuardias(auth);
+  const limitadores = crearLimitadores(limites);
+
+  const app = express();
+  app.set('trust proxy', entorno.TRUST_PROXY);
+  app.use(helmet());
+  app.use(crearCors(entorno));
+  app.use(express.json({ limit: '10kb' }));
+  app.use('/api', limitadores.general);
+
+  // Comprobación de salud (monitoreo y la app en desarrollo)
+  app.get('/api/saludo', async (_req, res) => {
+    const { rows } = await pool.query<{ now: Date }>('SELECT NOW()');
+    res.json({
+      mensaje: '¡Servidor Backend funcionando correctamente! 🚀',
+      horaBaseDatos: rows[0].now,
+    });
+  });
+
+  app.use('/api/v1/auth', crearRutasAuth(auth, limitadores));
+  app.use('/api/v1/empresas', crearRutasEmpresas(crearServicioEmpresas({ pool }), guardias, limitadores));
+  app.use('/api/v1/citas', crearRutasCitas(crearServicioCitas({ pool }), guardias, limitadores));
+
+  app.use(rutaNoEncontrada);
+  app.use(manejadorErrores);
+  return app;
+};

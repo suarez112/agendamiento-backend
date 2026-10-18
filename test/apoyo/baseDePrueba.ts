@@ -1,0 +1,78 @@
+import bcrypt from 'bcryptjs';
+import dotenv from 'dotenv';
+import pg from 'pg';
+import { cargarEntornoBaseDeDatos } from '../../src/config/entorno.js';
+import { aplicarMigraciones } from '../../src/db/migraciones.js';
+import { crearPool } from '../../src/db/pool.js';
+
+dotenv.config({ quiet: true });
+process.env.NODE_ENV = 'test';
+
+// Fecha local "YYYY-MM-DD" a N días de hoy
+export const fechaEnDias = (dias: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() + dias);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+export const FECHA_FUTURA = fechaEnDias(7);
+
+// Datos conocidos: dos negocios para probar el aislamiento entre ellos
+const sembrar = async (pool: pg.Pool) => {
+  const hashSecreta = await bcrypt.hash('secreta', 4);
+  await pool.query(`
+    INSERT INTO empresas (id, nombre, codigo_acceso, horario_apertura, horario_cierre) VALUES
+      ('emp_a', 'Negocio A', 'NEGA', '08:00', '20:00'),
+      ('emp_b', 'Negocio B', 'NEGB', '08:00', '20:00');
+    INSERT INTO barberos (id, empresa_id, nombre, usuario, password_hash, es_admin) VALUES
+      ('admin_a', 'emp_a', 'Admin A', 'admin.a', '1234', true),
+      ('barb_a', 'emp_a', 'Barbero A', 'barbero.a', 'clave-a', false),
+      ('barb_a2', 'emp_a', 'Barbero A2', 'barbero.a2', '${hashSecreta}', false),
+      ('admin_b', 'emp_b', 'Admin B', 'admin.b', 'clave-b', true);
+    INSERT INTO servicios (id, empresa_id, nombre, duracion_min, precio) VALUES
+      ('serv_a', 'emp_a', 'Corte', 30, 20000),
+      ('serv_a_largo', 'emp_a', 'Corte y barba', 60, 35000),
+      ('serv_b', 'emp_b', 'Corte B', 30, 18000);
+    INSERT INTO clientes (id, empresa_id, telefono, indicativo, nombre, total_citas) VALUES
+      ('cli_b', 'emp_b', '3009998877', '57', 'Cliente de B', 1);
+    INSERT INTO citas (id, empresa_id, barbero_id, servicio_id, cliente_id, fecha, hora_inicio, hora_fin, precio, estado) VALUES
+      ('cita_b', 'emp_b', 'admin_b', 'serv_b', 'cli_b', '${FECHA_FUTURA}', '10:00', '10:30', 18000, 'CONFIRMADA');
+  `);
+};
+
+export type BaseDePrueba = { nombre: string; pool: pg.Pool; destruir: () => Promise<void> };
+
+// Crea una base temporal, la migra y la llena; destruir() la elimina
+export const crearBaseDePrueba = async (opciones: { hasta?: string } = {}): Promise<BaseDePrueba> => {
+  const entornoDb = cargarEntornoBaseDeDatos();
+  const nombre = `agendamiento_prueba_${process.pid}_${Date.now().toString(36)}`;
+  const conAdmin = async (sql: string) => {
+    const cliente = new pg.Client({
+      host: entornoDb.DB_HOST,
+      port: entornoDb.DB_PORT,
+      user: entornoDb.DB_USER,
+      password: entornoDb.DB_PASSWORD,
+      database: 'postgres',
+    });
+    await cliente.connect();
+    try {
+      await cliente.query(sql);
+    } finally {
+      await cliente.end();
+    }
+  };
+
+  await conAdmin(`CREATE DATABASE "${nombre}"`);
+  const pool = crearPool({ ...entornoDb, DB_NAME: nombre });
+  await aplicarMigraciones(pool, opciones);
+  await sembrar(pool);
+
+  return {
+    nombre,
+    pool,
+    destruir: async () => {
+      await pool.end();
+      await conAdmin(`DROP DATABASE IF EXISTS "${nombre}" WITH (FORCE)`);
+    },
+  };
+};
