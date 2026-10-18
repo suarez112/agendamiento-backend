@@ -21,7 +21,7 @@ export const buscarBarberoPorUsuario = async (db: Consultable, usuario: string) 
             e.nombre AS empresa_nombre, e.codigo_acceso AS empresa_codigo
      FROM barberos b
      JOIN empresas e ON e.id = b.empresa_id
-     WHERE lower(b.usuario) = lower($1)`,
+     WHERE lower(b.usuario) = lower($1) AND b.activo`,
     [usuario],
   );
   return rows[0];
@@ -33,8 +33,17 @@ export const actualizarHashContrasena = (db: Consultable, barberoId: string, has
 // Rol actual del barbero; undefined si fue eliminado o cambió de negocio
 export const buscarRolVigente = async (db: Consultable, barberoId: string, empresaId: string) => {
   const { rows } = await db.query<{ es_admin: boolean }>(
-    'SELECT es_admin FROM barberos WHERE id = $1 AND empresa_id = $2',
+    'SELECT es_admin FROM barberos WHERE id = $1 AND empresa_id = $2 AND activo',
     [barberoId, empresaId],
+  );
+  return rows[0];
+};
+
+// Rol y empresa actuales de una cuenta (tabla usuarios); undefined si ya no existe
+export const buscarCuentaVigente = async (db: Consultable, usuarioId: string) => {
+  const { rows } = await db.query<{ rol: string; empresa_id: string | null }>(
+    'SELECT rol, empresa_id FROM usuarios WHERE id = $1',
+    [usuarioId],
   );
   return rows[0];
 };

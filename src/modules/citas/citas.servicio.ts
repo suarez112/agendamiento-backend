@@ -25,7 +25,16 @@ export const crearServicioCitas = ({ pool }: { pool: pg.Pool }) => ({
       throw errores.solicitudInvalida('La hora elegida está fuera del horario del negocio');
     }
 
-    // 3. Cliente y cita juntos: o se guardan los dos, o ninguno. La restricción
+    // 3. Ni números de la lista negra del negocio, ni horas que el profesional bloqueó
+    if (await repositorio.telefonoEnListaNegra(pool, empresaId, telefono)) {
+      throw errores.prohibido('No es posible agendar con este número. Comunícate con el negocio.');
+    }
+    const horario = { horaInicio: minutosAHHMM(inicio), horaFin: minutosAHHMM(fin) };
+    if (await repositorio.chocaConBloqueo(pool, { barberoId, fecha, ...horario })) {
+      throw errores.conflicto('El profesional no atiende en ese horario. Por favor elige otra hora.');
+    }
+
+    // 4. Cliente y cita juntos: o se guardan los dos, o ninguno. La restricción
     //    citas_sin_solapamiento rechaza la segunda de dos reservas simultáneas.
     const citaId = randomUUID();
     try {
@@ -45,8 +54,7 @@ export const crearServicioCitas = ({ pool }: { pool: pg.Pool }) => ({
           servicioId,
           clienteId,
           fecha,
-          horaInicio: minutosAHHMM(inicio),
-          horaFin: minutosAHHMM(fin),
+          ...horario,
           precio: reserva.precio,
         });
       });
@@ -91,6 +99,18 @@ export const crearServicioCitas = ({ pool }: { pool: pg.Pool }) => ({
     }));
   },
 
+  // Horarios bloqueados del equipo (semanales o de una fecha), sin el motivo
+  async bloqueosPublicos(empresaId: string) {
+    const filas = await repositorio.listarBloqueosPublicos(pool, empresaId);
+    return filas.map((r) => ({
+      barberoId: r.barbero_id,
+      diaSemana: r.dia_semana,
+      fecha: r.fecha,
+      horaInicio: r.hora_inicio,
+      horaFin: r.hora_fin,
+    }));
+  },
+
   // El administrador ve a todo su equipo; un barbero solo ve sus propias citas
   async agenda({ empresaId, barberoId, esAdmin }: Sesion) {
     const filas = await repositorio.listarAgenda(pool, empresaId, esAdmin ? null : barberoId);
@@ -114,8 +134,8 @@ export const crearServicioCitas = ({ pool }: { pool: pg.Pool }) => ({
     }));
   },
 
-  async completar({ empresaId, barberoId }: Sesion, id: string) {
-    const r = await repositorio.completarCita(pool, { id, empresaId, barberoId });
+  async completar({ empresaId, barberoId, usuarioId }: Sesion, id: string) {
+    const r = await repositorio.completarCita(pool, { id, empresaId, barberoId, usuarioId });
     if (!r) {
       throw errores.conflicto(
         'No se pudo completar: la cita no existe, ya fue atendida o cancelada, o no es tuya.',
@@ -124,8 +144,8 @@ export const crearServicioCitas = ({ pool }: { pool: pg.Pool }) => ({
     return { estado: r.estado, completadaEn: r.completada_en, completadaPor: r.completada_por };
   },
 
-  async cancelar({ empresaId, barberoId }: Sesion, id: string) {
-    const r = await repositorio.cancelarCita(pool, { id, empresaId, barberoId });
+  async cancelar({ empresaId, barberoId, usuarioId }: Sesion, id: string) {
+    const r = await repositorio.cancelarCita(pool, { id, empresaId, barberoId, usuarioId });
     if (!r) {
       throw errores.conflicto('No se pudo cancelar: la cita no existe o ya fue atendida o cancelada.');
     }

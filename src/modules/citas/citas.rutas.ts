@@ -25,7 +25,12 @@ export const crearRutasCitas = (
     res.json(await citas.horasOcupadas(empresaId));
   });
 
-  // Personal con sesión iniciada
+  rutas.get('/bloqueos', async (req, res) => {
+    const { empresaId } = parsear(esquemaHorasOcupadas, req.query);
+    res.json(await citas.bloqueosPublicos(empresaId));
+  });
+
+  // Personal con sesión iniciada (barberos o la cuenta del administrador de la empresa)
   rutas.get('/agenda', requerirSesion, async (_req, res) => {
     res.json(await citas.agenda(sesionDe(res)));
   });

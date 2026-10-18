@@ -5,7 +5,12 @@ import * as repositorio from './auth.repositorio.js';
 import { cifrarContrasena, verificarContrasena } from './contrasenas.js';
 import type { ServicioTokens } from './tokens.js';
 
-export type Sesion = { barberoId: string; empresaId: string; esAdmin: boolean };
+// Sesión del personal del negocio. Puede ser un barbero (barberoId) o la cuenta
+// del administrador de la empresa (usuarioId, tabla usuarios), que tiene los
+// mismos permisos que un barbero administrador. Siempre hay exactamente uno de los dos.
+export type Sesion =
+  | { barberoId: string; usuarioId: null; empresaId: string; esAdmin: boolean }
+  | { barberoId: null; usuarioId: string; empresaId: string; esAdmin: true };
 
 type Dependencias = { pool: pg.Pool; tokens: ServicioTokens };
 
@@ -42,15 +47,27 @@ export const crearServicioAuth = ({ pool, tokens }: Dependencias) => ({
     };
   },
 
-  // Convierte un token en la sesión vigente, con el rol actual leído de la base
+  // Convierte un token en la sesión vigente, con el rol actual leído de la base.
+  // Acepta el token del personal (barberos) y el de la cuenta del administrador
+  // de la empresa; el de un cliente no sirve aquí.
   async validarSesion(token: string | undefined): Promise<Sesion> {
     if (!token) throw errores.noAutenticado('Sesión no válida. Inicia sesión de nuevo.');
-    const datos = tokens.verificar(token);
-    if (!datos) throw errores.noAutenticado('Sesión vencida. Inicia sesión de nuevo.');
 
-    const rol = await repositorio.buscarRolVigente(pool, datos.barberoId, datos.empresaId);
-    if (!rol) throw errores.noAutenticado('Sesión no válida. Inicia sesión de nuevo.');
-    return { ...datos, esAdmin: rol.es_admin };
+    const datos = tokens.verificar(token);
+    if (datos) {
+      const rol = await repositorio.buscarRolVigente(pool, datos.barberoId, datos.empresaId);
+      if (!rol) throw errores.noAutenticado('Sesión no válida. Inicia sesión de nuevo.');
+      return { ...datos, usuarioId: null, esAdmin: rol.es_admin };
+    }
+
+    const cuenta = tokens.verificarCuenta(token);
+    if (!cuenta) throw errores.noAutenticado('Sesión vencida. Inicia sesión de nuevo.');
+    const usuario = await repositorio.buscarCuentaVigente(pool, cuenta.usuarioId);
+    if (!usuario) throw errores.noAutenticado('Sesión no válida. Inicia sesión de nuevo.');
+    if (usuario.rol !== 'admin' || !usuario.empresa_id) {
+      throw errores.prohibido('Esta función es solo para el personal del negocio.');
+    }
+    return { barberoId: null, usuarioId: cuenta.usuarioId, empresaId: usuario.empresa_id, esAdmin: true };
   },
 });
 

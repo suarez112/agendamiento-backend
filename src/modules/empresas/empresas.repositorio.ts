@@ -39,7 +39,7 @@ export const listarBarberos = async (db: Consultable, empresaId: string) =>
   (
     await db.query<FilaBarbero>(
       `SELECT id, nombre, usuario, es_admin, especialidad, porcentaje_ganancia, foto_url
-       FROM barberos WHERE empresa_id = $1`,
+       FROM barberos WHERE empresa_id = $1 AND activo`,
       [empresaId],
     )
   ).rows;
@@ -49,7 +49,7 @@ export type FilaServicio = { id: string; nombre: string; duracion_min: number; p
 export const listarServicios = async (db: Consultable, empresaId: string) =>
   (
     await db.query<FilaServicio>(
-      'SELECT id, nombre, duracion_min, precio FROM servicios WHERE empresa_id = $1',
+      'SELECT id, nombre, duracion_min, precio FROM servicios WHERE empresa_id = $1 AND activo',
       [empresaId],
     )
   ).rows;
