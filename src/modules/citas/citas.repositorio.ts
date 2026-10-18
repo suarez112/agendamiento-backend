@@ -193,7 +193,9 @@ export const completarCita = async (db: Consultable, p: { id: string; empresaId:
     await db.query<{ estado: string; completada_en: Date; completada_por: string }>(
       `WITH actualizada AS (
          UPDATE citas
-         SET estado = 'COMPLETADA', completada_en = NOW(), completada_por = $3, completada_por_usuario = $4
+         SET estado = 'COMPLETADA', completada_en = NOW(), completada_por = $3, completada_por_usuario = $4,
+             -- La cartera usa el porcentaje que el profesional tiene en este momento
+             porcentaje_ganancia = (SELECT b.porcentaje_ganancia FROM barberos b WHERE b.id = citas.barbero_id)
          WHERE id = $1 AND empresa_id = $2 AND estado = 'CONFIRMADA'
            AND ($3::varchar IS NULL OR barbero_id = $3)
          RETURNING estado, completada_en, completada_por, completada_por_usuario, empresa_id

@@ -11,7 +11,9 @@ export type FilaCartera = {
 };
 
 // Citas completadas entre dos fechas (incluidas), agrupadas por profesional.
-// La ganancia del profesional usa su porcentaje actual. Incluye a quienes ya
+// La ganancia de cada cita usa el porcentaje guardado al completarla
+// (citas.porcentaje_ganancia, migración 006). porcentaje_ganancia es el
+// porcentaje actual del profesional, solo informativo. Incluye a quienes ya
 // fueron eliminados del equipo si atendieron citas en ese rango.
 // barberoId null = todo el equipo del negocio.
 export const resumenPorProfesional = async (
@@ -23,7 +25,7 @@ export const resumenPorProfesional = async (
       `SELECT b.id AS barbero_id, b.nombre, b.activo, b.porcentaje_ganancia,
               count(*)::int AS citas,
               sum(c.precio) AS ventas,
-              round(sum(c.precio) * b.porcentaje_ganancia / 100, 2) AS ganancia
+              round(sum(c.precio * c.porcentaje_ganancia / 100), 2) AS ganancia
        FROM citas c
        JOIN barberos b ON b.id = c.barbero_id
        WHERE c.empresa_id = $1 AND c.estado = 'COMPLETADA'

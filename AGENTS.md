@@ -305,7 +305,7 @@ Un bloqueo se repite cada semana el mismo día (ej. almuerzo de los lunes). Form
 
 #### Cartera
 
-**GET `/api/v1/cartera?desde=2026-10-01&hasta=2026-10-31`** (personal; admin: todo el negocio; barbero: solo lo suyo). Suma las citas **completadas** con fecha entre `desde` y `hasta` (incluidas). La ganancia de cada profesional usa su `porcentajeGanancia` actual; el negocio se queda con el resto.
+**GET `/api/v1/cartera?desde=2026-10-01&hasta=2026-10-31`** (personal; admin: todo el negocio; barbero: solo lo suyo). Suma las citas **completadas** con fecha entre `desde` y `hasta` (incluidas). La ganancia de cada cita usa el porcentaje que tenía el profesional **cuando se completó** (se guarda en `citas.porcentaje_ganancia`, migración 006); cambiar después su porcentaje no cambia lo que ya ganó. El negocio se queda con el resto. En `porProfesional`, `porcentajeGanancia` es el porcentaje **actual** del profesional (informativo); `ganancia` puede no coincidir con `ventas × porcentajeGanancia` si el porcentaje cambió dentro del rango. Las citas completadas antes de la migración 006 tomaron el porcentaje que el profesional tenía ese día.
 
 ```json
 {
