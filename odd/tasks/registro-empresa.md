@@ -23,9 +23,9 @@ Assumptions (no open product decision; recorded so they can be changed later):
 
 ## Tasks
 
-- [ ] T1 — S1, S2, S3, S7: `cuentas` module (company registration + admin account, client registration, account login, account tokens/session). Route: inline.
-- [ ] T2 — S4, S5, S6, S7: admin company endpoints (view, update, trial days), trial guard, role guard. Route: inline.
-- [ ] T3 — S8, S9: AGENTS.md/README endpoint contract, full suite, commit, push. Route: inline.
+- [x] T1 — S1, S2, S3, S7: `cuentas` module (company registration + admin account, client registration, account login, account tokens/session). Route: inline. Commit `c45aa89`.
+- [x] T2 — S4, S5, S6, S7: admin company endpoints (view, update, trial days), trial guard, role guard. Route: inline. Commit `9e35d2f`.
+- [x] T3 — S8, S9: AGENTS.md/README endpoint contract, full suite, commit, push. Route: inline. Commits `9e35d2f` + docs follow-up; push recorded in L8.
 
 Route evidence: one parent session; T2 depends on T1's session/guards, so no parallel Writer reason.
 
@@ -37,3 +37,4 @@ Route evidence: one parent session; T2 depends on T1's session/guards, so no par
 - L4 — T2 RED: `test/adminEmpresa.test.ts` 13 tests, 13 fail. GREEN: 13/13 after admin routes + guards. Full suite: first run 95/96 (one failure, not captured; output not saved), then 10 consecutive runs 96/96 — not reproduced.
 - L5 — Smoke against the local DB (schema_migrations 001,002,003; read-only requests): server boots, `/api/saludo` 200, `/admin/empresa/prueba` without token 401, incomplete registration 400 with field message, unknown login 401. No migration 004 created.
 - L6 — Risk: item 2 (new login, account tokens, role and trial guards) and item 3 (`PATCH /citas/:id/cancelar` now also answers 402 when the subscription is not active; staff token verification now rejects tokens carrying `tipo`). Independent verifier required.
+- L7 — Independent verifier over 820b0b1..9e35d2f: S1–S8 PASS, 0 blockers; typecheck exit 0; npm test 96/96; differential of 24 staff-endpoint requests at 820b0b1 vs HEAD identical except the canceladaEn timestamp. Advisories (not fixed, out of requested scope): shared per-IP login limiter for staff and account logins; days-left could read 16 right after registration only if the DB session time zone has daylight saving (Colombia/UTC unaffected); company contact correo is not unique after PATCH (by design); cancel checks 402 before 404. Contract gap fixed in AGENTS.md: client registration 400 messages for missing body and missing correo.

@@ -114,7 +114,7 @@ Ambos se envían como `Authorization: Bearer <token>`.
 
 - Recibe `{ "correo": "cliente@correo.com", "clave": "8 a 64 caracteres" }`.
 - Responde **201** `{ "mensaje": "Cuenta creada", "token": "<jwt>", "usuario": { "id", "correo", "rol": "cliente", "empresaId": null } }`.
-- Errores: **400** (`El correo no es válido`, `La contraseña debe tener entre 8 y 64 caracteres`); **409** `Ya existe una cuenta con ese correo`; **429**.
+- Errores: **400** (`Envía correo y contraseña` si no hay cuerpo, `El campo "correo" es obligatorio`, `El correo no es válido`, `La contraseña debe tener entre 8 y 64 caracteres`); **409** `Ya existe una cuenta con ese correo`; **429**.
 
 **POST `/api/v1/cuentas/login`**: login de administradores de empresa y clientes.
 
