@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
-import { type Contexto, iniciar, pedir } from './apoyo/servidor.js';
+import type { AddressInfo } from 'node:net';
+import type pg from 'pg';
+import { crearApp } from '../src/app.js';
+import { cargarEntorno } from '../src/config/entorno.js';
+import { type Contexto, iniciar, pedir, SECRETO_PRUEBAS } from './apoyo/servidor.js';
 
 // S10 — manejo de errores, CORS y encabezados de seguridad
 describe('manejo de errores', () => {
@@ -35,6 +39,21 @@ describe('manejo de errores', () => {
     assert.equal(r.headers.get('x-content-type-options'), 'nosniff');
     assert.equal(r.headers.get('x-powered-by'), null);
   });
+});
+
+test('la comprobación de salud informa la caída de la base con su mensaje de siempre', async () => {
+  const poolCaido = { query: async () => Promise.reject(new Error('connect ECONNREFUSED')) } as unknown as pg.Pool;
+  const entorno = cargarEntorno({ ...process.env, NODE_ENV: 'test', JWT_SECRET: SECRETO_PRUEBAS });
+  const servidor = crearApp({ pool: poolCaido, entorno }).listen(0, '127.0.0.1');
+  await new Promise((r) => servidor.once('listening', r));
+  try {
+    const { port } = servidor.address() as AddressInfo;
+    const r = await fetch(`http://127.0.0.1:${port}/api/saludo`);
+    assert.equal(r.status, 500);
+    assert.deepEqual(await r.json(), { error: 'Error de conexión con la base de datos' });
+  } finally {
+    servidor.close();
+  }
 });
 
 describe('CORS en producción', () => {

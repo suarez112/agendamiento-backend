@@ -13,6 +13,7 @@ import { crearServicioEmpresas } from './modules/empresas/empresas.servicio.js';
 import { crearCors } from './shared/http/cors.js';
 import { type ConfigLimites, crearLimitadores, LIMITES_POR_DEFECTO } from './shared/http/limitadores.js';
 import { manejadorErrores, rutaNoEncontrada } from './shared/http/manejadorErrores.js';
+import { registro } from './shared/registro.js';
 
 export type Dependencias = {
   pool: pg.Pool;
@@ -37,11 +38,16 @@ export const crearApp = ({ pool, entorno, limites = LIMITES_POR_DEFECTO }: Depen
 
   // Comprobación de salud (monitoreo y la app en desarrollo)
   app.get('/api/saludo', async (_req, res) => {
-    const { rows } = await pool.query<{ now: Date }>('SELECT NOW()');
-    res.json({
-      mensaje: '¡Servidor Backend funcionando correctamente! 🚀',
-      horaBaseDatos: rows[0].now,
-    });
+    try {
+      const { rows } = await pool.query<{ now: Date }>('SELECT NOW()');
+      res.json({
+        mensaje: '¡Servidor Backend funcionando correctamente! 🚀',
+        horaBaseDatos: rows[0].now,
+      });
+    } catch (error) {
+      registro.error('salud_sin_base_de_datos', { mensaje: (error as Error).message });
+      res.status(500).json({ error: 'Error de conexión con la base de datos' });
+    }
   });
 
   app.use('/api/v1/auth', crearRutasAuth(auth, limitadores));

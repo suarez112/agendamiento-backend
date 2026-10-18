@@ -29,4 +29,5 @@ test('esFechaReal solo acepta fechas del calendario', () => {
   assert.equal(esFechaReal('2026-02-31'), false);
   assert.equal(esFechaReal('2026-13-01'), false);
   assert.equal(esFechaReal('18/10/2026'), false);
+  assert.equal(esFechaReal('0000-01-01'), false);
 });

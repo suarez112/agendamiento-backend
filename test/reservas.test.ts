@@ -102,7 +102,8 @@ describe('validación de entradas de una reserva', () => {
     ['nombre que no es texto', { nombre: 12345 }, 'Faltan datos para agendar la cita'],
     ['nombre vacío', { nombre: '   ' }, 'Faltan datos para agendar la cita'],
     ['nombre demasiado largo', { nombre: 'x'.repeat(500) }, 'El nombre es demasiado largo'],
-    ['teléfono con letras', { telefono: 'llamame ya' }, 'El teléfono no es válido'],
+    ['teléfono demasiado largo', { telefono: '3'.repeat(31) }, 'El teléfono no es válido'],
+    ['año fuera del rango de PostgreSQL', { fecha: '0000-01-01' }, 'La fecha o la hora tienen un formato incorrecto'],
     ['indicativo inválido', { indicativo: '12345' }, 'El indicativo del país no es válido'],
     ['identificador como objeto', { empresaId: { $gt: '' } }, 'Faltan datos para agendar la cita'],
     ['fecha pasada', { fecha: fechaEnDias(-5) }, 'No se pueden agendar citas en fechas pasadas'],
@@ -117,6 +118,18 @@ describe('validación de entradas de una reserva', () => {
       assert.equal(r.json?.error, mensaje);
     });
   }
+
+  // Contrato anterior: el teléfono se guardaba tal cual lo escribía el cliente
+  // (el teclado phone-pad de Android permite # * , ; /) y indicativo null era "57"
+  test('acepta teléfonos cortos o con símbolos del teclado y indicativo null', async () => {
+    const corto = await reservar(ctx, { hora: '08:00 AM', telefono: '1234' });
+    const conSimbolo = await reservar(ctx, { hora: '09:00 AM', telefono: '300#1234567' });
+    const sinIndicativo = await reservar(ctx, { hora: '11:00 AM', telefono: '3007770000', indicativo: null });
+    assert.equal(corto.estado, 201, corto.texto);
+    assert.equal(conSimbolo.estado, 201, conSimbolo.texto);
+    assert.equal(sinIndicativo.estado, 201, sinIndicativo.texto);
+    assert.equal(sinIndicativo.json.cita.indicativo, '57');
+  });
 
   test('una reserva que termina justo al cierre es válida', async () => {
     assert.equal((await reservar(ctx, { hora: '07:30 PM' })).estado, 201);

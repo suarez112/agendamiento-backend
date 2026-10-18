@@ -15,11 +15,12 @@ export const esquemaCrearCita = z.object(
     fecha: texto(FALTAN_DATOS).refine(esFechaReal, FORMATO_INCORRECTO),
     hora: texto(FALTAN_DATOS).refine((h) => hora12AMinutos(h) !== null, FORMATO_INCORRECTO),
     nombre: texto(FALTAN_DATOS).max(100, 'El nombre es demasiado largo'),
-    telefono: texto(FALTAN_DATOS).regex(/^[0-9 ().+-]{5,20}$/, 'El teléfono no es válido'),
+    // Se guarda tal cual lo escribe el cliente; solo se limita el largo
+    telefono: texto(FALTAN_DATOS).max(30, 'El teléfono no es válido'),
     // Indicativo del país (solo dígitos). Si no llega, se asume Colombia (57)
     indicativo: z
       .union([z.string(), z.number()], { error: 'El indicativo del país no es válido' })
-      .optional()
+      .nullish()
       .transform((v) => String(v ?? '57').replace(/\D/g, ''))
       .refine((v) => /^\d{1,4}$/.test(v), 'El indicativo del país no es válido'),
   },

@@ -22,9 +22,10 @@ export const hora24AMinutos = (hora: string): number => {
 export const minutosAHHMM = (total: number): string =>
   `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
 
-// "2026-02-31" tiene el formato correcto pero no existe en el calendario
+// "2026-02-31" tiene el formato correcto pero no existe en el calendario.
+// El año 0000 no existe en PostgreSQL.
 export const esFechaReal = (fecha: string): boolean => {
-  if (!FECHA_ISO.test(fecha)) return false;
+  if (!FECHA_ISO.test(fecha) || Number(fecha.slice(0, 4)) < 1) return false;
   const dia = new Date(`${fecha}T00:00:00Z`);
   return !Number.isNaN(dia.getTime()) && dia.toISOString().slice(0, 10) === fecha;
 };
