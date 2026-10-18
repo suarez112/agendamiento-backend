@@ -36,7 +36,7 @@ Puerto por defecto `4000` (`PORT`). Rutas bajo `/api/v1`.
 ## Base de datos y entorno
 
 - PostgreSQL vía `pg` (`src/db/pool.ts`), con las extensiones `btree_gist` (migración 002) y `gen_random_uuid()` (PostgreSQL 13 o superior).
-- Variables en `.env` en la raíz (ignorado por git; nunca lo subas). Se validan al arrancar en `src/config/entorno.ts`: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_POOL_MAX`, `JWT_SECRET`, `JWT_EXPIRA_EN`, `CORS_ORIGINS`, `TRUST_PROXY`, `NODE_ENV`, `PORT`.
+- Variables en `.env` en la raíz (ignorado por git; nunca lo subas). Se validan al arrancar en `src/config/entorno.ts`: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_POOL_MAX`, `JWT_SECRET`, `JWT_EXPIRA_EN`, `CORS_ORIGINS`, `TRUST_PROXY`, `NODE_ENV`, `PORT`, `CARPETA_SUBIDAS` (opcional, por defecto `uploads`: carpeta de las fotos subidas, ignorada por git) y `URL_PUBLICA` (opcional: dirección pública del servidor, ej. `https://api.mibarberia.co`, para armar las URL de las fotos; si falta se usa la dirección de cada solicitud, así que configúrala en producción).
 - El esquema solo cambia con un archivo nuevo en `db/migraciones/` (siguiente número). Nunca edites una migración ya aplicada.
 
 ## Endpoints
@@ -48,6 +48,7 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | GET | `/api/saludo` | público (salud) |
 | POST | `/api/v1/auth/login` | público, limitado. Personal (barberos). Cuerpo `{ usuario, clave }` |
 | GET | `/api/v1/empresas/validar/:codigo` | público, limitado |
+| GET | `/api/v1/empresas/perfil/:codigo` | público, limitado. Información del negocio con su foto, para clientes |
 | GET | `/api/v1/empresas/actual` | sesión del personal |
 | POST | `/api/v1/citas` | público, limitado |
 | GET | `/api/v1/citas/ocupadas?empresaId=` | público (sin datos de clientes) |
@@ -60,6 +61,8 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | GET | `/api/v1/admin/empresa/prueba` | cuenta admin (responde aunque la prueba haya vencido) |
 | GET | `/api/v1/admin/empresa` | cuenta admin, suscripción vigente |
 | PATCH | `/api/v1/admin/empresa` | cuenta admin, suscripción vigente |
+| PUT | `/api/v1/admin/empresa/foto` | cuenta admin, suscripción vigente. Sube o cambia la foto del negocio |
+| GET | `/uploads/empresas/<archivo>` | público. La imagen guardada (se usa la `fotoUrl` que devuelve la API) |
 
 ### Contrato de cuentas, prueba gratuita y administración
 
@@ -129,7 +132,8 @@ Ambos se envían como `Authorization: Bearer <token>`.
 
 **GET `/api/v1/admin/empresa`**: perfil de la empresa del administrador (siempre la suya; no recibe id).
 
-- Responde **200** `{ "id", "nombre", "codigoAcceso", "categoria", "nit", "telefono", "correo", "direccion", "ciudad", "diasAtencion", "horarioApertura": "08:00", "horarioCierre": "19:00", "nombreAdministradora", "numeroEmpleados", "logoUrl", "colorPrimario", "colorSecundario", "estadoSuscripcion", "trialEndsAt", "creadaEn" }`.
+- Responde **200** `{ "id", "nombre", "codigoAcceso", "categoria", "nit", "telefono", "correo", "direccion", "ciudad", "diasAtencion", "horarioApertura": "08:00", "horarioCierre": "19:00", "nombreAdministradora", "numeroEmpleados", "logoUrl", "fotoUrl", "colorPrimario", "colorSecundario", "estadoSuscripcion", "trialEndsAt", "creadaEn" }`.
+- `fotoUrl` es la dirección completa de la foto subida (ej. `https://api.mibarberia.co/uploads/empresas/<uuid>.jpg`) o `null` si no tiene. `logoUrl` es otro campo: una dirección web que el administrador escribe a mano.
 
 **PATCH `/api/v1/admin/empresa`**: modifica la empresa del administrador.
 
@@ -137,6 +141,29 @@ Ambos se envían como `Authorization: Bearer <token>`.
 - Cambiar `correo` aquí cambia el correo de contacto de la empresa, **no** el correo de inicio de sesión del administrador.
 - Responde **200** con el perfil actualizado (misma forma que el GET).
 - Errores: **400** `Envía al menos un dato para actualizar` y los de validación; **409** NIT repetido.
+
+**PUT `/api/v1/admin/empresa/foto`**: sube la foto del negocio o reemplaza la que tenía (la anterior se borra del servidor).
+
+- Recibe `multipart/form-data` con **un solo** archivo en el campo `foto` y nada más. Solo JPG, PNG o WEBP, máximo 5 MB. El tipo se comprueba por el contenido del archivo, no por su nombre. Ejemplo en Expo:
+
+  ```ts
+  const datos = new FormData();
+  datos.append('foto', { uri, name: 'foto.jpg', type: 'image/jpeg' } as any);
+  await fetch(`${API}/api/v1/admin/empresa/foto`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}` }, // no pongas Content-Type: fetch lo arma
+    body: datos,
+  });
+  ```
+
+- Responde **200** `{ "mensaje": "Foto del negocio actualizada", "fotoUrl": "https://…/uploads/empresas/<uuid>.jpg" }`.
+- Errores: **400** `La foto debe ser una imagen JPG, PNG o WEBP` o `Envía la imagen en el campo "foto" (multipart/form-data)` (sin archivo, otro campo, más de un archivo o cuerpo mal formado); **413** `La foto no puede pesar más de 5 MB`; además los errores comunes de `/api/v1/admin/...` (401, 403, 402).
+- La foto queda en `<CARPETA_SUBIDAS>/empresas/` con un nombre aleatorio; la base guarda solo la ruta (`/uploads/empresas/<uuid>.<ext>`, columna `empresas.foto_url`, migración 004). Para mostrarla usa `fotoUrl` tal cual.
+
+**GET `/api/v1/empresas/perfil/:codigo`**: información del negocio para los clientes, con su foto. Público (sin token), usa el mismo código de acceso de `/empresas/validar/:codigo` y el mismo límite por IP.
+
+- Responde **200** `{ "id", "nombre", "codigoAcceso", "categoria", "telefono", "correo", "direccion", "ciudad", "diasAtencion", "horarioApertura": "08:00", "horarioCierre": "19:00", "logoUrl", "fotoUrl", "colorPrimario", "colorSecundario" }`. No incluye NIT, nombre de la administradora, número de empleados ni datos de la suscripción. Los campos sin dato llegan como `null`.
+- Errores: **404** `Establecimiento no encontrado`; **429** demasiados intentos.
 
 **Errores comunes de `/api/v1/admin/...`**
 
