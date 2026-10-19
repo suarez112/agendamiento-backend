@@ -28,6 +28,7 @@ export type DatosRegistroCliente = {
 
 const CORREO_REPETIDO = 'Ya existe una cuenta con ese correo';
 export const USUARIO_REPETIDO = 'Ese usuario ya está en uso. Elige otro.';
+const TELEFONO_REPETIDO = 'Ya existe una cuenta con ese número de teléfono';
 
 // Traduce los choques con índices únicos a un 409 con un mensaje claro
 const traducirDuplicado = (error: unknown): never => {
@@ -39,6 +40,8 @@ const traducirDuplicado = (error: unknown): never => {
       throw errores.conflicto(USUARIO_REPETIDO);
     }
     if (restriccion === 'empresas_codigo_acceso_key') throw errores.conflicto(CODIGO_REPETIDO);
+    // El teléfono es único entre las cuentas de cliente (migración 011)
+    if (restriccion === 'usuarios_telefono_cliente_key') throw errores.conflicto(TELEFONO_REPETIDO);
   }
   throw error;
 };

@@ -10,6 +10,7 @@ import {
 } from '../empresas/empresas.esquemas.js';
 import { texto } from '../../shared/http/esquemas.js';
 import { esquemaIndicativo } from '../citas/citas.esquemas.js';
+import { conTelefonoNormalizado } from '../../shared/telefonos.js';
 import { aceptacionObligatoria } from '../legal/legal.js';
 import type { ServicioCuentas } from './cuentas.servicio.js';
 
@@ -46,7 +47,8 @@ const esquemaRegistroCliente = z
     },
     { error: 'Envía tus datos para crear la cuenta' },
   )
-  .refine((d) => d.correo !== undefined || d.usuario !== undefined, { error: CORREO_O_USUARIO });
+  .refine((d) => d.correo !== undefined || d.usuario !== undefined, { error: CORREO_O_USUARIO })
+  .transform(conTelefonoNormalizado);
 
 const FALTAN_DATOS = 'Debes enviar correo y contraseña';
 

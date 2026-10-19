@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import { CODIGO_PG, enTransaccion, esErrorPg } from '../../db/pool.js';
 import { errores } from '../../shared/errores.js';
+import { esE164 } from '../../shared/telefonos.js';
 import type { Sesion } from '../auth/auth.servicio.js';
 import type { FilaUsuario } from '../cuentas/cuentas.repositorio.js';
 import { buscarSuscripcion } from '../empresas/empresas.repositorio.js';
@@ -20,10 +21,12 @@ export const crearServicioCitas = ({ pool }: { pool: pg.Pool }) => ({
   // cuenta: cliente con sesión (usa su nombre y teléfono); null = reserva como invitado
   async crear(datos: DatosNuevaCita, cuenta: FilaUsuario | null = null) {
     const { empresaId, barberoId, servicioId, fecha, hora } = datos;
-    // Los datos de la cuenta mandan; una cuenta antigua sin nombre o teléfono usa los del cuerpo
+    // Los datos de la cuenta mandan; una cuenta antigua sin nombre o teléfono (o con un
+    // teléfono que no se pudo pasar a E.164) usa los del cuerpo, ya normalizados
     const nombre = cuenta?.nombre ?? datos.nombre;
-    const telefono = cuenta?.telefono ?? datos.telefono;
-    const indicativo = (cuenta?.telefono && cuenta.indicativo) || datos.indicativo;
+    const telefonoCuenta = cuenta && esE164(cuenta.telefono) ? cuenta.telefono : null;
+    const telefono = telefonoCuenta ?? datos.telefono;
+    const indicativo = (telefonoCuenta && cuenta?.indicativo) || datos.indicativo;
     if (!nombre || !telefono) throw errores.solicitudInvalida(FALTAN_DATOS);
 
     // Autorización de tratamiento de datos: el invitado acepta en cada reserva;

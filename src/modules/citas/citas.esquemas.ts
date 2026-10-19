@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { conTelefonoNormalizado } from '../../shared/telefonos.js';
 import { aceptacionOpcional } from '../legal/legal.js';
 import { esFechaReal, hora12AMinutos } from './horas.js';
 
@@ -24,14 +25,14 @@ export const esquemaCrearCita = z.object(
     hora: texto(FALTAN_DATOS).refine((h) => hora12AMinutos(h) !== null, FORMATO_INCORRECTO),
     // Obligatorios para el invitado. Un cliente con sesión usa los de su cuenta.
     nombre: texto(FALTAN_DATOS).max(100, 'El nombre es demasiado largo').optional(),
-    // Se guarda tal cual lo escribe el cliente; solo se limita el largo
+    // Se valida y se guarda en E.164 (ver shared/telefonos.ts)
     telefono: texto(FALTAN_DATOS).max(30, 'El teléfono no es válido').optional(),
     indicativo: esquemaIndicativo,
     // Política de Tratamiento de Datos y Términos y Condiciones
     ...aceptacionOpcional,
   },
   { error: FALTAN_DATOS },
-);
+).transform(conTelefonoNormalizado);
 
 export type DatosNuevaCita = z.output<typeof esquemaCrearCita>;
 

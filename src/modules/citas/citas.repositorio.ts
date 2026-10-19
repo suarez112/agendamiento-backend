@@ -54,7 +54,8 @@ export const buscarDatosReserva = async (
     )
   ).rows[0];
 
-// Crea el cliente o suma una cita al existente, sin carreras entre solicitudes
+// Crea el cliente o suma una cita al existente, sin carreras entre solicitudes.
+// El teléfono (E.164) es único por negocio.
 export const registrarCliente = async (
   db: Consultable,
   c: { id: string; empresaId: string; telefono: string; indicativo: string; nombre: string; fecha: string },
@@ -63,7 +64,7 @@ export const registrarCliente = async (
     await db.query<{ id: string }>(
       `INSERT INTO clientes (id, empresa_id, telefono, indicativo, nombre, total_citas, fecha_ultima_cita)
        VALUES ($1, $2, $3, $4, $5, 1, $6)
-       ON CONFLICT (empresa_id, indicativo, telefono) DO UPDATE
+       ON CONFLICT (empresa_id, telefono) DO UPDATE
          SET total_citas = clientes.total_citas + 1,
              fecha_ultima_cita = EXCLUDED.fecha_ultima_cita
        RETURNING id`,
