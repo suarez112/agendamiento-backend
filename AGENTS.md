@@ -17,6 +17,10 @@ src/
   modules/auth/acceso.ts          login único (correo o usuario)
   modules/empresas/horario.ts     horario por día (tabla horarios_empresa)
   modules/ubicaciones/            departamentos y municipios de Colombia (DIVIPOLA del DANE, divipola.ts generado)
+  modules/empresas/suscripcion.ts estado de la suscripción y guardia 402
+  modules/legal/legal.ts          política y términos vigentes, prueba de las autorizaciones (Ley 1581)
+  modules/micuenta/               cuenta del cliente: negocios guardados y sus citas
+  db/activarPlan.ts, db/simularVencimiento.ts   comandos de desarrollador (ver "Comandos de desarrollador")
 db/migraciones/      SQL numerado NNN_nombre.sql; cada archivo en su propia transacción
 test/                node:test; cada archivo crea y borra su propia base temporal
 odd/tasks/           bitácoras de trabajo (specs, tareas, evidencia)
@@ -34,6 +38,20 @@ npm run typecheck    # tipos de src/ y test/
 npm test             # integración; requiere PostgreSQL y permiso CREATEDB
 ```
 
+### Comandos de desarrollador (suscripciones)
+
+No hay pagos reales. Para probar las suscripciones se usan dos comandos. `CODIGO` es el código del negocio (sin distinguir mayúsculas). Lee la base del `.env`; no hace falta tener el servidor encendido.
+
+```bash
+npm run dev:activar-plan -- CODIGO mensual     # o: anual
+npm run dev:simular-vencimiento -- CODIGO DIAS # ej. 3, 0 o -2
+```
+
+- **`dev:activar-plan`**: deja la empresa `activa` con ese plan. Fecha de pago = hoy (Colombia). Fecha de fin = 1 mes o 1 año después de hoy, o después del fin del plan actual si aún no vencía (una renovación anticipada no pierde días). Sirve también para activar a mano un negocio en producción mientras no haya pagos. Ejemplo: `npm run dev:activar-plan -- CENTRAL10 anual` → `✔ Barbería Central (CENTRAL10): plan anual activo. Pago: 2026-10-19. Fin: 2027-10-19. Días restantes: 365.`
+- **`dev:simular-vencimiento`**: deja a la empresa con `DIAS` días restantes de su prueba (si está en prueba) o de su plan (si está activa), cambiando la fecha de fin. `0` o negativo = vencida. Para un negocio vencido, actívale antes un plan. **No funciona con `NODE_ENV=production`** (responde con error y no cambia nada). Ejemplos: `-- CENTRAL10 5` (recordatorio de los últimos 7 días), `-- CENTRAL10 0` (vencida hoy).
+
+Los dos muestran cómo quedó: estado, fecha de fin y días restantes.
+
 Puerto por defecto `4000` (`PORT`). Rutas bajo `/api/v1`.
 
 ## Base de datos y entorno
@@ -42,6 +60,8 @@ Puerto por defecto `4000` (`PORT`). Rutas bajo `/api/v1`.
 - Variables en `.env` en la raíz (ignorado por git; nunca lo subas). Se validan al arrancar en `src/config/entorno.ts`: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_POOL_MAX`, `JWT_SECRET`, `JWT_EXPIRA_EN`, `CORS_ORIGINS`, `TRUST_PROXY`, `NODE_ENV`, `PORT`, `CARPETA_SUBIDAS` (opcional, por defecto `uploads`: carpeta de las fotos subidas, ignorada por git) y `URL_PUBLICA` (opcional: dirección pública del servidor, ej. `https://api.mibarberia.co`, para armar las URL de las fotos; si falta se usa la dirección de cada solicitud, así que configúrala en producción).
 - El esquema solo cambia con un archivo nuevo en `db/migraciones/` (siguiente número). Nunca edites una migración ya aplicada.
 - Migración 007: horario por día en `horarios_empresa` (un día sin fila = cerrado; reemplaza `dias_atencion`, `horario_apertura` y `horario_cierre`, que se copiaron ahí), quita `nit`, `telefono` y `correo` de `empresas`, agrega `empresas.departamento`, empleados de 1 a 10, código del negocio `^[A-Z0-9]{1,10}$`, `usuarios.usuario` y bloqueos semanales o de una fecha (`bloqueos_tipo_valido`). La 008 corrige el trigger de usuario único.
+- Migración 009: `barberos.atiende_clientes`; plan de la suscripción (`empresas.plan_suscripcion` `mensual`|`anual`, `fecha_pago`, `suscripcion_fin`); cuentas de cliente (`usuarios.nombre`, `telefono`, `indicativo`; `correo` pasa a opcional: correo o usuario); `negocios_guardados`; `citas.usuario_id` (cliente que reservó con su sesión); `documentos_legales` y `autorizaciones_datos`. La 010 publica el borrador `0.1-borrador` de la política y los términos.
+- **Publicar una versión nueva de la política o los términos**: una migración nueva que inserte una fila en `documentos_legales` con otra `version` (nunca edites las filas publicadas). La más reciente es la vigente; los clientes con cuenta la aceptan en su próxima reserva.
 
 ## Endpoints
 
@@ -50,26 +70,33 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | Método | Ruta | Acceso |
 | --- | --- | --- |
 | GET | `/api/saludo` | público (salud) |
-| POST | `/api/v1/login` | público, limitado. **Login único**: administradora o personal. Cuerpo `{ usuario: "correo o usuario", clave }` |
+| POST | `/api/v1/login` | público, limitado. **Login único**: administradora, personal o cliente con cuenta. Cuerpo `{ usuario: "correo o usuario", clave }` |
 | POST | `/api/v1/auth/login` | público, limitado. Personal (barberos). Cuerpo `{ usuario, clave }` (se mantiene) |
 | GET | `/api/v1/ubicaciones` | público. Departamentos de Colombia con sus municipios |
+| GET | `/api/v1/legal/politica-datos` | público. Texto vigente de la Política de Tratamiento de Datos, con su versión |
+| GET | `/api/v1/legal/terminos` | público. Texto vigente de los Términos y Condiciones, con su versión |
 | GET | `/api/v1/empresas/codigo-disponible/:codigo` | público, limitado. ¿Algún negocio usa ya ese código? |
 | GET | `/api/v1/empresas/validar/:codigo` | público, limitado |
 | GET | `/api/v1/empresas/perfil/:codigo` | público, limitado. Información del negocio con su foto, para clientes |
 | GET | `/api/v1/empresas/actual` | sesión del personal |
-| POST | `/api/v1/citas` | público, limitado. Solo de hoy a 14 días después (hora de Colombia) y dentro del horario de ese día. 403 si el teléfono está en la lista negra; 409 si choca con un bloqueo |
+| POST | `/api/v1/citas` | público, limitado. Invitado o cliente con sesión. Exige aceptar la política y los términos (ver "Reservas"). Solo de hoy a 14 días después (hora de Colombia) y dentro del horario de ese día. 403 si el teléfono está en la lista negra o el negocio está vencido; 409 si choca con un bloqueo |
 | GET | `/api/v1/citas/ocupadas?empresaId=` | público (sin datos de clientes) |
 | GET | `/api/v1/citas/bloqueos?empresaId=` | público. Horarios bloqueados del equipo, semanales y de una fecha (sin el motivo) |
-| GET | `/api/v1/citas/agenda` | sesión del personal (admin: todo el negocio; barbero: sus citas) |
-| PATCH | `/api/v1/citas/:id/completar` | sesión del personal: el barbero de la cita, o la cuenta admin (cualquier cita del negocio) |
+| GET | `/api/v1/citas/agenda` | sesión del personal (admin: todo el negocio; empleado: sus citas), suscripción vigente |
+| PATCH | `/api/v1/citas/:id/completar` | sesión del personal: el barbero de la cita, o la cuenta admin (cualquier cita del negocio), suscripción vigente |
 | PATCH | `/api/v1/citas/:id/cancelar` | sesión del personal, solo admin del negocio, suscripción vigente (402 si no) |
-| POST | `/api/v1/cuentas/registro/empresa` | público, limitado. Crea empresa + administrador |
-| POST | `/api/v1/cuentas/registro/cliente` | público, limitado |
-| POST | `/api/v1/cuentas/login` | público, limitado. Administradores de empresa y clientes |
-| GET | `/api/v1/admin/empresa/prueba` | cuenta admin (responde aunque la prueba haya vencido) |
-| GET | `/api/v1/admin/empresa` | cuenta admin, suscripción vigente |
-| PATCH | `/api/v1/admin/empresa` | cuenta admin, suscripción vigente |
-| PUT | `/api/v1/admin/empresa/foto` | cuenta admin, suscripción vigente. Sube o cambia la foto del negocio |
+| POST | `/api/v1/cuentas/registro/empresa` | público, limitado. Crea empresa + administrador. Exige aceptar la política y los términos |
+| POST | `/api/v1/cuentas/registro/cliente` | público, limitado. Exige aceptar la política y los términos |
+| POST | `/api/v1/cuentas/login` | público, limitado. Administradores de empresa y clientes (con correo) |
+| GET | `/api/v1/admin/empresa/suscripcion` | personal admin (los dos tipos), **aunque esté vencida**. Estado, plan, fechas, días restantes y recordatorio |
+| GET | `/api/v1/admin/empresa/prueba` | personal admin, aunque esté vencida (se mantiene; usa `/suscripcion`) |
+| GET | `/api/v1/admin/empresa` | personal admin, aunque esté vencida ("Mi negocio") |
+| PATCH | `/api/v1/admin/empresa` | personal admin, aunque esté vencida |
+| PUT | `/api/v1/admin/empresa/foto` | personal admin, aunque esté vencida. Sube o cambia la foto del negocio |
+| GET | `/api/v1/mi-cuenta/negocios` | cuenta de cliente. Negocios guardados |
+| POST | `/api/v1/mi-cuenta/negocios` | cuenta de cliente, limitado. Guarda un negocio con su código |
+| DELETE | `/api/v1/mi-cuenta/negocios/:id` | cuenta de cliente. Quita un negocio de la lista |
+| GET | `/api/v1/mi-cuenta/citas` | cuenta de cliente. Citas que reservó con su sesión |
 | GET | `/api/v1/clientes` | personal admin, suscripción vigente. Clientes del negocio |
 | GET | `/api/v1/clientes/:id/historial` | personal admin, suscripción vigente |
 | GET | `/api/v1/clientes/lista-negra` | personal admin, suscripción vigente |
@@ -80,7 +107,7 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | PATCH | `/api/v1/equipo/:id` | personal admin, suscripción vigente |
 | DELETE | `/api/v1/equipo/:id` | personal admin, suscripción vigente |
 | PUT | `/api/v1/equipo/:id/foto` | personal admin, suscripción vigente |
-| GET | `/api/v1/servicios` | personal (cualquiera), suscripción vigente |
+| GET | `/api/v1/servicios` | personal admin, suscripción vigente |
 | POST | `/api/v1/servicios` | personal admin, suscripción vigente |
 | PATCH | `/api/v1/servicios/:id` | personal admin, suscripción vigente |
 | DELETE | `/api/v1/servicios/:id` | personal admin, suscripción vigente |
@@ -91,30 +118,31 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | DELETE | `/api/v1/productos/:id` | personal admin, suscripción vigente |
 | PUT | `/api/v1/productos/:id/foto` | personal admin, suscripción vigente |
 | DELETE | `/api/v1/productos/:id/foto` | personal admin, suscripción vigente |
-| GET | `/api/v1/bloqueos` | personal (admin: todo el equipo; barbero: solo los suyos), suscripción vigente |
-| POST | `/api/v1/bloqueos` | personal admin, suscripción vigente (los barberos no pueden bloquear) |
+| GET | `/api/v1/bloqueos` | personal admin, suscripción vigente (los empleados no ven ni usan bloqueos) |
+| POST | `/api/v1/bloqueos` | personal admin, suscripción vigente |
 | DELETE | `/api/v1/bloqueos/:id` | personal admin, suscripción vigente |
-| GET | `/api/v1/cartera?desde=&hasta=` | personal (admin: todo el negocio; barbero: lo suyo), suscripción vigente |
+| GET | `/api/v1/cartera?desde=&hasta=&barberoId=` | personal (admin: todo el negocio o un integrante; empleado: lo suyo), suscripción vigente |
 | GET | `/uploads/empresas/<archivo>`, `/uploads/barberos/<archivo>`, `/uploads/productos/<archivo>` | público. La imagen guardada (se usa la dirección que devuelve la API) |
 
-"Sesión del personal" acepta **dos tokens**: el del barbero (`/api/v1/auth/login`) y el de la **cuenta del administrador de la empresa** (`/api/v1/cuentas/login`, `rol = admin`). La cuenta admin cuenta como administrador del negocio (`esAdmin`), siempre de su propia empresa. "Personal admin" = barbero con `esAdmin` o cuenta admin. Detalle en "Gestión del negocio".
+"Sesión del personal" acepta **dos tokens**: el del barbero (`/api/v1/auth/login`) y el de la **cuenta del administrador de la empresa** (`/api/v1/cuentas/login`, `rol = admin`). La cuenta admin cuenta como administrador del negocio (`esAdmin`), siempre de su propia empresa. "Personal admin" = integrante del equipo con rol Administrador (`esAdmin`) o cuenta admin: **los dos tienen los mismos permisos** sobre su empresa (Mi negocio, suscripción, equipo, servicios, productos, bloqueos, clientes y la cartera completa). Un **empleado** (integrante con rol Empleado) solo usa su agenda y su propia cartera. Detalle en "Gestión del negocio".
 
 ### Contrato de cuentas, prueba gratuita y administración
 
 Hay dos tipos de sesión:
 
-- **Personal** (`/api/v1/auth/login` o `/api/v1/login`, tabla `barberos`): sirve en `/empresas/actual`, `/citas/...` y los endpoints de gestión (`/clientes`, `/equipo`, `/servicios`, `/productos`, `/bloqueos`, `/cartera`). En `/api/v1/admin/...` responde 401.
-- **Cuenta** (`/api/v1/cuentas/...` o `/api/v1/login`, tabla `usuarios`, `rol` = `admin` | `cliente`): sirve en `/api/v1/admin/...`. La cuenta **admin** también sirve en todos los endpoints del personal, como administradora de su empresa. La de un **cliente** responde 403 `Esta función es solo para el personal del negocio.` en los endpoints del personal.
+- **Personal** (`/api/v1/auth/login` o `/api/v1/login`, tabla `barberos`): sirve en `/empresas/actual`, `/citas/...` y los endpoints de gestión (`/clientes`, `/equipo`, `/servicios`, `/productos`, `/bloqueos`, `/cartera`). Un integrante con rol Administrador también sirve en `/api/v1/admin/empresa/...` (Mi negocio y suscripción); un empleado ahí responde 403 `Solo el administrador del negocio puede usar esta función.`
+- **Cuenta** (`/api/v1/cuentas/...` o `/api/v1/login`, tabla `usuarios`, `rol` = `admin` | `cliente`): la cuenta **admin** sirve en `/api/v1/admin/...` y en todos los endpoints del personal, como administradora de su empresa. La de un **cliente** sirve en `/api/v1/mi-cuenta/...` y para reservar con su sesión; en los endpoints del personal y de `/api/v1/admin/...` responde 403 `Esta función es solo para el personal del negocio.`
 
 Ambos se envían como `Authorization: Bearer <token>`.
 
-**POST `/api/v1/login`** (login único): la administradora o alguien del personal entra con su **correo o usuario** y su contraseña; el backend detecta quién es. Los logins de antes (`/auth/login` y `/cuentas/login`) siguen funcionando igual.
+**POST `/api/v1/login`** (login único): la administradora, alguien del personal o un **cliente con cuenta** entra con su **correo o usuario** y su contraseña; el backend detecta quién es. Los logins de antes (`/auth/login` y `/cuentas/login`) siguen funcionando igual.
 
-- Recibe `{ "usuario": "ana.perez" | "ana@central.co", "clave": "…" }`. Si el texto tiene `@` se busca como correo (solo las cuentas tienen correo); si no, como usuario (no distingue mayúsculas). Un usuario nunca se repite entre administradoras y personal, así que no hay ambigüedad.
+- Recibe `{ "usuario": "ana.perez" | "ana@central.co", "clave": "…" }`. Si el texto tiene `@` se busca como correo (solo las cuentas tienen correo); si no, como usuario (no distingue mayúsculas). Un usuario nunca se repite entre cuentas (administradoras y clientes) y personal, así que no hay ambigüedad.
 - Responde **200** con `tipo` y, según el caso, la misma respuesta del login de antes:
-  - Administradora: `{ "tipo": "admin", "mensaje": "Autenticación exitosa", "token": "<jwt de cuenta>", "usuario": { "id", "correo", "usuario", "rol": "admin", "empresaId" } }`
-  - Personal: `{ "tipo": "personal", "mensaje": "Autenticación exitosa", "token": "<jwt del personal>", "barbero": { …igual que /auth/login… } }`
-- Errores: **400** `Debes enviar tu correo o usuario y tu contraseña`; **401** `Correo, usuario o contraseña incorrectos` (igual si no existe); **403** `Esta es una cuenta de cliente. Inicia sesión en la opción para clientes.` (cuenta de cliente con la contraseña correcta; los clientes usan `/cuentas/login`); **429** demasiados intentos fallidos.
+  - Administradora: `{ "tipo": "admin", "mensaje": "Autenticación exitosa", "token": "<jwt de cuenta>", "usuario": { "id", "correo", "usuario", "rol": "admin", "empresaId", "nombre": null, "telefono": null, "indicativo": null } }`
+  - Cliente: `{ "tipo": "cliente", "mensaje": "Autenticación exitosa", "token": "<jwt de cuenta>", "usuario": { "id", "correo" | null, "usuario" | null, "rol": "cliente", "empresaId": null, "nombre", "telefono", "indicativo" }, "debeAceptarDocumentos": false }`. `debeAceptarDocumentos: true` = se publicó una versión nueva de la política o los términos y deberá aceptarla en su próxima reserva.
+  - Personal: `{ "tipo": "personal", "mensaje": "Autenticación exitosa", "token": "<jwt del personal>", "barbero": { …igual que /auth/login… } }` (ahora incluye `rol` `"admin"` | `"empleado"` y `atiendeClientes`).
+- Errores: **400** `Debes enviar tu correo o usuario y tu contraseña`; **401** `Correo, usuario o contraseña incorrectos` (igual si no existe); **402** `Este negocio está inactivo por ahora. Comunícate con el administrador del negocio.` (empleado de un negocio con la suscripción vencida; también en `/auth/login`); **429** demasiados intentos fallidos. Ya no responde 403 a los clientes.
 
 **POST `/api/v1/cuentas/registro/empresa`**: registra la empresa, su horario y su administradora. La administradora entra después con su `correo` o su `usuario`, y la `clave`.
 
@@ -142,7 +170,9 @@ Ambos se envían como `Authorization: Bearer <token>`.
     "logoUrl": "https://cdn.central.co/logo.png", // opcional (o null); http:// o https://
     "correo": "ana@central.co",            // obligatorio: correo de inicio de sesión; único entre todas las cuentas
     "usuario": "ana.perez",                // obligatorio: 4 a 20, solo letras, números, punto y guion bajo; único (ver abajo)
-    "clave": "clave-segura-123"            // obligatorio, 8 a 64 caracteres
+    "clave": "clave-segura-123",           // obligatorio, 8 a 64 caracteres
+    "aceptaPoliticaDatos": true,           // obligatorio: debe ser true (ver "Autorización de tratamiento de datos")
+    "aceptaTerminos": true                 // obligatorio: debe ser true
   }
   ```
 
@@ -175,6 +205,8 @@ Ambos se envían como `Authorization: Bearer <token>`.
   - `El departamento no es un departamento de Colombia`, `La ciudad no es un municipio de ese departamento`
   - `El campo "horario" es obligatorio`, `El horario debe traer los 7 días de la semana (0 = domingo … 6 = sábado), cada uno una sola vez`, `Indica en cada día del horario si está abierto ("abierto": true o false)`, `El martes está abierto: indica su hora de apertura y de cierre`, `El miércoles, la hora de cierre debe ser posterior a la de apertura`, `Las horas del horario deben tener el formato HH:MM (24 horas)`, `El negocio debe abrir al menos un día`
 
+  - `Debes aceptar la Política de Tratamiento de Datos y los Términos y Condiciones` (falta `aceptaPoliticaDatos` o `aceptaTerminos`, o no es `true`)
+
   **409** `Ya existe una cuenta con ese correo`, `Ese usuario ya está en uso. Elige otro.` o `Ese código ya lo usa otro negocio. Elige otro.`; **429** demasiados registros.
 
 **GET `/api/v1/empresas/codigo-disponible/:codigo`**: público (sin token), mismo límite por IP que `/empresas/validar/:codigo`.
@@ -184,24 +216,59 @@ Ambos se envían como `Authorization: Bearer <token>`.
 
 **GET `/api/v1/ubicaciones`**: público. **200** `[{ "codigo": "68", "nombre": "SANTANDER", "municipios": [{ "codigo": "68001", "nombre": "BUCARAMANGA" }, …] }, …]`: los 33 departamentos (incluye `BOGOTÁ, D.C.`) y sus 1122 municipios, ordenados por nombre. Envía `nombre` tal cual en el registro. La respuesta se puede guardar en caché un día.
 
-**POST `/api/v1/cuentas/registro/cliente`**: crea una cuenta de cliente (sin empresa).
+**POST `/api/v1/cuentas/registro/cliente`**: crea una cuenta de cliente (sin empresa). Es opcional: se puede seguir reservando como invitado.
 
-- Recibe `{ "correo": "cliente@correo.com", "clave": "8 a 64 caracteres" }`.
-- Responde **201** `{ "mensaje": "Cuenta creada", "token": "<jwt>", "usuario": { "id", "correo", "usuario": null, "rol": "cliente", "empresaId": null } }`.
-- Errores: **400** (`Envía correo y contraseña` si no hay cuerpo, `El campo "correo" es obligatorio`, `El correo no es válido`, `La contraseña debe tener entre 8 y 64 caracteres`); **409** `Ya existe una cuenta con ese correo`; **429**.
+- Recibe:
+
+  ```jsonc
+  {
+    "nombre": "Juan Gómez",        // obligatorio, máx. 100 (se usa al reservar)
+    "telefono": "3001234567",      // obligatorio, máx. 30 (se usa al reservar)
+    "indicativo": "57",            // opcional, por defecto 57
+    "correo": "juan@correo.com",   // correo o usuario (o los dos): con eso inicia sesión
+    "usuario": "juan.gomez",       // mismas reglas y unicidad que el usuario de la administradora
+    "clave": "clave-segura-123",   // 8 a 64 caracteres
+    "aceptaPoliticaDatos": true,   // obligatorio: true
+    "aceptaTerminos": true         // obligatorio: true
+  }
+  ```
+
+- Responde **201** `{ "mensaje": "Cuenta creada", "token": "<jwt>", "usuario": { "id", "correo" | null, "usuario" | null, "rol": "cliente", "empresaId": null, "nombre", "telefono", "indicativo" } }`. Inicia sesión después con `/api/v1/login` (correo o usuario).
+- Errores: **400** (`Envía tus datos para crear la cuenta` si no hay cuerpo, `El campo "nombre" es obligatorio`, `El campo "teléfono" es obligatorio`, `Envía tu correo o un nombre de usuario para iniciar sesión`, `El correo no es válido`, el mensaje de usuario inválido, `La contraseña debe tener entre 8 y 64 caracteres`, `Debes aceptar la Política de Tratamiento de Datos y los Términos y Condiciones`); **409** `Ya existe una cuenta con ese correo` o `Ese usuario ya está en uso. Elige otro.`; **429**.
 
 **POST `/api/v1/cuentas/login`**: login de administradoras y clientes con correo (se mantiene; para la administradora también sirve `/api/v1/login`).
 
 - Recibe `{ "correo", "clave" }` (el correo no distingue mayúsculas).
-- Responde **200** `{ "mensaje": "Autenticación exitosa", "token": "<jwt>", "usuario": { "id", "correo", "usuario", "rol", "empresaId" } }`. `usuario.rol` (`admin` o `cliente`) indica qué pantallas mostrar; `usuario.usuario` es `null` en los clientes.
+- Responde **200** `{ "mensaje": "Autenticación exitosa", "token": "<jwt>", "usuario": { "id", "correo", "usuario", "rol", "empresaId", "nombre", "telefono", "indicativo" } }` (los clientes además llevan `debeAceptarDocumentos`). `usuario.rol` (`admin` o `cliente`) indica qué pantallas mostrar. Un cliente que se registró solo con usuario entra por `/api/v1/login`.
 - Errores: **400** `Debes enviar correo y contraseña`; **401** `Correo o contraseña incorrectos` (igual si el correo no existe); **429**.
 
-**GET `/api/v1/admin/empresa/prueba`**: días de prueba que le quedan a la empresa del administrador.
+**GET `/api/v1/admin/empresa/suscripcion`** (los dos tipos de admin; responde aunque esté vencida): la suscripción de la empresa.
+
+- Responde **200**:
+
+  ```json
+  { "estado": "activa", "plan": "mensual", "fechaPago": "2026-10-19", "fechaFin": "2026-11-19",
+    "diasRestantes": 5, "mostrarRecordatorio": true,
+    "mensaje": "Te quedan 5 días de tu plan mensual. Renuévalo para no perder el acceso." }
+  ```
+
+- `estado`: `"prueba"` (15 días gratis desde el registro), `"activa"` (plan `"mensual"` o `"anual"`) o `"vencida"`.
+- `fechaPago` y `plan` son `null` en la prueba. `fechaFin` (AAAA-MM-DD) es el día en que termina la prueba o el plan. Las empresas activas de antes de los planes tienen `plan`, `fechaPago`, `fechaFin` y `diasRestantes` en `null` y no vencen.
+- `diasRestantes` = `fechaFin` − hoy, con la **fecha actual de Colombia**: baja uno cada día a medianoche. El día de `fechaFin` ya es 0 y la suscripción queda **vencida**. Vencida = `0`.
+- `mostrarRecordatorio`: `true` siempre durante la prueba y en los últimos 7 días de un plan (`diasRestantes` ≤ 7). `mensaje` es el texto para mostrar (o el aviso de vencida); `null` si no hay nada que mostrar.
+- Los planes se activan con `npm run dev:activar-plan` (no hay pagos reales; ver "Comandos de desarrollador").
+
+**Cuando la suscripción está vencida**:
+- La administradora (cuenta o integrante admin) **puede iniciar sesión** y usar Mi negocio (`GET`/`PATCH /admin/empresa`, `PUT /admin/empresa/foto`) y la consulta de suscripción. Todo lo demás responde **402** (equipo, servicios, productos, bloqueos, clientes, cartera, agenda, completar y cancelar citas).
+- Los **empleados** no pueden entrar: el login, la agenda, completar citas y la cartera responden **402** `Este negocio está inactivo por ahora. Comunícate con el administrador del negocio.` (`/empresas/actual` sigue respondiendo: es la misma información pública de `/empresas/validar/:codigo`).
+- Los **clientes no pueden reservar**: `POST /citas` responde **403** `Este negocio no está recibiendo reservas por ahora`. `/empresas/validar/:codigo` (`empresa.recibiendoReservas`), `/empresas/perfil/:codigo` y `/mi-cuenta/negocios` traen `recibiendoReservas: false` para avisar antes.
+
+**GET `/api/v1/admin/empresa/prueba`** (se mantiene para la app de antes; usa `/suscripcion`): días de prueba que le quedan a la empresa.
 
 - Responde **200** `{ "estadoSuscripcion": "trial", "trialEndsAt": "<fecha ISO>", "diasRestantes": 12, "pruebaVencida": false }`.
-- `diasRestantes` se redondea hacia arriba (quedan 2 horas = 1) y nunca es negativo; es `null` si la empresa no está en prueba (por ejemplo `"activa"`). Con la prueba vencida responde `diasRestantes: 0` y `pruebaVencida: true`.
+- `diasRestantes` se cuenta igual que en `/suscripcion` (fecha de Colombia) y nunca es negativo; es `null` si la empresa no está en prueba (por ejemplo `"activa"`). Con la prueba vencida responde `diasRestantes: 0` y `pruebaVencida: true`.
 
-**GET `/api/v1/admin/empresa`** ("Mi negocio"): perfil de la empresa del administrador (siempre la suya; no recibe id).
+**GET `/api/v1/admin/empresa`** ("Mi negocio"): perfil de la empresa del administrador (siempre la suya; no recibe id). Lo usan la cuenta admin y los integrantes con rol Administrador. `estadoSuscripcion` es el estado guardado; el estado real (con la fecha de fin) está en `/admin/empresa/suscripcion`.
 
 - Responde **200** `{ "id", "nombre", "codigoAcceso", "categoria", "direccion", "departamento", "ciudad", "horario", "diasAtencion", "horarioApertura", "horarioCierre", "nombreAdministradora", "numeroEmpleados", "logoUrl", "fotoUrl", "colorPrimario", "colorSecundario", "estadoSuscripcion", "trialEndsAt", "creadaEn" }`.
 - `horario` siempre trae los 7 días, de domingo (0) a sábado (6): `{ "dia": 0, "abierto": false, "apertura": null, "cierre": null }` o `{ "dia": 1, "abierto": true, "apertura": "08:00", "cierre": "19:00" }`.
@@ -214,7 +281,8 @@ Ambos se envían como `Authorization: Bearer <token>`.
 - Recibe uno o más de: `nombre`, `categoria`, `codigoAcceso`, `direccion`, `departamento` + `ciudad` (siempre juntos), `horario` (los 7 días, reemplaza el horario completo), `nombreAdministradora`, `numeroEmpleados`, `logoUrl`. Mismas validaciones del registro. Se ignoran `id`, `empresaId`, `estadoSuscripcion`, `trialEndsAt`, `correo`, `usuario`, `clave` y cualquier otro campo (el acceso de la administradora no se cambia aquí).
 - Cambiar `codigoAcceso` cambia el código que usan los clientes: el anterior deja de funcionar de inmediato.
 - Responde **200** con el perfil actualizado (misma forma que el GET). Los datos y el horario se guardan juntos: si algo falla, no cambia nada.
-- Errores: **400** `Envía al menos un dato para actualizar`, `Envía el departamento y la ciudad juntos` y los de validación del registro; **409** `Ese código ya lo usa otro negocio. Elige otro.`
+- `numeroEmpleados` es el máximo de integrantes activos del equipo; no puede quedar por debajo del equipo activo actual.
+- Errores: **400** `Envía al menos un dato para actualizar`, `Envía el departamento y la ciudad juntos` y los de validación del registro; **409** `Ese código ya lo usa otro negocio. Elige otro.` o `Tienes N integrante(s) activo(s) en el equipo. El número de empleados no puede ser menor; elimina primero del equipo a quien ya no trabaje en el negocio.`
 
 **PUT `/api/v1/admin/empresa/foto`**: sube la foto del negocio o reemplaza la que tenía (la anterior se borra del servidor).
 
@@ -236,17 +304,20 @@ Ambos se envían como `Authorization: Bearer <token>`.
 
 **GET `/api/v1/empresas/perfil/:codigo`**: información del negocio para los clientes, con su foto. Público (sin token), usa el mismo código de acceso de `/empresas/validar/:codigo` y el mismo límite por IP.
 
-- Responde **200** `{ "id", "nombre", "codigoAcceso", "categoria", "direccion", "departamento", "ciudad", "horario", "diasAtencion", "horarioApertura", "horarioCierre", "logoUrl", "fotoUrl", "colorPrimario", "colorSecundario" }`, con `horario` y los campos calculados igual que en `GET /admin/empresa`. Ya no incluye `telefono` ni `correo`. No incluye nombre de la administradora, número de empleados ni datos de la suscripción. Los campos sin dato llegan como `null`.
+- Responde **200** `{ "id", "nombre", "codigoAcceso", "categoria", "direccion", "departamento", "ciudad", "horario", "diasAtencion", "horarioApertura", "horarioCierre", "logoUrl", "fotoUrl", "colorPrimario", "colorSecundario", "recibiendoReservas" }` (`recibiendoReservas: false` si la suscripción venció), con `horario` y los campos calculados igual que en `GET /admin/empresa`. Ya no incluye `telefono` ni `correo`. No incluye nombre de la administradora, número de empleados ni datos de la suscripción. Los campos sin dato llegan como `null`.
 - Errores: **404** `Establecimiento no encontrado`; **429** demasiados intentos.
 
 **Errores comunes de `/api/v1/admin/...`**
 
-- **401**: sin token, token vencido o token del personal.
-- **403** `Solo el administrador de una empresa puede usar esta función.` (por ejemplo, un cliente).
-- **402**: suscripción no vigente (no aplica a `/prueba`; también lo responde `PATCH /citas/:id/cancelar`). Mensajes:
+- **401**: sin token o token vencido.
+- **403** `Solo el administrador del negocio puede usar esta función.` (empleado) o `Esta función es solo para el personal del negocio.` (cliente).
+- `/api/v1/admin/empresa/...` ya no responde 402: funciona con la suscripción vencida.
+
+**Mensajes 402 (suscripción no vigente)** en los endpoints de gestión, la agenda y las citas:
   - prueba vencida: `Tu prueba gratuita de 15 días terminó. Activa tu suscripción para seguir usando las funciones de administrador.`
-  - `vencida`: `La suscripción de tu empresa venció. Renuévala para seguir usando las funciones de administrador.`
+  - plan vencido o `vencida`: `La suscripción de tu empresa venció. Renuévala para seguir usando las funciones de administrador.`
   - `cancelada`: `La suscripción de tu empresa está cancelada. Actívala para seguir usando las funciones de administrador.`
+  - a un empleado, siempre: `Este negocio está inactivo por ahora. Comunícate con el administrador del negocio.`
 
 ### Gestión del negocio (personal y cuenta del administrador)
 
@@ -255,9 +326,11 @@ Todos usan `Authorization: Bearer <token>` del barbero o de la cuenta admin. El 
 **Errores comunes de estos endpoints**
 
 - **401** `Sesión no válida. Inicia sesión de nuevo.` o `Sesión vencida. Inicia sesión de nuevo.`
-- **403** `Esta función es solo para el personal del negocio.` (token de cliente) o `Solo el administrador del negocio puede usar esta función.` (barbero sin `esAdmin` en un endpoint de admin).
-- **402**: prueba gratuita vencida o suscripción no vigente, con los mismos mensajes de `/api/v1/admin/...`. Aplica a todos estos endpoints (también a los barberos), menos a los públicos.
+- **403** `Esta función es solo para el personal del negocio.` (token de cliente) o `Solo el administrador del negocio puede usar esta función.` (empleado en un endpoint de admin).
+- **402**: prueba gratuita o plan vencido, con los mensajes de "Mensajes 402". Aplica a todos estos endpoints (también a los empleados), menos a los públicos.
 - **400** `Envía al menos un dato para actualizar` en un `PATCH` sin campos, y el mensaje de validación del campo (ej. `El campo "nombre" es obligatorio`).
+
+**Permisos por rol**: la cuenta admin y los integrantes con rol Administrador pueden todo lo de esta sección. Un **empleado** solo puede `GET /citas/agenda` (sus citas), `PATCH /citas/:id/completar` (las suyas), `GET /cartera` (solo la suya) y `GET /empresas/actual`; en lo demás responde 403.
 
 **Fotos de equipo y productos**: `PUT .../foto` recibe `multipart/form-data` con un solo archivo en el campo `foto`, igual que la foto del negocio: JPG, PNG o WEBP (se comprueba por el contenido), máximo 5 MB. Errores **400** `La foto debe ser una imagen JPG, PNG o WEBP` o `Envía la imagen en el campo "foto" (multipart/form-data)`; **413** `La foto no puede pesar más de 5 MB`. La foto anterior se borra del servidor. Los archivos quedan en `<CARPETA_SUBIDAS>/barberos/` o `<CARPETA_SUBIDAS>/productos/`; la API devuelve la dirección completa (`https://…/uploads/barberos/<uuid>.jpg`). Las fotos antiguas del equipo que ya eran direcciones web se devuelven tal cual. `/empresas/actual` y `/empresas/validar/:codigo` también devuelven `foto` del equipo como dirección completa. En esos dos, `empresa` trae además `horario` (los 7 días, misma forma que en `GET /admin/empresa`); `horarioApertura` y `horarioCierre` ahora son la apertura más temprana y el cierre más tardío de la semana.
 
@@ -282,7 +355,11 @@ Un teléfono de la lista negra (se comparan solo los dígitos) no puede reservar
 
 #### Equipo (solo admin)
 
-Forma de un profesional: `{ "id", "nombre", "usuario", "esAdmin": false, "especialidad": "Barbero" | null, "porcentajeGanancia": 50, "foto": "<url>" | null }`.
+Forma de un profesional: `{ "id", "nombre", "usuario", "rol": "admin" | "empleado", "esAdmin": false, "atiendeClientes": true, "especialidad": "Barbero" | null, "porcentajeGanancia": 50, "foto": "<url>" | null }`.
+
+- **Rol**: `"admin"` (Administrador: los mismos permisos que la cuenta admin) o `"empleado"` (Empleado: solo su agenda y su cartera). `esAdmin` se mantiene igual a `rol === "admin"`.
+- **Atiende clientes** (`atiendeClientes`): si recibe reservas como profesional. Quien no atiende no aparece en la vista pública del negocio (`/empresas/validar/:codigo`) y no se puede reservar con él (`POST /citas` responde 404 `Servicio o profesional no encontrado`). En `/empresas/actual` aparecen todos, con `atiendeClientes`.
+- **Límite**: no puede haber más integrantes activos que el `numeroEmpleados` de la empresa (máximo 10; las empresas sin ese dato tienen 10). Los eliminados no cuentan. Si un negocio ya tenía más, conserva su equipo pero no puede agregar a nadie hasta quedar por debajo.
 
 **GET `/api/v1/equipo`**: **200** lista del equipo activo.
 
@@ -293,15 +370,17 @@ Forma de un profesional: `{ "id", "nombre", "usuario", "esAdmin": false, "especi
   "nombre": "Carlos",            // obligatorio, máx. 100
   "usuario": "carlos.r",         // obligatorio, 3 a 60: letras, números, . _ -; único (sin distinguir mayúsculas)
   "clave": "clave-segura",       // obligatorio, 8 a 64 caracteres; con ella entra en /api/v1/auth/login
-  "esAdmin": false,              // opcional, por defecto false
+  "rol": "empleado",             // opcional: "admin" (Administrador) o "empleado" (Empleado, por defecto)
+  "esAdmin": false,              // opcional, se mantiene para la app de antes; si llega "rol", manda "rol"
+  "atiendeClientes": true,       // opcional; por defecto true para un empleado y false para un administrador
   "especialidad": "Barbero",     // opcional (o null), máx. 100
   "porcentajeGanancia": 50       // opcional, 0 a 100, por defecto 50
 }
 ```
 
-**201** con el profesional. Errores: **400** validación (ej. `La contraseña debe tener entre 8 y 64 caracteres`); **409** `Ese usuario ya está en uso. Elige otro.` (también si es el usuario de una administradora)
+**201** con el profesional. Errores: **400** validación (ej. `La contraseña debe tener entre 8 y 64 caracteres`, `El rol debe ser "admin" (Administrador) o "empleado" (Empleado)`); **409** `Ese usuario ya está en uso. Elige otro.` (también si es el usuario de una administradora o de un cliente) o, con el equipo lleno, `Tu equipo ya tiene 2 integrante(s) activo(s) y registraste 2 empleado(s). Para agregar a alguien más, aumenta el número de empleados en Mi negocio (máximo 10).` (con 10: `Tu equipo ya tiene 10 integrantes activos, el máximo permitido (10).`)
 
-**PATCH `/api/v1/equipo/:id`**: uno o más campos del POST (`clave` cambia la contraseña; `especialidad: null` la quita). **200** con el profesional. Errores: **400** `No puedes quitarte a ti mismo el rol de administrador.`; **404** `Profesional no encontrado`; **409** usuario repetido.
+**PATCH `/api/v1/equipo/:id`**: uno o más campos del POST (`rol` cambia el rol, `atiendeClientes` activa o quita las reservas, `clave` cambia la contraseña; `especialidad: null` la quita). **200** con el profesional. Errores: **400** `No puedes quitarte a ti mismo el rol de administrador.`; **404** `Profesional no encontrado`; **409** usuario repetido.
 
 **DELETE `/api/v1/equipo/:id`**: **200** `{ "mensaje": "Profesional eliminado" }`. Ya no inicia sesión ni recibe reservas; sus citas pasadas y la cartera lo siguen mostrando. Errores: **400** `No puedes eliminar tu propio usuario.`; **404** `Profesional no encontrado`; **409** `Este profesional tiene N cita(s) pendiente(s). Cancélalas antes de eliminarlo.`
 
@@ -311,7 +390,7 @@ Forma de un profesional: `{ "id", "nombre", "usuario", "esAdmin": false, "especi
 
 Forma: `{ "id", "nombre", "duracionMin": 30, "duracion": "30 min", "precio": 25000 }`.
 
-**GET `/api/v1/servicios`** (cualquier personal): **200** servicios activos.
+**GET `/api/v1/servicios`** (admin): **200** servicios activos.
 
 **POST `/api/v1/servicios`** (admin): recibe `{ "nombre": "Corte", "duracionMin": 30, "precio": 25000 }`, todos obligatorios: `nombre` máx. 100; `duracionMin` entero de 1 a 1440; `precio` 0 o más, máximo 2 decimales. **201** con el servicio.
 
@@ -339,7 +418,7 @@ Forma: `{ "id", "nombre", "descripcion": "…" | null, "precio": 30000, "fotoUrl
 
 #### Bloqueos de horario (semanales y de solo ese día)
 
-**Solo la administradora** (barbero con `esAdmin` o cuenta admin) crea y borra bloqueos. Un barbero solo puede **ver** los suyos. Hay dos tipos:
+**Solo la administradora** (integrante admin o cuenta admin) ve, crea y borra bloqueos. Los empleados no ven ni usan bloqueos (403). Hay dos tipos:
 
 - **Semanal** (`tipo: "semanal"`): se repite cada semana el mismo día (ej. almuerzo de los lunes). Lleva `diaSemana` (0 = domingo … 6 = sábado) y `fecha: null`.
 - **Solo ese día** (`tipo: "fecha"`): una fecha concreta. Lleva `fecha` (AAAA-MM-DD) y `diaSemana: null`.
@@ -348,7 +427,7 @@ Cualquiera de los dos puede ser de unas horas (`horaInicio`–`horaFin`) o del *
 
 Forma: `{ "id", "barberoId", "barberoNombre", "tipo": "semanal" | "fecha", "diaSemana": 1 | null, "fecha": "2026-10-21" | null, "todoElDia": false, "horaInicio": "12:00", "horaFin": "13:00", "motivo": "Almuerzo" | null }`.
 
-**GET `/api/v1/bloqueos`** (personal): **200** lista: los semanales y los de fecha de hoy en adelante (hora de Colombia). Un admin ve todo el equipo (opcional `?barberoId=` para filtrar); un barbero, solo los suyos.
+**GET `/api/v1/bloqueos`** (solo admin): **200** lista: los semanales y los de fecha de hoy en adelante (hora de Colombia), de todo el equipo (opcional `?barberoId=` para filtrar).
 
 **POST `/api/v1/bloqueos`** (solo admin): recibe uno de estos cuerpos (`motivo` opcional, máx. 200):
 
@@ -366,6 +445,14 @@ Horas HH:MM de 24 h, fin posterior al inicio; con `todoElDia: true` las horas se
 
 #### Reservas (`POST /api/v1/citas`)
 
+Cuerpo: `{ "empresaId", "barberoId", "servicioId", "fecha": "2026-10-21", "hora": "10:00 AM", "nombre", "telefono", "indicativo"?, "aceptaPoliticaDatos": true, "aceptaTerminos": true }`.
+
+- **Como invitado** (sin token; con código, enlace o QR): igual que antes, más la aceptación. `nombre` y `telefono` son obligatorios (**400** `Faltan datos para agendar la cita`) y `aceptaPoliticaDatos` y `aceptaTerminos` deben ser `true` en cada reserva (**400** `Debes aceptar la Política de Tratamiento de Datos y los Términos y Condiciones`). Se guarda la prueba con el teléfono.
+- **Con sesión de cliente** (`Authorization: Bearer <token de la cuenta del cliente>`): se usan el nombre, teléfono e indicativo de la cuenta (lo que llegue en el cuerpo se ignora; una cuenta antigua sin esos datos usa los del cuerpo). No vuelve a aceptar: solo si se publicó una versión nueva de la política o los términos desde que aceptó, debe enviar los dos en `true` (**400** `Publicamos una nueva versión de la Política de Tratamiento de Datos o de los Términos y Condiciones. Acéptala para continuar.`). La cita queda en "Mis citas" (`GET /mi-cuenta/citas`).
+- Cualquier otro token (personal, admin o vencido) se ignora: la reserva es de invitado.
+- Negocio con la suscripción vencida: **403** `Este negocio no está recibiendo reservas por ahora`.
+- Solo con profesionales que atienden clientes (`atiendeClientes`); si no, **404** `Servicio o profesional no encontrado`.
+
 Además de las reglas de siempre (lista negra, bloqueos, choque con otra cita), una reserva debe cumplir:
 
 - **Fecha**: desde hoy hasta 14 días después (15 días en total contando hoy), en hora de Colombia (`America/Bogota`). Errores **400** `No se pueden agendar citas en fechas pasadas` o `Solo puedes reservar desde hoy hasta 14 días después (hasta el 2026-11-02).` (con la fecha límite real).
@@ -373,11 +460,11 @@ Además de las reglas de siempre (lista negra, bloqueos, choque con otra cita), 
 
 #### Cartera
 
-**GET `/api/v1/cartera?desde=2026-10-01&hasta=2026-10-31`** (personal; admin: todo el negocio; barbero: solo lo suyo). Suma las citas **completadas** con fecha entre `desde` y `hasta` (incluidas). La ganancia de cada cita usa el porcentaje que tenía el profesional **cuando se completó** (se guarda en `citas.porcentaje_ganancia`, migración 006); cambiar después su porcentaje no cambia lo que ya ganó. El negocio se queda con el resto. En `porProfesional`, `porcentajeGanancia` es el porcentaje **actual** del profesional (informativo); `ganancia` puede no coincidir con `ventas × porcentajeGanancia` si el porcentaje cambió dentro del rango. Las citas completadas antes de la migración 006 tomaron el porcentaje que el profesional tenía ese día.
+**GET `/api/v1/cartera?desde=2026-10-01&hasta=2026-10-31&barberoId=`** (personal). Un admin ve todo el negocio, o un integrante con `barberoId` (también el suyo, si es integrante del equipo). Un empleado ve solo lo suyo (su `barberoId` se ignora si envía otro). La respuesta trae `barberoId` (el filtro aplicado; `null` = todo el negocio). Suma las citas **completadas** con fecha entre `desde` y `hasta` (incluidas). La ganancia de cada cita usa el porcentaje que tenía el profesional **cuando se completó** (se guarda en `citas.porcentaje_ganancia`, migración 006); cambiar después su porcentaje no cambia lo que ya ganó. El negocio se queda con el resto. En `porProfesional`, `porcentajeGanancia` es el porcentaje **actual** del profesional (informativo); `ganancia` puede no coincidir con `ventas × porcentajeGanancia` si el porcentaje cambió dentro del rango. Las citas completadas antes de la migración 006 tomaron el porcentaje que el profesional tenía ese día.
 
 ```json
 {
-  "desde": "2026-10-01", "hasta": "2026-10-31",
+  "desde": "2026-10-01", "hasta": "2026-10-31", "barberoId": null,
   "totalCitas": 42, "totalVentas": 1050000, "gananciaEquipo": 525000, "gananciaNegocio": 525000,
   "porProfesional": [
     { "barberoId": "…", "nombre": "Carlos", "activo": true, "porcentajeGanancia": 50,
@@ -386,17 +473,36 @@ Además de las reglas de siempre (lista negra, bloqueos, choque con otra cita), 
 }
 ```
 
-Errores: **400** `El campo "desde" es obligatorio`, `El campo "desde" debe ser una fecha real con el formato AAAA-MM-DD`, `La fecha "hasta" no puede ser anterior a "desde"` o `El rango no puede ser mayor que 366 días`.
+Errores: **400** `El campo "desde" es obligatorio`, `El campo "desde" debe ser una fecha real con el formato AAAA-MM-DD`, `La fecha "hasta" no puede ser anterior a "desde"`, `El rango no puede ser mayor que 366 días` o `Identificador de profesional inválido`.
+
+### Cuenta del cliente (`/api/v1/mi-cuenta`)
+
+Solo con el token de una cuenta de cliente (`/api/v1/login` o `/cuentas/login`). Otro token responde **403** `Esta función es solo para clientes con cuenta.` (cuenta admin) o **401** (personal, sin token o vencido).
+
+Forma de un negocio guardado: `{ "id", "nombre", "codigoAcceso", "categoria", "direccion", "departamento", "ciudad", "logoUrl", "fotoUrl", "recibiendoReservas": true, "guardadoEn": "<fecha ISO>" }`. Se guarda el negocio, no el código: si el negocio cambia su código, sigue en la lista con el nuevo.
+
+- **GET `/mi-cuenta/negocios`**: **200** negocios guardados, del más reciente al más antiguo.
+- **POST `/mi-cuenta/negocios`**: recibe `{ "codigo": "central10" }`. **201** `{ "mensaje": "Negocio guardado", "negocio": { … } }` (si ya estaba, responde igual). Errores: **400** `Envía el código del negocio en "codigo"` o el mensaje del código inválido; **404** `Establecimiento no encontrado`; **429** (mismo límite que `/empresas/validar/:codigo`).
+- **DELETE `/mi-cuenta/negocios/:id`** (`:id` = `id` del negocio): **200** `{ "mensaje": "Negocio quitado de tu lista" }`. **404** `Ese negocio no está en tu lista`.
+- **GET `/mi-cuenta/citas`**: **200** citas que reservó con su sesión, de la más reciente a la más antigua: `[{ "id", "empresaId", "negocio", "codigoAcceso", "servicio", "barberoId", "barberoNombre", "fecha": "2026-10-21", "hora": "10:00 AM", "duracionMin": 30, "precio": 25000, "estado": "CONFIRMADA" }]`. Las reservas como invitado no aparecen.
+
+### Autorización de tratamiento de datos (Ley 1581 de 2012)
+
+- El registro de empresa, el registro de cliente y la reserva como invitado exigen `"aceptaPoliticaDatos": true` y `"aceptaTerminos": true`; si no, **400** `Debes aceptar la Política de Tratamiento de Datos y los Términos y Condiciones`. Un cliente con cuenta solo acepta de nuevo cuando se publica una versión nueva (ver "Reservas").
+- La app muestra los textos vigentes con **GET `/api/v1/legal/politica-datos`** y **GET `/api/v1/legal/terminos`** (públicos): **200** `{ "tipo": "politica_datos" | "terminos", "version": "0.1-borrador", "titulo", "contenido": "<markdown>", "publicadoEn": "<fecha ISO>" }`.
+- **Los textos actuales son un BORRADOR – PENDIENTE DE REVISIÓN LEGAL** (migración 010), solo para pruebas. Tienen espacios por llenar como `[NOMBRE DEL RESPONSABLE]`, `[NIT]`, `[CORREO DE CONTACTO]` y `[DIRECCIÓN]`. No publiques la app con usuarios reales hasta que un abogado los revise y se publique una versión nueva.
+- Prueba de cada autorización en `autorizaciones_datos`: `origen` (`registro_empresa`, `registro_cliente` o `reserva`), quién (`usuario_id`, o `telefono` + `indicativo` si es invitado), `empresa_id` y `cita_id` cuando aplica, `aceptado_en` (fecha y hora) y `version_politica` / `version_terminos` aceptadas. Se acepta siempre la política y los términos juntos. Se borra con la cuenta o el negocio al que pertenece.
 
 ## Autenticación y roles
 
-- Personal: login con `usuario` + `clave` contra `barberos` activos (bcrypt, costo 12). El token lleva `sub` (id del barbero) y `empresaId`. `requerirSesion` **lee `es_admin` de la base en cada solicitud**, así que un cambio de rol aplica de inmediato; `requerirAdmin` exige admin. Un barbero eliminado (`activo = false`) pierde la sesión.
+- Personal: login con `usuario` + `clave` contra `barberos` activos (bcrypt, costo 12). El token lleva `sub` (id del barbero) y `empresaId`. `requerirSesion` **lee `es_admin` de la base en cada solicitud**, así que un cambio de rol aplica de inmediato; `requerirAdmin` exige admin. Un barbero eliminado (`activo = false`) pierde la sesión. Rol en la API: `es_admin` true = `"admin"`, false = `"empleado"`.
 - `requerirSesion` también acepta el token de una cuenta `admin`: la sesión queda con `usuarioId`, `barberoId: null`, la empresa de la cuenta y `esAdmin: true` (`src/modules/auth/auth.servicio.ts`). Si la cuenta completó o canceló una cita, queda en `citas.completada_por_usuario` / `cancelada_por_usuario` (migración 005). `crearPermisos` (`src/modules/auth/permisos.ts`) arma las guardias `personal` y `admin` de los módulos de gestión; ambas exigen suscripción vigente.
-- Login único (`POST /api/v1/login`, `src/modules/auth/acceso.ts`): con `@` busca la cuenta por correo; sin `@`, primero la cuenta por `usuarios.usuario` y si no existe, el personal por `barberos.usuario`. Firma el mismo token que el login de antes de cada tipo, así que las guardias no cambian. Hace siempre una comparación bcrypt, para que el tiempo no revele qué correos o usuarios existen.
+- Login único (`POST /api/v1/login`, `src/modules/auth/acceso.ts`): con `@` busca la cuenta (admin o cliente) por correo; sin `@`, primero la cuenta por `usuarios.usuario` y si no existe, el personal por `barberos.usuario`. Firma el mismo token que el login de antes de cada tipo, así que las guardias no cambian. Hace siempre una comparación bcrypt, para que el tiempo no revele qué correos o usuarios existen.
 - Usuario de la administradora (`usuarios.usuario`, migración 007): obligatorio para `rol = admin`, `null` en clientes, único sin distinguir mayúsculas. El trigger `verificar_usuario_login_unico` (corregido en la 008) impide que coincida con un barbero activo y al revés. A las administradoras que ya existían se les creó a partir de su correo (lo que va antes de la @; si se repetía, con un número al final).
 - Cuentas: login con `correo` + `clave` contra `usuarios` (bcrypt, costo 12). El token lleva `sub` (id del usuario) y `tipo: "cuenta"`. `requerirCuenta` **lee `rol` y `empresa_id` de la base en cada solicitud**; `requerirAdminEmpresa` exige `rol = admin` con empresa (`src/modules/cuentas/cuentas.guardias.ts`).
 - Los tokens son JWT HS256 y duran `JWT_EXPIRA_EN`.
-- Prueba gratuita (15 días desde el registro): `requerirSuscripcionVigente` (`src/modules/empresas/suscripcion.ts`) va después de la guardia de admin en todo endpoint de administrador. Deja pasar `activa` y `trial` con `trial_ends_at` futuro; lo demás responde 402. Las empresas creadas antes de la 003 quedaron `activa`.
+- Cuentas de cliente: `rol = cliente`, sin empresa, con `nombre`, `telefono`, `indicativo` y correo o usuario (los dos opcionales, al menos uno). `cuentas.clienteDeToken` reconoce su token en `POST /citas`; `requerirCuenta` + `requerirCliente` protegen `/mi-cuenta`.
+- Suscripción (`src/modules/empresas/suscripcion.ts`, `buscarSuscripcion` en `empresas.repositorio.ts`): el estado se **calcula** en cada consulta con la fecha de Colombia, sin tareas programadas. Fin = día de `trial_ends_at` (prueba) o `suscripcion_fin` (plan); habilitada si el estado guardado es `trial` o `activa` y el fin es posterior a hoy (o `activa` sin fin, empresas de antes de los planes, que quedaron `activa`). `requerirSuscripcionVigente` va después de la guardia de sesión en los endpoints de gestión, agenda y citas, y responde 402 (mensaje de negocio inactivo a los empleados). Mi negocio y `/suscripcion` no la llevan.
 
 ## Reglas de seguridad (auditoría previa)
 
