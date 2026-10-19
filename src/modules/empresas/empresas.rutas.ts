@@ -1,9 +1,10 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import type { Limitadores } from '../../shared/http/limitadores.js';
 import { parsear } from '../../shared/http/validacion.js';
 import { type Guardias, sesionDe } from '../auth/guardias.js';
 import { empresaDeAdmin, type GuardiasCuenta } from '../cuentas/cuentas.guardias.js';
-import { esquemaActualizarEmpresa } from './empresas.esquemas.js';
+import { esquemaActualizarEmpresa, esquemaCodigoNegocio } from './empresas.esquemas.js';
 import type { ServicioEmpresas } from './empresas.servicio.js';
 import { recibirFoto, type UrlBase } from './fotos.js';
 import type { GuardiaSuscripcion } from './suscripcion.js';
@@ -18,6 +19,12 @@ export const crearRutasEmpresas = (
 
   rutas.get('/validar/:codigo', limitadores.codigoNegocio, async (req, res) => {
     res.json(await empresas.negocioPorCodigo(String(req.params.codigo), urlBase(req)));
+  });
+
+  // ¿Algún negocio usa ya este código? Lo usan el registro y "Mi negocio" (público)
+  rutas.get('/codigo-disponible/:codigo', limitadores.codigoNegocio, async (req, res) => {
+    const { codigo } = parsear(z.object({ codigo: esquemaCodigoNegocio }), req.params);
+    res.json(await empresas.codigoDisponible(codigo));
   });
 
   // Información del negocio con su foto, para los clientes (público)

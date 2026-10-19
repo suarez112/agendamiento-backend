@@ -5,6 +5,8 @@ import { errores } from '../../shared/errores.js';
 import type { Sesion } from '../auth/auth.servicio.js';
 import type { DatosNuevaCita } from './citas.esquemas.js';
 import * as repositorio from './citas.repositorio.js';
+import { DIAS_RESERVA } from './citas.repositorio.js';
+import { esDiaCompleto } from '../bloqueos/bloqueos.servicio.js';
 import { hora12AMinutos, hora24AMinutos, minutosAHHMM } from './horas.js';
 
 const HORA_OCUPADA = 'Esa hora ya está ocupada. Por favor elige otra.';
@@ -16,16 +18,26 @@ export const crearServicioCitas = ({ pool }: { pool: pg.Pool }) => ({
     // 1. El servicio y el profesional deben ser de ese negocio
     const reserva = await repositorio.buscarDatosReserva(pool, { empresaId, barberoId, servicioId, fecha });
     if (!reserva) throw errores.noEncontrado('Servicio o profesional no encontrado');
-    if (!reserva.fecha_vigente) throw errores.solicitudInvalida('No se pueden agendar citas en fechas pasadas');
 
-    // 2. Cuándo empieza y termina; debe caber dentro del horario del negocio
+    // 2. Solo desde hoy hasta 14 días después, en hora de Colombia ("AAAA-MM-DD" se compara bien como texto)
+    if (fecha < reserva.hoy) throw errores.solicitudInvalida('No se pueden agendar citas en fechas pasadas');
+    if (fecha > reserva.ultimo_dia) {
+      throw errores.solicitudInvalida(
+        `Solo puedes reservar desde hoy hasta ${DIAS_RESERVA} días después (hasta el ${reserva.ultimo_dia}).`,
+      );
+    }
+
+    // 3. El negocio debe atender ese día, y la cita caber dentro de su horario de ese día
+    if (!reserva.horario_apertura || !reserva.horario_cierre) {
+      throw errores.solicitudInvalida('El negocio no atiende ese día. Por favor elige otra fecha.');
+    }
     const inicio = hora12AMinutos(hora) as number; // el esquema ya validó el formato
     const fin = inicio + reserva.duracion_min;
     if (inicio < hora24AMinutos(reserva.horario_apertura) || fin > hora24AMinutos(reserva.horario_cierre)) {
       throw errores.solicitudInvalida('La hora elegida está fuera del horario del negocio');
     }
 
-    // 3. Ni números de la lista negra del negocio, ni horas que el profesional bloqueó
+    // 4. Ni números de la lista negra del negocio, ni horas que el profesional bloqueó
     if (await repositorio.telefonoEnListaNegra(pool, empresaId, telefono)) {
       throw errores.prohibido('No es posible agendar con este número. Comunícate con el negocio.');
     }
@@ -34,7 +46,7 @@ export const crearServicioCitas = ({ pool }: { pool: pg.Pool }) => ({
       throw errores.conflicto('El profesional no atiende en ese horario. Por favor elige otra hora.');
     }
 
-    // 4. Cliente y cita juntos: o se guardan los dos, o ninguno. La restricción
+    // 5. Cliente y cita juntos: o se guardan los dos, o ninguno. La restricción
     //    citas_sin_solapamiento rechaza la segunda de dos reservas simultáneas.
     const citaId = randomUUID();
     try {
@@ -104,8 +116,10 @@ export const crearServicioCitas = ({ pool }: { pool: pg.Pool }) => ({
     const filas = await repositorio.listarBloqueosPublicos(pool, empresaId);
     return filas.map((r) => ({
       barberoId: r.barbero_id,
+      tipo: r.dia_semana !== null ? 'semanal' : 'fecha',
       diaSemana: r.dia_semana,
       fecha: r.fecha,
+      todoElDia: esDiaCompleto(r),
       horaInicio: r.hora_inicio,
       horaFin: r.hora_fin,
     }));

@@ -4,25 +4,37 @@ import type { Sesion } from '../auth/auth.servicio.js';
 import * as repositorio from './bloqueos.repositorio.js';
 import type { FilaBloqueo } from './bloqueos.repositorio.js';
 
+// Ya validado por la ruta: exactamente uno de diaSemana o fecha viene lleno.
+// Un día completo llega como 00:00 a 24:00.
 export type DatosBloqueo = {
-  barberoId?: string;
-  diaSemana: number;
+  barberoId: string;
+  diaSemana: number | null;
+  fecha: string | null;
   horaInicio: string;
   horaFin: string;
-  motivo: string | null | undefined;
+  motivo: string | null;
 };
+
+export const DIA_COMPLETO = { horaInicio: '00:00', horaFin: '24:00' };
+
+export const esDiaCompleto = (b: { hora_inicio: string; hora_fin: string }) =>
+  b.hora_inicio === DIA_COMPLETO.horaInicio && b.hora_fin === DIA_COMPLETO.horaFin;
 
 const armarBloqueo = (b: FilaBloqueo) => ({
   id: b.id,
   barberoId: b.barbero_id,
   barberoNombre: b.barbero_nombre,
+  tipo: b.dia_semana !== null ? 'semanal' : 'fecha',
   diaSemana: b.dia_semana,
+  fecha: b.fecha,
+  todoElDia: esDiaCompleto(b),
   horaInicio: b.hora_inicio,
   horaFin: b.hora_fin,
   motivo: b.motivo,
 });
 
-// Un administrador maneja los bloqueos de todo su equipo; un barbero, solo los suyos
+// Solo el administrador crea y borra bloqueos (la ruta lo exige). Un barbero
+// solo puede ver los suyos; el administrador, los de todo el equipo.
 export const crearServicioBloqueos = ({ pool }: { pool: pg.Pool }) => ({
   async listar(sesion: Sesion, barberoId: string | undefined) {
     const filtro = sesion.esAdmin ? (barberoId ?? null) : sesion.barberoId;
@@ -30,28 +42,13 @@ export const crearServicioBloqueos = ({ pool }: { pool: pg.Pool }) => ({
   },
 
   async crear(sesion: Sesion, datos: DatosBloqueo) {
-    let barberoId = datos.barberoId;
-    if (!sesion.esAdmin) {
-      if (barberoId && barberoId !== sesion.barberoId) {
-        throw errores.prohibido('Solo puedes bloquear tu propio horario.');
-      }
-      barberoId = sesion.barberoId ?? undefined;
-    }
-    if (!barberoId) throw errores.solicitudInvalida('Elige el profesional en "barberoId"');
-
-    const bloqueo = await repositorio.crearBloqueo(pool, {
-      ...datos,
-      barberoId,
-      empresaId: sesion.empresaId,
-      motivo: datos.motivo ?? null,
-    });
+    const bloqueo = await repositorio.crearBloqueo(pool, { ...datos, empresaId: sesion.empresaId });
     if (!bloqueo) throw errores.noEncontrado('Profesional no encontrado');
     return armarBloqueo(bloqueo);
   },
 
   async borrar(sesion: Sesion, id: string) {
-    const soloDe = sesion.esAdmin ? null : sesion.barberoId;
-    if (!(await repositorio.borrarBloqueo(pool, id, sesion.empresaId, soloDe))) {
+    if (!(await repositorio.borrarBloqueo(pool, id, sesion.empresaId))) {
       throw errores.noEncontrado('Bloqueo no encontrado');
     }
     return { mensaje: 'Bloqueo eliminado' };

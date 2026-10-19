@@ -16,9 +16,16 @@ type Dependencias = { pool: pg.Pool; tokens: ServicioTokens };
 
 export const crearServicioAuth = ({ pool, tokens }: Dependencias) => ({
   async iniciarSesion(usuario: string, clave: string) {
+    const barbero = await this.verificarCredenciales(usuario, clave);
+    if (!barbero) throw errores.noAutenticado('Usuario o contraseña incorrectos');
+    return this.respuestaLogin(barbero);
+  },
+
+  // Barbero activo con ese usuario y contraseña; undefined si no coinciden
+  async verificarCredenciales(usuario: string, clave: string) {
     const barbero = await repositorio.buscarBarberoPorUsuario(pool, usuario);
     const { valida, requiereActualizar } = await verificarContrasena(clave, barbero?.password_hash);
-    if (!barbero || !valida) throw errores.noAutenticado('Usuario o contraseña incorrectos');
+    if (!barbero || !valida) return undefined;
 
     if (requiereActualizar) {
       // Si falla, el usuario igual entra; se reintenta en el próximo inicio de sesión
@@ -28,7 +35,10 @@ export const crearServicioAuth = ({ pool, tokens }: Dependencias) => ({
           registro.error('actualizar_hash_fallo', { barberoId: barbero.id, mensaje: error.message }),
         );
     }
+    return barbero;
+  },
 
+  respuestaLogin(barbero: repositorio.FilaBarberoLogin) {
     return {
       mensaje: 'Autenticación exitosa',
       token: tokens.firmar({ barberoId: barbero.id, empresaId: barbero.empresa_id }),

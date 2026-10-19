@@ -2,7 +2,12 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { Limitadores } from '../../shared/http/limitadores.js';
 import { parsear } from '../../shared/http/validacion.js';
-import { conHorarioValido, esquemaCorreo, esquemaPerfilEmpresa } from '../empresas/empresas.esquemas.js';
+import {
+  conUbicacionValida,
+  esquemaCorreo,
+  esquemaPerfilEmpresa,
+  esquemaUsuarioAdmin,
+} from '../empresas/empresas.esquemas.js';
 import type { ServicioCuentas } from './cuentas.servicio.js';
 
 const MENSAJE_CLAVE = 'La contraseña debe tener entre 8 y 64 caracteres';
@@ -10,8 +15,10 @@ const MENSAJE_CLAVE = 'La contraseña debe tener entre 8 y 64 caracteres';
 // bcrypt solo usa los primeros 72 bytes; 64 caracteres deja margen
 const esquemaClave = z.string({ error: MENSAJE_CLAVE }).min(8, MENSAJE_CLAVE).max(64, MENSAJE_CLAVE);
 
-// El correo de la empresa es también el correo con el que entra su administrador
-const esquemaRegistroEmpresa = conHorarioValido(esquemaPerfilEmpresa.extend({ clave: esquemaClave }));
+// La administradora entra con su correo o su usuario, y su contraseña
+const esquemaRegistroEmpresa = conUbicacionValida(
+  esquemaPerfilEmpresa.extend({ correo: esquemaCorreo, usuario: esquemaUsuarioAdmin, clave: esquemaClave }),
+);
 
 const esquemaRegistroCliente = z.object(
   { correo: esquemaCorreo, clave: esquemaClave },

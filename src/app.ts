@@ -2,6 +2,7 @@ import express, { type Express } from 'express';
 import helmet from 'helmet';
 import type pg from 'pg';
 import type { Entorno } from './config/entorno.js';
+import { crearRutasAcceso } from './modules/auth/acceso.js';
 import { crearRutasAuth } from './modules/auth/auth.rutas.js';
 import { crearServicioAuth } from './modules/auth/auth.servicio.js';
 import { crearGuardias } from './modules/auth/guardias.js';
@@ -28,6 +29,7 @@ import { crearRutasProductos } from './modules/productos/productos.rutas.js';
 import { crearServicioProductos } from './modules/productos/productos.servicio.js';
 import { crearRutasServicios } from './modules/servicios/servicios.rutas.js';
 import { crearServicioServicios } from './modules/servicios/servicios.servicio.js';
+import { crearRutasUbicaciones } from './modules/ubicaciones/ubicaciones.js';
 import { crearCors } from './shared/http/cors.js';
 import { type ConfigLimites, crearLimitadores, LIMITES_POR_DEFECTO } from './shared/http/limitadores.js';
 import { manejadorErrores, rutaNoEncontrada } from './shared/http/manejadorErrores.js';
@@ -89,8 +91,11 @@ export const crearApp = ({ pool, entorno, limites = LIMITES_POR_DEFECTO }: Depen
     }
   });
 
+  // Login único (administradora o personal); los dos logins de abajo siguen funcionando
+  app.use('/api/v1/login', crearRutasAcceso(auth, cuentas, limitadores));
   app.use('/api/v1/auth', crearRutasAuth(auth, limitadores));
   app.use('/api/v1/cuentas', crearRutasCuentas(cuentas, limitadores));
+  app.use('/api/v1/ubicaciones', crearRutasUbicaciones());
   app.use('/api/v1/empresas', crearRutasEmpresas(empresas, guardias, limitadores, urlBase));
   app.use('/api/v1/admin/empresa', crearRutasAdminEmpresa(empresas, guardiasCuenta, suscripcion, urlBase));
   app.use('/api/v1/citas', crearRutasCitas(crearServicioCitas({ pool }), guardias, suscripcion, limitadores));

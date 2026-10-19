@@ -19,13 +19,19 @@ export type DatosReserva = {
   duracion_min: number;
   precio: string;
   barbero: string;
-  horario_apertura: string;
-  horario_cierre: string;
-  fecha_vigente: boolean;
+  // null si el negocio no atiende ese día de la semana
+  horario_apertura: string | null;
+  horario_cierre: string | null;
+  // Hoy y el último día que se puede reservar, en hora de Colombia (AAAA-MM-DD)
+  hoy: string;
+  ultimo_dia: string;
 };
 
-// Servicio, profesional y horario en una sola consulta. Solo devuelve fila si
-// el servicio y el profesional pertenecen a ese negocio.
+// Las reservas van desde hoy hasta 14 días después (15 días contando hoy)
+export const DIAS_RESERVA = 14;
+
+// Servicio, profesional, horario de ese día y rango de fechas en una sola consulta.
+// Solo devuelve fila si el servicio y el profesional pertenecen a ese negocio.
 export const buscarDatosReserva = async (
   db: Consultable,
   p: { empresaId: string; barberoId: string; servicioId: string; fecha: string },
@@ -33,13 +39,17 @@ export const buscarDatosReserva = async (
   (
     await db.query<DatosReserva>(
       `SELECT s.nombre AS servicio, s.duracion_min, s.precio, b.nombre AS barbero,
-              e.horario_apertura, e.horario_cierre,
-              $4::date >= CURRENT_DATE - 1 AS fecha_vigente
+              to_char(h.hora_apertura, 'HH24:MI') AS horario_apertura,
+              to_char(h.hora_cierre, 'HH24:MI') AS horario_cierre,
+              to_char(hoy.fecha, 'YYYY-MM-DD') AS hoy,
+              to_char(hoy.fecha + $5::int, 'YYYY-MM-DD') AS ultimo_dia
        FROM empresas e
        JOIN servicios s ON s.empresa_id = e.id AND s.id = $2 AND s.activo
        JOIN barberos b ON b.empresa_id = e.id AND b.id = $3 AND b.activo
+       CROSS JOIN (SELECT (now() AT TIME ZONE 'America/Bogota')::date AS fecha) hoy
+       LEFT JOIN horarios_empresa h ON h.empresa_id = e.id AND h.dia_semana = EXTRACT(DOW FROM $4::date)
        WHERE e.id = $1`,
-      [p.empresaId, p.servicioId, p.barberoId, p.fecha],
+      [p.empresaId, p.servicioId, p.barberoId, p.fecha, DIAS_RESERVA],
     )
   ).rows[0];
 
@@ -109,7 +119,8 @@ export const chocaConBloqueo = async (
     )
   ).rowCount! > 0;
 
-// Bloqueos del equipo activo, para que la app no ofrezca esas horas. Sin el motivo.
+// Bloqueos del equipo activo, para que la app no ofrezca esas horas: semanales y
+// de una fecha (de hoy en adelante, hora de Colombia). Sin el motivo.
 export const listarBloqueosPublicos = async (db: Consultable, empresaId: string) =>
   (
     await db.query<{
@@ -124,7 +135,7 @@ export const listarBloqueosPublicos = async (db: Consultable, empresaId: string)
               to_char(bl.hora_inicio, 'HH24:MI') AS hora_inicio, to_char(bl.hora_fin, 'HH24:MI') AS hora_fin
        FROM bloqueos bl
        JOIN barberos b ON b.id = bl.barbero_id AND b.empresa_id = $1 AND b.activo
-       WHERE (bl.es_repetitivo AND bl.dia_semana IS NOT NULL) OR bl.fecha_especifica >= CURRENT_DATE - 1
+       WHERE bl.es_repetitivo OR bl.fecha_especifica >= (now() AT TIME ZONE 'America/Bogota')::date
        ORDER BY bl.barbero_id, bl.dia_semana, bl.fecha_especifica, bl.hora_inicio`,
       [empresaId],
     )

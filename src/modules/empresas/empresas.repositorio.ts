@@ -6,12 +6,9 @@ export type FilaEmpresa = {
   codigo_acceso: string;
   color_primario: string | null;
   color_secundario: string | null;
-  horario_apertura: string;
-  horario_cierre: string;
 };
 
-const COLUMNAS_EMPRESA = `id, nombre, codigo_acceso, color_primario, color_secundario,
-                          horario_apertura, horario_cierre`;
+const COLUMNAS_EMPRESA = 'id, nombre, codigo_acceso, color_primario, color_secundario';
 
 export const buscarEmpresaPorCodigo = async (db: Consultable, codigo: string) =>
   (
@@ -60,14 +57,9 @@ export type FilaPerfilEmpresa = {
   nombre: string;
   codigo_acceso: string;
   categoria: string | null;
-  nit: string | null;
-  telefono: string | null;
-  correo: string | null;
   direccion: string | null;
+  departamento: string | null;
   ciudad: string | null;
-  dias_atencion: number[] | null;
-  horario_apertura: string;
-  horario_cierre: string;
   nombre_administradora: string | null;
   numero_empleados: number | null;
   logo_url: string | null;
@@ -79,9 +71,8 @@ export type FilaPerfilEmpresa = {
   created_at: Date | null;
 };
 
-const COLUMNAS_PERFIL = `id, nombre, codigo_acceso, categoria, nit, telefono, correo, direccion, ciudad,
-                         dias_atencion, horario_apertura, horario_cierre, nombre_administradora,
-                         numero_empleados, logo_url, foto_url, color_primario, color_secundario,
+const COLUMNAS_PERFIL = `id, nombre, codigo_acceso, categoria, direccion, departamento, ciudad,
+                         nombre_administradora, numero_empleados, logo_url, foto_url, color_primario, color_secundario,
                          estado_suscripcion, trial_ends_at, created_at`;
 
 export const buscarPerfilEmpresa = async (db: Consultable, id: string) =>
@@ -113,14 +104,10 @@ export const cambiarFotoEmpresa = async (db: Consultable, id: string, fotoUrl: s
 const COLUMNA_EDITABLE = {
   nombre: 'nombre',
   categoria: 'categoria',
-  nit: 'nit',
-  telefono: 'telefono',
-  correo: 'correo',
+  codigoAcceso: 'codigo_acceso',
   direccion: 'direccion',
+  departamento: 'departamento',
   ciudad: 'ciudad',
-  diasAtencion: 'dias_atencion',
-  horarioApertura: 'horario_apertura',
-  horarioCierre: 'horario_cierre',
   nombreAdministradora: 'nombre_administradora',
   numeroEmpleados: 'numero_empleados',
   logoUrl: 'logo_url',
@@ -145,6 +132,10 @@ export const actualizarPerfilEmpresa = async (db: Consultable, id: string, cambi
     )
   ).rows[0];
 };
+
+// true si ningún negocio usa ese código (los códigos se guardan en mayúsculas)
+export const codigoDisponible = async (db: Consultable, codigo: string) =>
+  (await db.query('SELECT 1 FROM empresas WHERE codigo_acceso = $1', [codigo])).rowCount === 0;
 
 export type FilaSuscripcion = {
   estado_suscripcion: string;
