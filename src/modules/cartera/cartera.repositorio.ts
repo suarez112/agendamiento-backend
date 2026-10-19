@@ -36,3 +36,28 @@ export const resumenPorProfesional = async (
       [p.empresaId, p.desde, p.hasta, p.barberoId],
     )
   ).rows;
+
+export type Periodo = 'hoy' | 'semana' | 'mes';
+
+// Fechas (AAAA-MM-DD) de un período con la fecha actual de Colombia: hoy; la semana
+// de lunes a domingo; el mes del día 1 al último día.
+export const fechasDePeriodo = async (db: Consultable, periodo: Periodo) =>
+  (
+    await db.query<{ desde: string; hasta: string }>(
+      `SELECT to_char(desde, 'YYYY-MM-DD') AS desde, to_char(hasta, 'YYYY-MM-DD') AS hasta
+       FROM (
+         SELECT CASE $1::varchar
+                  WHEN 'hoy' THEN hoy
+                  WHEN 'semana' THEN date_trunc('week', hoy)::date
+                  ELSE date_trunc('month', hoy)::date
+                END AS desde,
+                CASE $1::varchar
+                  WHEN 'hoy' THEN hoy
+                  WHEN 'semana' THEN date_trunc('week', hoy)::date + 6
+                  ELSE (date_trunc('month', hoy) + interval '1 month - 1 day')::date
+                END AS hasta
+         FROM (SELECT (now() AT TIME ZONE 'America/Bogota')::date AS hoy) h
+       ) p`,
+      [periodo],
+    )
+  ).rows[0];

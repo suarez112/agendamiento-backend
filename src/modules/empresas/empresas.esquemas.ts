@@ -98,12 +98,28 @@ export const conUbicacionValida = <T extends z.ZodType<ConUbicacion>>(esquema: T
 
 export const esquemaPerfilEmpresa = z.object(perfil, { error: 'Envía los datos de la empresa' });
 
+// Coordenadas del negocio en el mapa (solo en "Mi negocio"). null las quita.
+const coordenada = (campo: 'latitud' | 'longitud', limite: number) => {
+  const mensaje = `La ${campo} debe ser un número entre -${limite} y ${limite}`;
+  return z
+    .union([z.number({ error: mensaje }).min(-limite, mensaje).max(limite, mensaje), z.null()], { error: mensaje })
+    .optional();
+};
+
+const COORDENADAS_JUNTAS = 'Envía la latitud y la longitud juntas (o las dos en null para quitarlas)';
+
 // Edición: todos los campos son opcionales, pero debe venir al menos uno.
 // Campos como id, estado de la suscripción o fin de la prueba se ignoran.
 export const esquemaActualizarEmpresa = conUbicacionValida(
-  esquemaPerfilEmpresa.partial().refine((d) => Object.values(d).some((v) => v !== undefined), {
-    error: 'Envía al menos un dato para actualizar',
-  }),
+  esquemaPerfilEmpresa
+    .extend({ latitud: coordenada('latitud', 90), longitud: coordenada('longitud', 180) })
+    .partial()
+    .refine((d) => Object.values(d).some((v) => v !== undefined), {
+      error: 'Envía al menos un dato para actualizar',
+    })
+    .refine((d) => (d.latitud === undefined) === (d.longitud === undefined) && (d.latitud === null) === (d.longitud === null), {
+      error: COORDENADAS_JUNTAS,
+    }),
 );
 
 export type PerfilEmpresa = z.output<typeof esquemaPerfilEmpresa>;

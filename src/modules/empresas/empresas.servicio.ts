@@ -185,6 +185,9 @@ export const crearServicioEmpresas = ({ pool, fotos }: { pool: pg.Pool; fotos: A
         fechaPago: s.fecha_pago,
         fechaFin: s.fecha_fin,
         diasRestantes: dias,
+        // Días de prueba que le quedaban al pagar y se sumaron al plan (0 si pagó con la
+        // prueba vencida; null si el plan no se activó durante una prueba o si está en prueba)
+        diasPruebaSumados: estado === 'prueba' ? null : s.dias_prueba_sumados,
         mostrarRecordatorio,
         mensaje: estado === 'vencida' ? mensajeBloqueo(s) : recordatorio(estado, s.plan, dias, mostrarRecordatorio),
       };
@@ -202,6 +205,18 @@ const recordatorio = (estado: string, plan: string | null, dias: number | null, 
 
 type PerfilConHorario = { perfil: FilaPerfilEmpresa; horario: ReturnType<typeof armarHorario> };
 
+const numeroONulo = (valor: string | null) => (valor === null ? null : Number(valor));
+
+// Enlace de Google Maps (no necesita clave de API): con las coordenadas si el negocio
+// las tiene; si no, con la dirección, el municipio y el departamento. null si no hay datos.
+export const enlaceGoogleMaps = (p: FilaPerfilEmpresa) => {
+  const consulta =
+    p.latitud !== null && p.longitud !== null
+      ? `${Number(p.latitud)},${Number(p.longitud)}`
+      : [p.direccion, p.ciudad, p.departamento].filter(Boolean).join(', ');
+  return consulta ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(consulta)}` : null;
+};
+
 const armarPerfilPublico = ({ perfil: p, horario: h }: PerfilConHorario, urlBase: string) => ({
   id: p.id,
   nombre: p.nombre,
@@ -218,6 +233,7 @@ const armarPerfilPublico = ({ perfil: p, horario: h }: PerfilConHorario, urlBase
   fotoUrl: urlFoto(urlBase, p.foto_url),
   colorPrimario: p.color_primario,
   colorSecundario: p.color_secundario,
+  googleMapsUrl: enlaceGoogleMaps(p),
 });
 
 const armarPerfil = ({ perfil: p, horario: h }: PerfilConHorario, urlBase: string) => ({
@@ -238,6 +254,9 @@ const armarPerfil = ({ perfil: p, horario: h }: PerfilConHorario, urlBase: strin
   fotoUrl: urlFoto(urlBase, p.foto_url),
   colorPrimario: p.color_primario,
   colorSecundario: p.color_secundario,
+  latitud: numeroONulo(p.latitud),
+  longitud: numeroONulo(p.longitud),
+  googleMapsUrl: enlaceGoogleMaps(p),
   estadoSuscripcion: p.estado_suscripcion,
   trialEndsAt: p.trial_ends_at,
   creadaEn: p.created_at,

@@ -67,6 +67,9 @@ export type FilaPerfilEmpresa = {
   foto_url: string | null;
   color_primario: string | null;
   color_secundario: string | null;
+  // numeric: llegan como texto
+  latitud: string | null;
+  longitud: string | null;
   estado_suscripcion: string;
   trial_ends_at: Date | null;
   created_at: Date | null;
@@ -74,7 +77,7 @@ export type FilaPerfilEmpresa = {
 
 const COLUMNAS_PERFIL = `id, nombre, codigo_acceso, categoria, direccion, departamento, ciudad,
                          nombre_administradora, numero_empleados, logo_url, foto_url, color_primario, color_secundario,
-                         estado_suscripcion, trial_ends_at, created_at`;
+                         latitud, longitud, estado_suscripcion, trial_ends_at, created_at`;
 
 export const buscarPerfilEmpresa = async (db: Consultable, id: string) =>
   (await db.query<FilaPerfilEmpresa>(`SELECT ${COLUMNAS_PERFIL} FROM empresas WHERE id = $1`, [id])).rows[0];
@@ -112,6 +115,8 @@ const COLUMNA_EDITABLE = {
   nombreAdministradora: 'nombre_administradora',
   numeroEmpleados: 'numero_empleados',
   logoUrl: 'logo_url',
+  latitud: 'latitud',
+  longitud: 'longitud',
 } as const;
 
 export type CambiosPerfil = Partial<Record<keyof typeof COLUMNA_EDITABLE, unknown>>;
@@ -156,6 +161,8 @@ export type FilaSuscripcion = {
   fecha_fin: string | null;
   // Fecha de fin menos hoy: 0 o negativo = vencida. null si no tiene fecha de fin.
   dias_restantes: number | null;
+  // Días de prueba que quedaban al pagar durante la prueba y se sumaron al plan
+  dias_prueba_sumados: number | null;
   habilitada: boolean;
 };
 
@@ -170,10 +177,10 @@ export const buscarSuscripcion = async (db: Consultable, empresaId: string) =>
       `SELECT estado_suscripcion, trial_ends_at, plan_suscripcion AS plan,
               to_char(fecha_pago, 'YYYY-MM-DD') AS fecha_pago,
               to_char(fin, 'YYYY-MM-DD') AS fecha_fin,
-              fin - hoy AS dias_restantes,
+              fin - hoy AS dias_restantes, dias_prueba_sumados,
               estado_suscripcion IN ('trial', 'activa') AND (fin IS NULL OR fin > hoy) AS habilitada
        FROM (
-         SELECT estado_suscripcion, trial_ends_at, plan_suscripcion, fecha_pago,
+         SELECT estado_suscripcion, trial_ends_at, plan_suscripcion, fecha_pago, dias_prueba_sumados,
                 CASE estado_suscripcion
                   WHEN 'trial' THEN (trial_ends_at AT TIME ZONE 'America/Bogota')::date
                   WHEN 'activa' THEN suscripcion_fin

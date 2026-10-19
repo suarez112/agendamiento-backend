@@ -5,9 +5,12 @@ import { crearPool } from './pool.js';
 
 // npm run dev:activar-plan -- CODIGO mensual|anual
 // Activa un plan a una empresa sin pagos reales (no hay pasarela de pagos todavía).
-// La fecha de pago es hoy (hora de Colombia). El plan dura 1 mes o 1 año: desde
-// hoy, o desde el fin del plan actual si aún no ha vencido (así una renovación
-// anticipada no pierde días).
+// La fecha de pago es hoy (hora de Colombia) y la empresa queda 'activa' de inmediato.
+// El plan dura 1 mes o 1 año contados desde:
+// - el fin de la prueba, si paga durante la prueba (no pierde los días gratis que le
+//   quedaban; se guardan en dias_prueba_sumados),
+// - el fin del plan actual, si renueva antes de que venza (no pierde días),
+// - hoy, en cualquier otro caso.
 dotenv.config({ quiet: true });
 
 const USO = 'Uso: npm run dev:activar-plan -- CODIGO mensual|anual';
@@ -29,9 +32,16 @@ try {
          plan_suscripcion = $2::varchar,
          fecha_pago = hoy.fecha,
          suscripcion_fin = (
-           GREATEST(hoy.fecha, CASE WHEN e.estado_suscripcion = 'activa' THEN e.suscripcion_fin END)
+           GREATEST(hoy.fecha, CASE e.estado_suscripcion
+                                 WHEN 'activa' THEN e.suscripcion_fin
+                                 WHEN 'trial' THEN (e.trial_ends_at AT TIME ZONE 'America/Bogota')::date
+                               END)
            + CASE $2::varchar WHEN 'mensual' THEN interval '1 month' ELSE interval '1 year' END
-         )::date
+         )::date,
+         dias_prueba_sumados = CASE e.estado_suscripcion
+                                 WHEN 'trial' THEN GREATEST((e.trial_ends_at AT TIME ZONE 'America/Bogota')::date - hoy.fecha, 0)
+                                 WHEN 'activa' THEN e.dias_prueba_sumados
+                               END
      FROM (SELECT (now() AT TIME ZONE 'America/Bogota')::date AS fecha) hoy
      WHERE e.codigo_acceso = $1
      RETURNING e.id, e.nombre`,
@@ -44,7 +54,8 @@ try {
     const s = (await buscarSuscripcion(pool, rows[0].id))!;
     console.log(
       `✔ ${rows[0].nombre} (${codigo}): plan ${s.plan} activo. Pago: ${s.fecha_pago}. ` +
-        `Fin: ${s.fecha_fin}. Días restantes: ${s.dias_restantes}.`,
+        `Fin: ${s.fecha_fin}. Días restantes: ${s.dias_restantes}.` +
+        (s.dias_prueba_sumados ? ` Días de prueba sumados: ${s.dias_prueba_sumados}.` : ''),
     );
   }
 } catch (error) {
