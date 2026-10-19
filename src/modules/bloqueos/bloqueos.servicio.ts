@@ -33,12 +33,10 @@ const armarBloqueo = (b: FilaBloqueo) => ({
   motivo: b.motivo,
 });
 
-// Solo el administrador crea y borra bloqueos (la ruta lo exige). Un barbero
-// solo puede ver los suyos; el administrador, los de todo el equipo.
+// Solo el administrador ve, crea y borra bloqueos (la ruta lo exige).
 export const crearServicioBloqueos = ({ pool }: { pool: pg.Pool }) => ({
   async listar(sesion: Sesion, barberoId: string | undefined) {
-    const filtro = sesion.esAdmin ? (barberoId ?? null) : sesion.barberoId;
-    return (await repositorio.listarBloqueos(pool, sesion.empresaId, filtro)).map(armarBloqueo);
+    return (await repositorio.listarBloqueos(pool, sesion.empresaId, barberoId ?? null)).map(armarBloqueo);
   },
 
   async crear(sesion: Sesion, datos: DatosBloqueo) {

@@ -8,6 +8,9 @@ import {
   esquemaPerfilEmpresa,
   esquemaUsuarioAdmin,
 } from '../empresas/empresas.esquemas.js';
+import { texto } from '../../shared/http/esquemas.js';
+import { esquemaIndicativo } from '../citas/citas.esquemas.js';
+import { aceptacionObligatoria } from '../legal/legal.js';
 import type { ServicioCuentas } from './cuentas.servicio.js';
 
 const MENSAJE_CLAVE = 'La contraseña debe tener entre 8 y 64 caracteres';
@@ -16,14 +19,34 @@ const MENSAJE_CLAVE = 'La contraseña debe tener entre 8 y 64 caracteres';
 const esquemaClave = z.string({ error: MENSAJE_CLAVE }).min(8, MENSAJE_CLAVE).max(64, MENSAJE_CLAVE);
 
 // La administradora entra con su correo o su usuario, y su contraseña
+// Debe aceptar la Política de Tratamiento de Datos y los Términos y Condiciones
 const esquemaRegistroEmpresa = conUbicacionValida(
-  esquemaPerfilEmpresa.extend({ correo: esquemaCorreo, usuario: esquemaUsuarioAdmin, clave: esquemaClave }),
+  esquemaPerfilEmpresa.extend({
+    correo: esquemaCorreo,
+    usuario: esquemaUsuarioAdmin,
+    clave: esquemaClave,
+    ...aceptacionObligatoria,
+  }),
 );
 
-const esquemaRegistroCliente = z.object(
-  { correo: esquemaCorreo, clave: esquemaClave },
-  { error: 'Envía correo y contraseña' },
-);
+const CORREO_O_USUARIO = 'Envía tu correo o un nombre de usuario para iniciar sesión';
+
+// Cuenta de cliente: nombre y teléfono (se usan al reservar), correo o usuario
+// (o los dos) para iniciar sesión, contraseña y la aceptación de los documentos
+const esquemaRegistroCliente = z
+  .object(
+    {
+      nombre: texto('nombre', 100),
+      telefono: texto('teléfono', 30),
+      indicativo: esquemaIndicativo,
+      correo: esquemaCorreo.optional(),
+      usuario: esquemaUsuarioAdmin.optional(),
+      clave: esquemaClave,
+      ...aceptacionObligatoria,
+    },
+    { error: 'Envía tus datos para crear la cuenta' },
+  )
+  .refine((d) => d.correo !== undefined || d.usuario !== undefined, { error: CORREO_O_USUARIO });
 
 const FALTAN_DATOS = 'Debes enviar correo y contraseña';
 

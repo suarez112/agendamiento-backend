@@ -3,6 +3,10 @@ import type pg from 'pg';
 import { CODIGO_PG, enTransaccion, esErrorPg } from '../../db/pool.js';
 import { errores } from '../../shared/errores.js';
 import type { Sesion } from '../auth/auth.servicio.js';
+import type { FilaUsuario } from '../cuentas/cuentas.repositorio.js';
+import { buscarSuscripcion } from '../empresas/empresas.repositorio.js';
+import { SIN_RESERVAS } from '../empresas/suscripcion.js';
+import { aceptoAmbos, DEBE_ACEPTAR, NUEVA_VERSION, registrarAutorizacion, tieneAutorizacionVigente } from '../legal/legal.js';
 import type { DatosNuevaCita } from './citas.esquemas.js';
 import * as repositorio from './citas.repositorio.js';
 import { DIAS_RESERVA } from './citas.repositorio.js';
@@ -10,10 +14,26 @@ import { esDiaCompleto } from '../bloqueos/bloqueos.servicio.js';
 import { hora12AMinutos, hora24AMinutos, minutosAHHMM } from './horas.js';
 
 const HORA_OCUPADA = 'Esa hora ya está ocupada. Por favor elige otra.';
+const FALTAN_DATOS = 'Faltan datos para agendar la cita';
 
 export const crearServicioCitas = ({ pool }: { pool: pg.Pool }) => ({
-  async crear(datos: DatosNuevaCita) {
-    const { empresaId, barberoId, servicioId, fecha, hora, nombre, telefono, indicativo } = datos;
+  // cuenta: cliente con sesión (usa su nombre y teléfono); null = reserva como invitado
+  async crear(datos: DatosNuevaCita, cuenta: FilaUsuario | null = null) {
+    const { empresaId, barberoId, servicioId, fecha, hora } = datos;
+    // Los datos de la cuenta mandan; una cuenta antigua sin nombre o teléfono usa los del cuerpo
+    const nombre = cuenta?.nombre ?? datos.nombre;
+    const telefono = cuenta?.telefono ?? datos.telefono;
+    const indicativo = (cuenta?.telefono && cuenta.indicativo) || datos.indicativo;
+    if (!nombre || !telefono) throw errores.solicitudInvalida(FALTAN_DATOS);
+
+    // Autorización de tratamiento de datos: el invitado acepta en cada reserva;
+    // un cliente con cuenta solo si se publicó una versión nueva desde que aceptó
+    const debeAceptar = !cuenta || !(await tieneAutorizacionVigente(pool, cuenta.id));
+    if (debeAceptar && !aceptoAmbos(datos)) throw errores.solicitudInvalida(cuenta ? NUEVA_VERSION : DEBE_ACEPTAR);
+
+    // Un negocio con la suscripción vencida no recibe reservas
+    const suscripcion = await buscarSuscripcion(pool, empresaId);
+    if (suscripcion && !suscripcion.habilitada) throw errores.prohibido(SIN_RESERVAS);
 
     // 1. El servicio y el profesional deben ser de ese negocio
     const reserva = await repositorio.buscarDatosReserva(pool, { empresaId, barberoId, servicioId, fecha });
@@ -68,7 +88,19 @@ export const crearServicioCitas = ({ pool }: { pool: pg.Pool }) => ({
           fecha,
           ...horario,
           precio: reserva.precio,
+          usuarioId: cuenta?.id ?? null,
         });
+        // Prueba de la autorización, junto con la cita
+        if (debeAceptar) {
+          await registrarAutorizacion(tx, {
+            origen: 'reserva',
+            usuarioId: cuenta?.id ?? null,
+            telefono: cuenta ? null : telefono,
+            indicativo: cuenta ? null : indicativo,
+            empresaId,
+            citaId,
+          });
+        }
       });
     } catch (error) {
       if (esErrorPg(error, CODIGO_PG.violacionExclusion)) throw errores.conflicto(HORA_OCUPADA);

@@ -20,11 +20,12 @@ const esquemaServicio = z.object(
 const esquemaCambios = conAlMenosUnDato(esquemaServicio.partial());
 const esquemaIdServicio = esquemaId('Identificador de servicio inválido');
 
-// Servicios del negocio de la sesión. Ver: todo el equipo; cambiar: solo administradores.
+// Servicios del negocio de la sesión. Solo administradores (los empleados solo usan
+// su agenda y su cartera).
 export const crearRutasServicios = (servicios: ServicioServicios, permisos: Permisos) => {
   const rutas = Router();
 
-  rutas.get('/', ...permisos.personal, async (_req, res) => {
+  rutas.get('/', ...permisos.admin, async (_req, res) => {
     res.json(await servicios.listar(sesionDe(res).empresaId));
   });
 

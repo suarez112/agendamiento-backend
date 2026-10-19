@@ -11,33 +11,44 @@ const MENSAJE_USUARIO = 'El usuario debe tener entre 3 y 60 caracteres: letras, 
 const MENSAJE_CLAVE = 'La contraseña debe tener entre 8 y 64 caracteres';
 const MENSAJE_PORCENTAJE = 'El porcentaje de ganancia debe ser un número entre 0 y 100';
 
-const esquemaMiembro = z.object(
-  {
-    nombre: texto('nombre', 100),
-    usuario: z
-      .string({ error: 'El campo "usuario" es obligatorio' })
-      .trim()
-      .regex(/^[A-Za-z0-9._-]{3,60}$/, MENSAJE_USUARIO),
-    // bcrypt solo usa los primeros 72 bytes; 64 caracteres deja margen
-    clave: z.string({ error: MENSAJE_CLAVE }).min(8, MENSAJE_CLAVE).max(64, MENSAJE_CLAVE),
-    esAdmin: z.boolean({ error: 'El campo "esAdmin" debe ser true o false' }).default(false),
-    especialidad: textoOpcional('especialidad', 100),
-    porcentajeGanancia: z
-      .number({ error: MENSAJE_PORCENTAJE })
-      .min(0, MENSAJE_PORCENTAJE)
-      .max(100, MENSAJE_PORCENTAJE)
-      .default(50),
-  },
-  { error: 'Envía los datos del profesional' },
-);
+const MENSAJE_ROL = 'El rol debe ser "admin" (Administrador) o "empleado" (Empleado)';
+
+const campos = {
+  nombre: texto('nombre', 100),
+  usuario: z
+    .string({ error: 'El campo "usuario" es obligatorio' })
+    .trim()
+    .regex(/^[A-Za-z0-9._-]{3,60}$/, MENSAJE_USUARIO),
+  // bcrypt solo usa los primeros 72 bytes; 64 caracteres deja margen
+  clave: z.string({ error: MENSAJE_CLAVE }).min(8, MENSAJE_CLAVE).max(64, MENSAJE_CLAVE),
+  // "admin" = Administrador, "empleado" = Empleado. esAdmin se mantiene para la app
+  // de antes; si llegan los dos, manda rol.
+  rol: z.enum(['admin', 'empleado'], { error: MENSAJE_ROL }).optional(),
+  esAdmin: z.boolean({ error: 'El campo "esAdmin" debe ser true o false' }).optional(),
+  // Si recibe reservas como profesional
+  atiendeClientes: z.boolean({ error: 'El campo "atiendeClientes" debe ser true o false' }).optional(),
+  especialidad: textoOpcional('especialidad', 100),
+  porcentajeGanancia: z.number({ error: MENSAJE_PORCENTAJE }).min(0, MENSAJE_PORCENTAJE).max(100, MENSAJE_PORCENTAJE),
+};
+
+const esAdminSegun = (d: { rol?: 'admin' | 'empleado'; esAdmin?: boolean }) =>
+  d.rol !== undefined ? d.rol === 'admin' : d.esAdmin;
+
+// Alta: por defecto es empleado y atiende clientes; un administrador, por
+// defecto, no atiende clientes (se activa con "atiendeClientes": true)
+const esquemaMiembro = z
+  .object({ ...campos, porcentajeGanancia: campos.porcentajeGanancia.default(50) }, {
+    error: 'Envía los datos del profesional',
+  })
+  .transform(({ rol, ...d }) => {
+    const esAdmin = esAdminSegun({ rol, esAdmin: d.esAdmin }) ?? false;
+    return { ...d, esAdmin, atiendeClientes: d.atiendeClientes ?? !esAdmin };
+  });
 
 // En la edición nada tiene valor por defecto: lo que no llega, no cambia
 const esquemaCambios = conAlMenosUnDato(
-  esquemaMiembro.extend({
-    esAdmin: z.boolean({ error: 'El campo "esAdmin" debe ser true o false' }),
-    porcentajeGanancia: z.number({ error: MENSAJE_PORCENTAJE }).min(0, MENSAJE_PORCENTAJE).max(100, MENSAJE_PORCENTAJE),
-  }).partial(),
-);
+  z.object(campos, { error: 'Envía al menos un dato para actualizar' }).partial(),
+).transform(({ rol, ...d }) => ({ ...d, esAdmin: esAdminSegun({ rol, esAdmin: d.esAdmin }) }));
 
 const esquemaIdMiembro = esquemaId('Identificador de profesional inválido');
 

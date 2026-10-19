@@ -9,9 +9,10 @@ export type FilaMiembro = {
   especialidad: string | null;
   porcentaje_ganancia: string;
   foto_url: string | null;
+  atiende_clientes: boolean;
 };
 
-const COLUMNAS = 'id, nombre, usuario, es_admin, especialidad, porcentaje_ganancia, foto_url';
+const COLUMNAS = 'id, nombre, usuario, es_admin, especialidad, porcentaje_ganancia, foto_url, atiende_clientes';
 
 // Solo el equipo activo; quienes fueron eliminados se conservan para las citas pasadas
 export const listarEquipo = async (db: Consultable, empresaId: string) =>
@@ -31,16 +32,28 @@ export const crearMiembro = async (
     usuario: string;
     passwordHash: string;
     esAdmin: boolean;
+    atiendeClientes: boolean;
     especialidad: string | null;
     porcentajeGanancia: number;
   },
 ) =>
   (
     await db.query<FilaMiembro>(
-      `INSERT INTO barberos (id, empresa_id, nombre, usuario, password_hash, es_admin, especialidad, porcentaje_ganancia)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO barberos (id, empresa_id, nombre, usuario, password_hash, es_admin, atiende_clientes,
+         especialidad, porcentaje_ganancia)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING ${COLUMNAS}`,
-      [m.id, m.empresaId, m.nombre, m.usuario, m.passwordHash, m.esAdmin, m.especialidad, m.porcentajeGanancia],
+      [
+        m.id,
+        m.empresaId,
+        m.nombre,
+        m.usuario,
+        m.passwordHash,
+        m.esAdmin,
+        m.atiendeClientes,
+        m.especialidad,
+        m.porcentajeGanancia,
+      ],
     )
   ).rows[0];
 
@@ -49,6 +62,7 @@ export type CambiosMiembro = {
   usuario?: string;
   passwordHash?: string;
   esAdmin?: boolean;
+  atiendeClientes?: boolean;
   especialidad?: string | null;
   porcentajeGanancia?: number;
 };
@@ -63,7 +77,8 @@ export const actualizarMiembro = async (db: Consultable, id: string, empresaId: 
            password_hash = COALESCE($5, password_hash),
            es_admin = COALESCE($6, es_admin),
            especialidad = CASE WHEN $7::boolean THEN $8::varchar ELSE especialidad END,
-           porcentaje_ganancia = COALESCE($9, porcentaje_ganancia)
+           porcentaje_ganancia = COALESCE($9, porcentaje_ganancia),
+           atiende_clientes = COALESCE($10, atiende_clientes)
        WHERE id = $1 AND empresa_id = $2 AND activo
        RETURNING ${COLUMNAS}`,
       [
@@ -76,7 +91,22 @@ export const actualizarMiembro = async (db: Consultable, id: string, empresaId: 
         c.especialidad !== undefined,
         c.especialidad ?? null,
         c.porcentajeGanancia ?? null,
+        c.atiendeClientes ?? null,
       ],
+    )
+  ).rows[0];
+
+// Límite del equipo: número de empleados de la empresa (las empresas anteriores
+// al registro no lo tienen; para ellas el máximo es 10) e integrantes activos.
+// FOR UPDATE bloquea la empresa: dos altas a la vez se esperan y la segunda ve a la primera.
+export const bloquearLimiteEquipo = async (db: Consultable, empresaId: string) =>
+  (
+    await db.query<{ maximo: number; activos: number }>(
+      `SELECT COALESCE(e.numero_empleados, 10) AS maximo,
+              (SELECT count(*)::int FROM barberos b WHERE b.empresa_id = e.id AND b.activo) AS activos
+       FROM empresas e WHERE e.id = $1
+       FOR UPDATE`,
+      [empresaId],
     )
   ).rows[0];
 

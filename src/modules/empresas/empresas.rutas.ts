@@ -3,11 +3,10 @@ import { z } from 'zod';
 import type { Limitadores } from '../../shared/http/limitadores.js';
 import { parsear } from '../../shared/http/validacion.js';
 import { type Guardias, sesionDe } from '../auth/guardias.js';
-import { empresaDeAdmin, type GuardiasCuenta } from '../cuentas/cuentas.guardias.js';
+import { SOLO_ADMIN } from '../auth/permisos.js';
 import { esquemaActualizarEmpresa, esquemaCodigoNegocio } from './empresas.esquemas.js';
 import type { ServicioEmpresas } from './empresas.servicio.js';
 import { recibirFoto, type UrlBase } from './fotos.js';
-import type { GuardiaSuscripcion } from './suscripcion.js';
 
 export const crearRutasEmpresas = (
   empresas: ServicioEmpresas,
@@ -40,36 +39,35 @@ export const crearRutasEmpresas = (
   return rutas;
 };
 
-// Endpoints del administrador de una empresa (cuentas de la tabla usuarios).
+// "Mi negocio" y la suscripción. Sirven a los dos tipos de administrador: la
+// cuenta de la empresa y los integrantes del equipo marcados como administrador.
 // La empresa sale siempre de la sesión: no hay id en la URL ni en el cuerpo.
-export const crearRutasAdminEmpresa = (
-  empresas: ServicioEmpresas,
-  guardias: GuardiasCuenta,
-  suscripcion: GuardiaSuscripcion,
-  urlBase: UrlBase,
-) => {
+// Funcionan aunque la suscripción haya vencido, para poder renovarla y corregir datos.
+export const crearRutasAdminEmpresa = (empresas: ServicioEmpresas, guardias: Guardias, urlBase: UrlBase) => {
   const rutas = Router();
-  const soloAdmin = [guardias.requerirCuenta, guardias.requerirAdminEmpresa];
-  // Con la prueba vencida se bloquean, salvo la consulta de días restantes
-  const adminConSuscripcion = [...soloAdmin, suscripcion.requerirSuscripcionVigente];
+  const soloAdmin = [guardias.requerirSesion, guardias.requerirAdmin(SOLO_ADMIN)];
 
   rutas.get('/prueba', ...soloAdmin, async (_req, res) => {
-    res.json(await empresas.estadoPrueba(empresaDeAdmin(res)));
+    res.json(await empresas.estadoPrueba(sesionDe(res).empresaId));
   });
 
-  rutas.get('/', ...adminConSuscripcion, async (req, res) => {
-    res.json(await empresas.perfilDeAdmin(empresaDeAdmin(res), urlBase(req)));
+  rutas.get('/suscripcion', ...soloAdmin, async (_req, res) => {
+    res.json(await empresas.suscripcion(sesionDe(res).empresaId));
   });
 
-  rutas.patch('/', ...adminConSuscripcion, async (req, res) => {
+  rutas.get('/', ...soloAdmin, async (req, res) => {
+    res.json(await empresas.perfilDeAdmin(sesionDe(res).empresaId, urlBase(req)));
+  });
+
+  rutas.patch('/', ...soloAdmin, async (req, res) => {
     const cambios = parsear(esquemaActualizarEmpresa, req.body);
-    res.json(await empresas.actualizarPerfil(empresaDeAdmin(res), cambios, urlBase(req)));
+    res.json(await empresas.actualizarPerfil(sesionDe(res).empresaId, cambios, urlBase(req)));
   });
 
   // Sube o cambia la foto del negocio (multipart/form-data, campo "foto").
   // Las guardias van antes de leer el archivo: sin permiso no se recibe nada.
-  rutas.put('/foto', ...adminConSuscripcion, recibirFoto, async (req, res) => {
-    res.json(await empresas.cambiarFoto(empresaDeAdmin(res), req.file!.buffer, urlBase(req)));
+  rutas.put('/foto', ...soloAdmin, recibirFoto, async (req, res) => {
+    res.json(await empresas.cambiarFoto(sesionDe(res).empresaId, req.file!.buffer, urlBase(req)));
   });
 
   return rutas;

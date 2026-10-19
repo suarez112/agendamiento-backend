@@ -25,6 +25,8 @@ import { crearAlmacenesFotos, crearUrlBase, PREFIJO_SUBIDAS } from './modules/em
 import { crearGuardiaSuscripcion } from './modules/empresas/suscripcion.js';
 import { crearRutasEquipo } from './modules/equipo/equipo.rutas.js';
 import { crearServicioEquipo } from './modules/equipo/equipo.servicio.js';
+import { crearRutasLegal } from './modules/legal/legal.js';
+import { crearRutasMiCuenta, crearServicioMiCuenta } from './modules/micuenta/micuenta.rutas.js';
 import { crearRutasProductos } from './modules/productos/productos.rutas.js';
 import { crearServicioProductos } from './modules/productos/productos.servicio.js';
 import { crearRutasServicios } from './modules/servicios/servicios.rutas.js';
@@ -96,9 +98,12 @@ export const crearApp = ({ pool, entorno, limites = LIMITES_POR_DEFECTO }: Depen
   app.use('/api/v1/auth', crearRutasAuth(auth, limitadores));
   app.use('/api/v1/cuentas', crearRutasCuentas(cuentas, limitadores));
   app.use('/api/v1/ubicaciones', crearRutasUbicaciones());
+  app.use('/api/v1/legal', crearRutasLegal({ pool }));
+  // Cuenta del cliente registrado: negocios guardados y sus citas
+  app.use('/api/v1/mi-cuenta', crearRutasMiCuenta(crearServicioMiCuenta({ pool }), guardiasCuenta, limitadores, urlBase));
   app.use('/api/v1/empresas', crearRutasEmpresas(empresas, guardias, limitadores, urlBase));
-  app.use('/api/v1/admin/empresa', crearRutasAdminEmpresa(empresas, guardiasCuenta, suscripcion, urlBase));
-  app.use('/api/v1/citas', crearRutasCitas(crearServicioCitas({ pool }), guardias, suscripcion, limitadores));
+  app.use('/api/v1/admin/empresa', crearRutasAdminEmpresa(empresas, guardias, urlBase));
+  app.use('/api/v1/citas', crearRutasCitas(crearServicioCitas({ pool }), guardias, suscripcion, limitadores, cuentas));
   // Gestión del negocio: personal (barberos) o la cuenta del administrador de la empresa
   app.use('/api/v1/clientes', crearRutasClientes(crearServicioClientes({ pool }), permisos));
   app.use('/api/v1/equipo', crearRutasEquipo(crearServicioEquipo({ pool, fotos: fotos.barberos }), permisos, urlBase));

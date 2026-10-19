@@ -3,9 +3,19 @@ import type { PerfilEmpresa } from '../empresas/empresas.esquemas.js';
 
 export type Rol = 'admin' | 'cliente';
 
-export type FilaUsuario = { id: string; correo: string; usuario: string | null; rol: Rol; empresa_id: string | null };
+// Administradora: correo y usuario. Cliente: correo o usuario, y nombre y teléfono para reservar.
+export type FilaUsuario = {
+  id: string;
+  correo: string | null;
+  usuario: string | null;
+  rol: Rol;
+  empresa_id: string | null;
+  nombre: string | null;
+  telefono: string | null;
+  indicativo: string | null;
+};
 
-const COLUMNAS_USUARIO = 'id, correo, usuario, rol, empresa_id';
+const COLUMNAS_USUARIO = 'id, correo, usuario, rol, empresa_id, nombre, telefono, indicativo';
 
 export type FilaEmpresaRegistrada = {
   id: string;
@@ -47,14 +57,32 @@ export const insertarEmpresaEnPrueba = async (
 
 export const insertarUsuario = async (
   db: Consultable,
-  datos: { correo: string; usuario: string | null; passwordHash: string; rol: Rol; empresaId: string | null },
+  datos: {
+    correo: string | null;
+    usuario: string | null;
+    passwordHash: string;
+    rol: Rol;
+    empresaId: string | null;
+    nombre?: string | null;
+    telefono?: string | null;
+    indicativo?: string | null;
+  },
 ) =>
   (
     await db.query<FilaUsuario>(
-      `INSERT INTO usuarios (correo, usuario, password_hash, rol, empresa_id)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO usuarios (correo, usuario, password_hash, rol, empresa_id, nombre, telefono, indicativo)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING ${COLUMNAS_USUARIO}`,
-      [datos.correo, datos.usuario, datos.passwordHash, datos.rol, datos.empresaId],
+      [
+        datos.correo,
+        datos.usuario,
+        datos.passwordHash,
+        datos.rol,
+        datos.empresaId,
+        datos.nombre ?? null,
+        datos.telefono ?? null,
+        datos.indicativo ?? null,
+      ],
     )
   ).rows[0];
 

@@ -30,12 +30,13 @@ export type FilaBarbero = {
   especialidad: string | null;
   porcentaje_ganancia: string;
   foto_url: string | null;
+  atiende_clientes: boolean;
 };
 
 export const listarBarberos = async (db: Consultable, empresaId: string) =>
   (
     await db.query<FilaBarbero>(
-      `SELECT id, nombre, usuario, es_admin, especialidad, porcentaje_ganancia, foto_url
+      `SELECT id, nombre, usuario, es_admin, especialidad, porcentaje_ganancia, foto_url, atiende_clientes
        FROM barberos WHERE empresa_id = $1 AND activo`,
       [empresaId],
     )
@@ -133,6 +134,15 @@ export const actualizarPerfilEmpresa = async (db: Consultable, id: string, cambi
   ).rows[0];
 };
 
+// Integrantes activos del equipo (el límite es el número de empleados de la empresa)
+export const contarEquipoActivo = async (db: Consultable, empresaId: string) =>
+  (
+    await db.query<{ total: number }>(
+      'SELECT count(*)::int AS total FROM barberos WHERE empresa_id = $1 AND activo',
+      [empresaId],
+    )
+  ).rows[0].total;
+
 // true si ningún negocio usa ese código (los códigos se guardan en mayúsculas)
 export const codigoDisponible = async (db: Consultable, codigo: string) =>
   (await db.query('SELECT 1 FROM empresas WHERE codigo_acceso = $1', [codigo])).rowCount === 0;
@@ -140,22 +150,37 @@ export const codigoDisponible = async (db: Consultable, codigo: string) =>
 export type FilaSuscripcion = {
   estado_suscripcion: string;
   trial_ends_at: Date | null;
+  plan: 'mensual' | 'anual' | null;
+  // AAAA-MM-DD, en hora de Colombia
+  fecha_pago: string | null;
+  fecha_fin: string | null;
+  // Fecha de fin menos hoy: 0 o negativo = vencida. null si no tiene fecha de fin.
   dias_restantes: number | null;
   habilitada: boolean;
 };
 
-// Estado de la suscripción calculado con el reloj de la base. Los días que
-// quedan se redondean hacia arriba (quedan 2 horas = 1 día) y nunca son negativos.
+// Estado de la suscripción con la fecha actual de Colombia, así los días que
+// quedan bajan cada día. La prueba termina el día de trial_ends_at y un plan el
+// día de suscripcion_fin: ese día ya no queda ninguno. No hace falta una tarea
+// programada que marque las vencidas: se calcula en cada consulta.
+// Una empresa 'activa' sin fecha de fin (anterior a los planes) sigue habilitada.
 export const buscarSuscripcion = async (db: Consultable, empresaId: string) =>
   (
     await db.query<FilaSuscripcion>(
-      `SELECT estado_suscripcion, trial_ends_at,
-              CASE WHEN estado_suscripcion = 'trial'
-                   THEN GREATEST(0, ceil(extract(epoch FROM trial_ends_at - now()) / 86400))::int
-              END AS dias_restantes,
-              (estado_suscripcion = 'activa'
-               OR (estado_suscripcion = 'trial' AND trial_ends_at > now())) AS habilitada
-       FROM empresas WHERE id = $1`,
+      `SELECT estado_suscripcion, trial_ends_at, plan_suscripcion AS plan,
+              to_char(fecha_pago, 'YYYY-MM-DD') AS fecha_pago,
+              to_char(fin, 'YYYY-MM-DD') AS fecha_fin,
+              fin - hoy AS dias_restantes,
+              estado_suscripcion IN ('trial', 'activa') AND (fin IS NULL OR fin > hoy) AS habilitada
+       FROM (
+         SELECT estado_suscripcion, trial_ends_at, plan_suscripcion, fecha_pago,
+                CASE estado_suscripcion
+                  WHEN 'trial' THEN (trial_ends_at AT TIME ZONE 'America/Bogota')::date
+                  WHEN 'activa' THEN suscripcion_fin
+                END AS fin,
+                (now() AT TIME ZONE 'America/Bogota')::date AS hoy
+         FROM empresas WHERE id = $1
+       ) s`,
       [empresaId],
     )
   ).rows[0];

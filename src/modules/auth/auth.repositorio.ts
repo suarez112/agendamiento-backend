@@ -10,6 +10,7 @@ export type FilaBarberoLogin = {
   especialidad: string | null;
   porcentaje_ganancia: string;
   foto_url: string | null;
+  atiende_clientes: boolean;
   empresa_nombre: string;
   empresa_codigo: string;
 };
@@ -17,7 +18,7 @@ export type FilaBarberoLogin = {
 export const buscarBarberoPorUsuario = async (db: Consultable, usuario: string) => {
   const { rows } = await db.query<FilaBarberoLogin>(
     `SELECT b.id, b.empresa_id, b.nombre, b.usuario, b.password_hash, b.es_admin,
-            b.especialidad, b.porcentaje_ganancia, b.foto_url,
+            b.especialidad, b.porcentaje_ganancia, b.foto_url, b.atiende_clientes,
             e.nombre AS empresa_nombre, e.codigo_acceso AS empresa_codigo
      FROM barberos b
      JOIN empresas e ON e.id = b.empresa_id

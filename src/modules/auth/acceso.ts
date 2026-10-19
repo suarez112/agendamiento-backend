@@ -8,7 +8,8 @@ import type { ServicioAuth } from './auth.servicio.js';
 import { verificarContrasena } from './contrasenas.js';
 
 // Login único: recibe "correo o usuario" y contraseña, y detecta si es la
-// administradora de una empresa (tabla usuarios) o alguien del personal (barberos).
+// administradora de una empresa o un cliente con cuenta (tabla usuarios), o
+// alguien del personal (barberos).
 // Los logins de antes (/auth/login y /cuentas/login) siguen igual.
 
 const FALTAN_DATOS = 'Debes enviar tu correo o usuario y tu contraseña';
@@ -34,10 +35,8 @@ export const crearServicioAcceso = (auth: ServicioAuth, cuentas: ServicioCuentas
 
     if (cuenta === null) throw errores.noAutenticado(INCORRECTOS);
     if (cuenta) {
-      if (cuenta.rol !== 'admin') {
-        throw errores.prohibido('Esta es una cuenta de cliente. Inicia sesión en la opción para clientes.');
-      }
-      return { tipo: 'admin' as const, ...cuentas.respuestaLogin(cuenta) };
+      const tipo = cuenta.rol === 'admin' ? ('admin' as const) : ('cliente' as const);
+      return { tipo, ...(await cuentas.respuestaLogin(cuenta)) };
     }
 
     if (esCorreo) {
@@ -50,7 +49,7 @@ export const crearServicioAcceso = (auth: ServicioAuth, cuentas: ServicioCuentas
     // Igual que /auth/login, que recorta los espacios de la contraseña del personal
     const barbero = await auth.verificarCredenciales(identificador, clave.trim());
     if (!barbero) throw errores.noAutenticado(INCORRECTOS);
-    return { tipo: 'personal' as const, ...auth.respuestaLogin(barbero) };
+    return { tipo: 'personal' as const, ...(await auth.respuestaLogin(barbero)) };
   },
 });
 

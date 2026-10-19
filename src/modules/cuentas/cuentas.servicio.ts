@@ -7,6 +7,7 @@ import type { PerfilEmpresa } from '../empresas/empresas.esquemas.js';
 import { CODIGO_REPETIDO } from '../empresas/empresas.servicio.js';
 import { guardarHorario } from '../empresas/horario.js';
 import { DIAS_PRUEBA } from '../empresas/suscripcion.js';
+import { registrarAutorizacion, tieneAutorizacionVigente } from '../legal/legal.js';
 import * as repositorio from './cuentas.repositorio.js';
 import type { FilaUsuario, Rol } from './cuentas.repositorio.js';
 
@@ -16,6 +17,14 @@ export type SesionCuenta = { usuarioId: string; rol: Rol; empresaId: string | nu
 type Dependencias = { pool: pg.Pool; tokens: ServicioTokens };
 type Credenciales = { correo: string; clave: string };
 export type DatosRegistroEmpresa = PerfilEmpresa & { correo: string; usuario: string; clave: string };
+export type DatosRegistroCliente = {
+  nombre: string;
+  telefono: string;
+  indicativo: string;
+  correo?: string;
+  usuario?: string;
+  clave: string;
+};
 
 const CORREO_REPETIDO = 'Ya existe una cuenta con ese correo';
 export const USUARIO_REPETIDO = 'Ese usuario ya está en uso. Elige otro.';
@@ -41,12 +50,21 @@ export const crearServicioCuentas = ({ pool, tokens }: Dependencias) => {
     usuario: usuario.usuario,
     rol: usuario.rol,
     empresaId: usuario.empresa_id,
+    // Solo los clientes los tienen (se usan al reservar con la sesión)
+    nombre: usuario.nombre,
+    telefono: usuario.telefono,
+    indicativo: usuario.indicativo,
   });
 
-  const respuestaLogin = (usuario: FilaUsuario) => ({
+  // Un cliente que no ha aceptado las versiones vigentes de la política y los
+  // términos debe aceptarlas en su próxima reserva (debeAceptarDocumentos: true)
+  const respuestaLogin = async (usuario: FilaUsuario) => ({
     mensaje: 'Autenticación exitosa',
     token: tokens.firmarCuenta({ usuarioId: usuario.id }),
     usuario: respuestaUsuario(usuario),
+    ...(usuario.rol === 'cliente' && {
+      debeAceptarDocumentos: !(await tieneAutorizacionVigente(pool, usuario.id)),
+    }),
   });
 
   return {
@@ -66,6 +84,8 @@ export const crearServicioCuentas = ({ pool, tokens }: Dependencias) => {
           rol: 'admin',
           empresaId: empresa.id,
         });
+        // Prueba de que aceptó la política y los términos (la ruta ya exigió la aceptación)
+        await registrarAutorizacion(cliente, { origen: 'registro_empresa', usuarioId: usuario.id, empresaId: empresa.id });
         return { empresa, usuario };
       }).catch(traducirDuplicado);
 
@@ -84,11 +104,21 @@ export const crearServicioCuentas = ({ pool, tokens }: Dependencias) => {
       };
     },
 
-    async registrarCliente({ correo, clave }: Credenciales) {
+    // Cuenta y prueba de la autorización juntas: o se guardan las dos, o ninguna
+    async registrarCliente({ clave, correo, usuario: nombreUsuario, ...datos }: DatosRegistroCliente) {
       const passwordHash = await cifrarContrasena(clave);
-      const usuario = await repositorio
-        .insertarUsuario(pool, { correo, usuario: null, passwordHash, rol: 'cliente', empresaId: null })
-        .catch(traducirDuplicado);
+      const usuario = await enTransaccion(pool, async (tx) => {
+        const usuario = await repositorio.insertarUsuario(tx, {
+          ...datos,
+          correo: correo ?? null,
+          usuario: nombreUsuario ?? null,
+          passwordHash,
+          rol: 'cliente',
+          empresaId: null,
+        });
+        await registrarAutorizacion(tx, { origen: 'registro_cliente', usuarioId: usuario.id });
+        return usuario;
+      }).catch(traducirDuplicado);
       return {
         mensaje: 'Cuenta creada',
         token: tokens.firmarCuenta({ usuarioId: usuario.id }),
@@ -101,7 +131,7 @@ export const crearServicioCuentas = ({ pool, tokens }: Dependencias) => {
       const usuario = await repositorio.buscarUsuarioPorCorreo(pool, correo);
       const { valida } = await verificarContrasena(clave, usuario?.password_hash);
       if (!usuario || !valida) throw errores.noAutenticado('Correo o contraseña incorrectos');
-      return respuestaLogin(usuario);
+      return await respuestaLogin(usuario);
     },
 
     // Cuenta con ese correo o usuario (para el login único):
@@ -117,6 +147,15 @@ export const crearServicioCuentas = ({ pool, tokens }: Dependencias) => {
     },
 
     respuestaLogin: (usuario: FilaUsuario) => respuestaLogin(usuario),
+
+    // Cuenta de cliente del token, para reservar con la sesión. null si no hay
+    // token o no es de un cliente: la reserva sigue como invitado.
+    async clienteDeToken(token: string | undefined): Promise<FilaUsuario | null> {
+      const datos = token ? tokens.verificarCuenta(token) : null;
+      if (!datos) return null;
+      const usuario = await repositorio.buscarUsuarioPorId(pool, datos.usuarioId);
+      return usuario?.rol === 'cliente' ? usuario : null;
+    },
 
     // Convierte un token en la sesión vigente, con rol y empresa leídos de la base
     async validarSesion(token: string | undefined): Promise<SesionCuenta> {

@@ -11,7 +11,9 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "test": "tsx --test --test-concurrency=1 \"test/**/*.test.ts\"",
     "db:migrate": "tsx src/db/migrar.ts",
-    "db:cifrar-contrasenas": "tsx src/db/cifrarContrasenas.ts"
+    "db:cifrar-contrasenas": "tsx src/db/cifrarContrasenas.ts",
+    "dev:activar-plan": "tsx src/db/activarPlan.ts",
+    "dev:simular-vencimiento": "tsx src/db/simularVencimiento.ts"
   },
   "keywords": [],
   "author": "",

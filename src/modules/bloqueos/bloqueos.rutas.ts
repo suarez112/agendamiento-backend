@@ -63,13 +63,13 @@ const esquemaIdBloqueo = esquemaId('Identificador de bloqueo inválido');
 export const crearRutasBloqueos = (bloqueos: ServicioBloqueos, permisos: Permisos) => {
   const rutas = Router();
 
-  // Un barbero ve solo su horario; el administrador, el de todo el equipo
-  rutas.get('/', ...permisos.personal, async (req, res) => {
+  // Solo el administrador: ve los bloqueos de todo el equipo (o de un integrante).
+  // Los empleados no ven ni usan bloqueos.
+  rutas.get('/', ...permisos.admin, async (req, res) => {
     const { barberoId } = parsear(esquemaFiltro, req.query);
     res.json(await bloqueos.listar(sesionDe(res), barberoId));
   });
 
-  // Crear y borrar: solo el administrador
   rutas.post('/', ...permisos.admin, async (req, res) => {
     res.status(201).json(await bloqueos.crear(sesionDe(res), parsear(esquemaBloqueo, req.body)));
   });

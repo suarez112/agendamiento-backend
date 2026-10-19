@@ -5,14 +5,15 @@ import * as repositorio from './cartera.repositorio.js';
 // Suma con centavos sin errores de punto flotante
 const sumar = (valores: number[]) => Math.round(valores.reduce((a, b) => a + b * 100, 0)) / 100;
 
-// Resumen de ganancias: un administrador ve todo el negocio; un barbero, solo lo suyo
+// Resumen de ganancias: un administrador ve todo el negocio y puede filtrar por un
+// integrante (también él mismo); un empleado solo ve lo suyo, aunque envíe otro barberoId
 export const crearServicioCartera = ({ pool }: { pool: pg.Pool }) => ({
-  async resumen(sesion: Sesion, desde: string, hasta: string) {
+  async resumen(sesion: Sesion, desde: string, hasta: string, filtro?: string) {
     const filas = await repositorio.resumenPorProfesional(pool, {
       empresaId: sesion.empresaId,
       desde,
       hasta,
-      barberoId: sesion.esAdmin ? null : sesion.barberoId,
+      barberoId: sesion.esAdmin ? (filtro ?? null) : sesion.barberoId,
     });
 
     const porProfesional = filas.map((f) => ({
@@ -30,6 +31,7 @@ export const crearServicioCartera = ({ pool }: { pool: pg.Pool }) => ({
     return {
       desde,
       hasta,
+      barberoId: sesion.esAdmin ? (filtro ?? null) : sesion.barberoId,
       totalCitas: porProfesional.reduce((total, p) => total + p.citas, 0),
       totalVentas,
       gananciaEquipo,

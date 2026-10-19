@@ -31,7 +31,8 @@ export type DatosReserva = {
 export const DIAS_RESERVA = 14;
 
 // Servicio, profesional, horario de ese día y rango de fechas en una sola consulta.
-// Solo devuelve fila si el servicio y el profesional pertenecen a ese negocio.
+// Solo devuelve fila si el servicio y el profesional pertenecen a ese negocio y
+// el profesional atiende clientes.
 export const buscarDatosReserva = async (
   db: Consultable,
   p: { empresaId: string; barberoId: string; servicioId: string; fecha: string },
@@ -45,7 +46,7 @@ export const buscarDatosReserva = async (
               to_char(hoy.fecha + $5::int, 'YYYY-MM-DD') AS ultimo_dia
        FROM empresas e
        JOIN servicios s ON s.empresa_id = e.id AND s.id = $2 AND s.activo
-       JOIN barberos b ON b.empresa_id = e.id AND b.id = $3 AND b.activo
+       JOIN barberos b ON b.empresa_id = e.id AND b.id = $3 AND b.activo AND b.atiende_clientes
        CROSS JOIN (SELECT (now() AT TIME ZONE 'America/Bogota')::date AS fecha) hoy
        LEFT JOIN horarios_empresa h ON h.empresa_id = e.id AND h.dia_semana = EXTRACT(DOW FROM $4::date)
        WHERE e.id = $1`,
@@ -82,12 +83,15 @@ export const insertarCita = (
     horaInicio: string;
     horaFin: string;
     precio: string;
+    // Cuenta del cliente que reservó con su sesión; null = invitado
+    usuarioId: string | null;
   },
 ) =>
   db.query(
-    `INSERT INTO citas (id, empresa_id, barbero_id, servicio_id, cliente_id, fecha, hora_inicio, hora_fin, precio, estado)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'CONFIRMADA')`,
-    [c.id, c.empresaId, c.barberoId, c.servicioId, c.clienteId, c.fecha, c.horaInicio, c.horaFin, c.precio],
+    `INSERT INTO citas (id, empresa_id, barbero_id, servicio_id, cliente_id, fecha, hora_inicio, hora_fin, precio,
+       estado, usuario_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'CONFIRMADA', $10)`,
+    [c.id, c.empresaId, c.barberoId, c.servicioId, c.clienteId, c.fecha, c.horaInicio, c.horaFin, c.precio, c.usuarioId],
   );
 
 // true si el teléfono está en la lista negra del negocio. Compara solo los

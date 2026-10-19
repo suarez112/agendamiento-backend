@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
-import { CODIGO_PG, esErrorPg } from '../../db/pool.js';
+import { CODIGO_PG, enTransaccion, esErrorPg } from '../../db/pool.js';
 import { errores } from '../../shared/errores.js';
 import type { Sesion } from '../auth/auth.servicio.js';
 import { cifrarContrasena } from '../auth/contrasenas.js';
@@ -15,6 +15,7 @@ export type DatosMiembro = {
   usuario: string;
   clave: string;
   esAdmin: boolean;
+  atiendeClientes: boolean;
   especialidad: string | null | undefined;
   porcentajeGanancia: number;
 };
@@ -24,11 +25,21 @@ const armarMiembro = (m: FilaMiembro, urlBase: string) => ({
   id: m.id,
   nombre: m.nombre,
   usuario: m.usuario,
+  rol: m.es_admin ? ('admin' as const) : ('empleado' as const),
   esAdmin: m.es_admin,
+  atiendeClientes: m.atiende_clientes,
   especialidad: m.especialidad,
   porcentajeGanancia: Number(m.porcentaje_ganancia),
   foto: urlFoto(urlBase, m.foto_url),
 });
+
+// Mensaje cuando el equipo ya tiene tantos integrantes activos como empleados registró la empresa
+const limiteAlcanzado = ({ maximo, activos }: { maximo: number; activos: number }) =>
+  maximo >= MAXIMO_EMPLEADOS
+    ? `Tu equipo ya tiene ${activos} integrantes activos, el máximo permitido (${MAXIMO_EMPLEADOS}).`
+    : `Tu equipo ya tiene ${activos} integrante(s) activo(s) y registraste ${maximo} empleado(s). Para agregar a alguien más, aumenta el número de empleados en Mi negocio (máximo ${MAXIMO_EMPLEADOS}).`;
+
+const MAXIMO_EMPLEADOS = 10;
 
 // El usuario de inicio de sesión es único entre el equipo activo de todos los negocios
 const traducirUsuarioRepetido = (error: unknown): never => {
@@ -41,16 +52,21 @@ export const crearServicioEquipo = ({ pool, fotos }: { pool: pg.Pool; fotos: Alm
     return (await repositorio.listarEquipo(pool, empresaId)).map((m) => armarMiembro(m, urlBase));
   },
 
+  // No puede haber más integrantes activos que el número de empleados de la empresa
   async crear(empresaId: string, { clave, ...datos }: DatosMiembro, urlBase: string) {
-    const miembro = await repositorio
-      .crearMiembro(pool, {
+    const passwordHash = await cifrarContrasena(clave);
+    const miembro = await enTransaccion(pool, async (tx) => {
+      const limite = await repositorio.bloquearLimiteEquipo(tx, empresaId);
+      if (!limite) throw errores.noEncontrado('Establecimiento no encontrado');
+      if (limite.activos >= limite.maximo) throw errores.conflicto(limiteAlcanzado(limite));
+      return repositorio.crearMiembro(tx, {
         ...datos,
         id: randomUUID(),
         empresaId,
         especialidad: datos.especialidad ?? null,
-        passwordHash: await cifrarContrasena(clave),
-      })
-      .catch(traducirUsuarioRepetido);
+        passwordHash,
+      });
+    }).catch(traducirUsuarioRepetido);
     return armarMiembro(miembro, urlBase);
   },
 
