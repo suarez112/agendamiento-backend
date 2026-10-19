@@ -4,6 +4,8 @@ API REST (Express 5 + TypeScript + PostgreSQL) para agendar citas en barberías.
 
 **Este repositorio es solo el backend.** El frontend (Expo/React Native) está en `C:\Users\eduar_9\app`; no lo modifiques desde aquí.
 
+**Servidor durante el desarrollo:** el backend ya está encendido en el puerto 4000 con `npm run dev` (se recarga solo al guardar). **No lo inicies ni lo apagues.** Para comprobar un cambio, llama a los endpoints (`http://localhost:4000`). No hay emulador: lo visual lo prueba el usuario en su celular.
+
 ## Estructura
 
 ```
@@ -13,6 +15,7 @@ src/
   config/entorno.ts  variables de entorno validadas con zod
   db/                pool, migraciones (migrar.ts) y scripts de mantenimiento
   shared/            errores, logs JSON, middlewares HTTP (CORS, límites, validación, errores)
+  shared/telefonos.ts  validación y formato E.164 de los teléfonos (libphonenumber-js)
   modules/<modulo>/  auth, cuentas, empresas, citas, clientes, equipo, servicios, productos, bloqueos, cartera: <m>.rutas.ts (HTTP + zod) → <m>.servicio.ts (reglas) → <m>.repositorio.ts (SQL)
   modules/auth/acceso.ts          login único (correo o usuario)
   modules/empresas/horario.ts     horario por día (tabla horarios_empresa)
@@ -21,7 +24,7 @@ src/
   modules/legal/legal.ts          política y términos vigentes, prueba de las autorizaciones (Ley 1581)
   modules/micuenta/               cuenta del cliente: negocios guardados y sus citas
   db/activarPlan.ts, db/simularVencimiento.ts   comandos de desarrollador (ver "Comandos de desarrollador")
-db/migraciones/      SQL numerado NNN_nombre.sql; cada archivo en su propia transacción
+db/migraciones/      numeradas NNN_nombre.sql (o .ts si SQL no alcanza); cada archivo en su propia transacción
 test/                node:test; cada archivo crea y borra su propia base temporal
 odd/tasks/           bitácoras de trabajo (specs, tareas, evidencia)
 ```
@@ -47,7 +50,7 @@ npm run dev:activar-plan -- CODIGO mensual     # o: anual
 npm run dev:simular-vencimiento -- CODIGO DIAS # ej. 3, 0 o -2
 ```
 
-- **`dev:activar-plan`**: deja la empresa `activa` con ese plan. Fecha de pago = hoy (Colombia). Fecha de fin = 1 mes o 1 año después de hoy, o después del fin del plan actual si aún no vencía (una renovación anticipada no pierde días). Sirve también para activar a mano un negocio en producción mientras no haya pagos. Ejemplo: `npm run dev:activar-plan -- CENTRAL10 anual` → `✔ Barbería Central (CENTRAL10): plan anual activo. Pago: 2026-10-19. Fin: 2027-10-19. Días restantes: 365.`
+- **`dev:activar-plan`**: deja la empresa `activa` con ese plan, de inmediato (ya no aparece como prueba). Fecha de pago = hoy (Colombia). Fecha de fin = 1 mes o 1 año contados desde: el **fin de la prueba**, si paga durante la prueba (no pierde los días gratis que le quedaban; se guardan en `dias_prueba_sumados` y `/suscripcion` los muestra en `diasPruebaSumados`); el fin del plan actual, si aún no vencía (una renovación anticipada no pierde días); o hoy, en otro caso. Sirve también para activar a mano un negocio en producción mientras no haya pagos. Ejemplo: `npm run dev:activar-plan -- CENTRAL10 anual` → `✔ Barbería Central (CENTRAL10): plan anual activo. Pago: 2026-10-19. Fin: 2027-10-19. Días restantes: 365.` Durante una prueba con 15 días restantes, `-- CENTRAL10 mensual` → `… Fin: 2026-12-03. Días restantes: 45. Días de prueba sumados: 15.`
 - **`dev:simular-vencimiento`**: deja a la empresa con `DIAS` días restantes de su prueba (si está en prueba) o de su plan (si está activa), cambiando la fecha de fin. `0` o negativo = vencida. Para un negocio vencido, actívale antes un plan. **No funciona con `NODE_ENV=production`** (responde con error y no cambia nada). Ejemplos: `-- CENTRAL10 5` (recordatorio de los últimos 7 días), `-- CENTRAL10 0` (vencida hoy).
 
 Los dos muestran cómo quedó: estado, fecha de fin y días restantes.
@@ -58,9 +61,11 @@ Puerto por defecto `4000` (`PORT`). Rutas bajo `/api/v1`.
 
 - PostgreSQL vía `pg` (`src/db/pool.ts`), con las extensiones `btree_gist` (migración 002) y `gen_random_uuid()` (PostgreSQL 13 o superior).
 - Variables en `.env` en la raíz (ignorado por git; nunca lo subas). Se validan al arrancar en `src/config/entorno.ts`: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_POOL_MAX`, `JWT_SECRET`, `JWT_EXPIRA_EN`, `CORS_ORIGINS`, `TRUST_PROXY`, `NODE_ENV`, `PORT`, `CARPETA_SUBIDAS` (opcional, por defecto `uploads`: carpeta de las fotos subidas, ignorada por git) y `URL_PUBLICA` (opcional: dirección pública del servidor, ej. `https://api.mibarberia.co`, para armar las URL de las fotos; si falta se usa la dirección de cada solicitud, así que configúrala en producción).
-- El esquema solo cambia con un archivo nuevo en `db/migraciones/` (siguiente número). Nunca edites una migración ya aplicada.
+- El esquema solo cambia con un archivo nuevo en `db/migraciones/` (siguiente número). Nunca edites una migración ya aplicada. Casi siempre es `.sql`; si hace falta código (ej. una librería), puede ser `.ts` y exportar por defecto `async (db: pg.PoolClient) => {…}`, que corre en la misma transacción (ver la 011). Una migración `.ts` no importa nada de `src/`, para que siga haciendo lo mismo aunque el código cambie.
 - Migración 007: horario por día en `horarios_empresa` (un día sin fila = cerrado; reemplaza `dias_atencion`, `horario_apertura` y `horario_cierre`, que se copiaron ahí), quita `nit`, `telefono` y `correo` de `empresas`, agrega `empresas.departamento`, empleados de 1 a 10, código del negocio `^[A-Z0-9]{1,10}$`, `usuarios.usuario` y bloqueos semanales o de una fecha (`bloqueos_tipo_valido`). La 008 corrige el trigger de usuario único.
 - Migración 009: `barberos.atiende_clientes`; plan de la suscripción (`empresas.plan_suscripcion` `mensual`|`anual`, `fecha_pago`, `suscripcion_fin`); cuentas de cliente (`usuarios.nombre`, `telefono`, `indicativo`; `correo` pasa a opcional: correo o usuario); `negocios_guardados`; `citas.usuario_id` (cliente que reservó con su sesión); `documentos_legales` y `autorizaciones_datos`. La 010 publica el borrador `0.1-borrador` de la política y los términos.
+- Migración 011 (`.ts`): **teléfonos en E.164** (`+573162781393`) en `varchar(16)` en `clientes`, `lista_negra`, `usuarios` y `autorizaciones_datos`. `clientes` pasa a ser único por `(empresa_id, telefono)`; índice único `usuarios_telefono_cliente_key` en `usuarios (telefono) WHERE rol = 'cliente'`. `lista_negra` sigue única por negocio. Los teléfonos que no se pudieron convertir **no se borraron**: quedaron solo con sus dígitos (no empiezan con `+`). Para verlos: `SELECT id, empresa_id, nombre, telefono FROM clientes WHERE telefono !~ '^\+'` (igual en las otras tablas). Al aplicarla quedaron 2 pendientes en `clientes`: `3768300614` (Popo) y `357491541` (DESQ), ambos del negocio INFINITY.
+- Migración 012: `empresas.latitud` y `empresas.longitud` (opcionales, siempre juntas, rangos validados) y `empresas.dias_prueba_sumados` (días de prueba que quedaban al pagar durante la prueba).
 - **Publicar una versión nueva de la política o los términos**: una migración nueva que inserte una fila en `documentos_legales` con otra `version` (nunca edites las filas publicadas). La más reciente es la vigente; los clientes con cuenta la aceptan en su próxima reserva.
 
 ## Endpoints
@@ -122,6 +127,7 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | POST | `/api/v1/bloqueos` | personal admin, suscripción vigente |
 | DELETE | `/api/v1/bloqueos/:id` | personal admin, suscripción vigente |
 | GET | `/api/v1/cartera?desde=&hasta=&barberoId=` | personal (admin: todo el negocio o un integrante; empleado: lo suyo), suscripción vigente |
+| GET | `/api/v1/cartera/resumen?periodo=&desde=&hasta=&barberoId=` | personal (igual que `/cartera`), suscripción vigente. Resumen por período: `hoy`, `semana`, `mes` o `rango` |
 | GET | `/uploads/empresas/<archivo>`, `/uploads/barberos/<archivo>`, `/uploads/productos/<archivo>` | público. La imagen guardada (se usa la dirección que devuelve la API) |
 
 "Sesión del personal" acepta **dos tokens**: el del barbero (`/api/v1/auth/login`) y el de la **cuenta del administrador de la empresa** (`/api/v1/cuentas/login`, `rol = admin`). La cuenta admin cuenta como administrador del negocio (`esAdmin`), siempre de su propia empresa. "Personal admin" = integrante del equipo con rol Administrador (`esAdmin`) o cuenta admin: **los dos tienen los mismos permisos** sobre su empresa (Mi negocio, suscripción, equipo, servicios, productos, bloqueos, clientes y la cartera completa). Un **empleado** (integrante con rol Empleado) solo usa su agenda y su propia cartera. Detalle en "Gestión del negocio".
@@ -223,8 +229,8 @@ Ambos se envían como `Authorization: Bearer <token>`.
   ```jsonc
   {
     "nombre": "Juan Gómez",        // obligatorio, máx. 100 (se usa al reservar)
-    "telefono": "3001234567",      // obligatorio, máx. 30 (se usa al reservar)
-    "indicativo": "57",            // opcional, por defecto 57
+    "telefono": "3001234567",      // obligatorio; se valida y se guarda en E.164 (ver "Teléfonos"); único entre las cuentas de cliente
+    "indicativo": "57",            // opcional, por defecto 57 (Colombia)
     "correo": "juan@correo.com",   // correo o usuario (o los dos): con eso inicia sesión
     "usuario": "juan.gomez",       // mismas reglas y unicidad que el usuario de la administradora
     "clave": "clave-segura-123",   // 8 a 64 caracteres
@@ -233,8 +239,8 @@ Ambos se envían como `Authorization: Bearer <token>`.
   }
   ```
 
-- Responde **201** `{ "mensaje": "Cuenta creada", "token": "<jwt>", "usuario": { "id", "correo" | null, "usuario" | null, "rol": "cliente", "empresaId": null, "nombre", "telefono", "indicativo" } }`. Inicia sesión después con `/api/v1/login` (correo o usuario).
-- Errores: **400** (`Envía tus datos para crear la cuenta` si no hay cuerpo, `El campo "nombre" es obligatorio`, `El campo "teléfono" es obligatorio`, `Envía tu correo o un nombre de usuario para iniciar sesión`, `El correo no es válido`, el mensaje de usuario inválido, `La contraseña debe tener entre 8 y 64 caracteres`, `Debes aceptar la Política de Tratamiento de Datos y los Términos y Condiciones`); **409** `Ya existe una cuenta con ese correo` o `Ese usuario ya está en uso. Elige otro.`; **429**.
+- Responde **201** `{ "mensaje": "Cuenta creada", "token": "<jwt>", "usuario": { "id", "correo" | null, "usuario" | null, "rol": "cliente", "empresaId": null, "nombre", "telefono": "+573001234567", "indicativo": "57" } }`. Inicia sesión después con `/api/v1/login` (correo o usuario).
+- Errores: **400** (`Envía tus datos para crear la cuenta` si no hay cuerpo, `El campo "nombre" es obligatorio`, `El campo "teléfono" es obligatorio`, el mensaje de teléfono inválido (ver "Teléfonos"), `Envía tu correo o un nombre de usuario para iniciar sesión`, `El correo no es válido`, el mensaje de usuario inválido, `La contraseña debe tener entre 8 y 64 caracteres`, `Debes aceptar la Política de Tratamiento de Datos y los Términos y Condiciones`); **409** `Ya existe una cuenta con ese correo`, `Ese usuario ya está en uso. Elige otro.` o `Ya existe una cuenta con ese número de teléfono`; **429**.
 
 **POST `/api/v1/cuentas/login`**: login de administradoras y clientes con correo (se mantiene; para la administradora también sirve `/api/v1/login`).
 
@@ -248,11 +254,12 @@ Ambos se envían como `Authorization: Bearer <token>`.
 
   ```json
   { "estado": "activa", "plan": "mensual", "fechaPago": "2026-10-19", "fechaFin": "2026-11-19",
-    "diasRestantes": 5, "mostrarRecordatorio": true,
+    "diasRestantes": 5, "diasPruebaSumados": null, "mostrarRecordatorio": true,
     "mensaje": "Te quedan 5 días de tu plan mensual. Renuévalo para no perder el acceso." }
   ```
 
 - `estado`: `"prueba"` (15 días gratis desde el registro), `"activa"` (plan `"mensual"` o `"anual"`) o `"vencida"`.
+- Si la empresa activó el plan **durante la prueba**, pasa de inmediato a `"activa"` y el plan empieza a contar desde el fin de la prueba. `diasPruebaSumados` = días de prueba que le quedaban y se sumaron al plan (`0` si pagó con la prueba ya vencida). `null` en la prueba o si el plan no se activó durante una prueba. Se conserva al renovar.
 - `fechaPago` y `plan` son `null` en la prueba. `fechaFin` (AAAA-MM-DD) es el día en que termina la prueba o el plan. Las empresas activas de antes de los planes tienen `plan`, `fechaPago`, `fechaFin` y `diasRestantes` en `null` y no vencen.
 - `diasRestantes` = `fechaFin` − hoy, con la **fecha actual de Colombia**: baja uno cada día a medianoche. El día de `fechaFin` ya es 0 y la suscripción queda **vencida**. Vencida = `0`.
 - `mostrarRecordatorio`: `true` siempre durante la prueba y en los últimos 7 días de un plan (`diasRestantes` ≤ 7). `mensaje` es el texto para mostrar (o el aviso de vencida); `null` si no hay nada que mostrar.
@@ -270,7 +277,8 @@ Ambos se envían como `Authorization: Bearer <token>`.
 
 **GET `/api/v1/admin/empresa`** ("Mi negocio"): perfil de la empresa del administrador (siempre la suya; no recibe id). Lo usan la cuenta admin y los integrantes con rol Administrador. `estadoSuscripcion` es el estado guardado; el estado real (con la fecha de fin) está en `/admin/empresa/suscripcion`.
 
-- Responde **200** `{ "id", "nombre", "codigoAcceso", "categoria", "direccion", "departamento", "ciudad", "horario", "diasAtencion", "horarioApertura", "horarioCierre", "nombreAdministradora", "numeroEmpleados", "logoUrl", "fotoUrl", "colorPrimario", "colorSecundario", "estadoSuscripcion", "trialEndsAt", "creadaEn" }`.
+- Responde **200** `{ "id", "nombre", "codigoAcceso", "categoria", "direccion", "departamento", "ciudad", "horario", "diasAtencion", "horarioApertura", "horarioCierre", "nombreAdministradora", "numeroEmpleados", "logoUrl", "fotoUrl", "colorPrimario", "colorSecundario", "latitud", "longitud", "googleMapsUrl", "estadoSuscripcion", "trialEndsAt", "creadaEn" }`.
+- `latitud` y `longitud`: números o `null` (ubicación en el mapa, opcional). `googleMapsUrl`: enlace de Google Maps (ver "Ubicación en Google Maps").
 - `horario` siempre trae los 7 días, de domingo (0) a sábado (6): `{ "dia": 0, "abierto": false, "apertura": null, "cierre": null }` o `{ "dia": 1, "abierto": true, "apertura": "08:00", "cierre": "19:00" }`.
 - `diasAtencion` (días abiertos), `horarioApertura` (la apertura más temprana de la semana) y `horarioCierre` (el cierre más tardío) se calculan a partir de `horario` y se mantienen para que la app actual siga funcionando; para el horario real de cada día usa `horario`.
 - Ya no incluye `nit`, `telefono` ni `correo`. `departamento` es `null` en empresas registradas antes de la migración 007 hasta que lo completen.
@@ -278,11 +286,11 @@ Ambos se envían como `Authorization: Bearer <token>`.
 
 **PATCH `/api/v1/admin/empresa`**: modifica la empresa del administrador.
 
-- Recibe uno o más de: `nombre`, `categoria`, `codigoAcceso`, `direccion`, `departamento` + `ciudad` (siempre juntos), `horario` (los 7 días, reemplaza el horario completo), `nombreAdministradora`, `numeroEmpleados`, `logoUrl`. Mismas validaciones del registro. Se ignoran `id`, `empresaId`, `estadoSuscripcion`, `trialEndsAt`, `correo`, `usuario`, `clave` y cualquier otro campo (el acceso de la administradora no se cambia aquí).
+- Recibe uno o más de: `nombre`, `categoria`, `codigoAcceso`, `direccion`, `departamento` + `ciudad` (siempre juntos), `horario` (los 7 días, reemplaza el horario completo), `nombreAdministradora`, `numeroEmpleados`, `logoUrl`, `latitud` + `longitud` (siempre juntas; números, `null` en las dos las quita). Mismas validaciones del registro. Se ignoran `id`, `empresaId`, `estadoSuscripcion`, `trialEndsAt`, `correo`, `usuario`, `clave` y cualquier otro campo (el acceso de la administradora no se cambia aquí).
 - Cambiar `codigoAcceso` cambia el código que usan los clientes: el anterior deja de funcionar de inmediato.
 - Responde **200** con el perfil actualizado (misma forma que el GET). Los datos y el horario se guardan juntos: si algo falla, no cambia nada.
 - `numeroEmpleados` es el máximo de integrantes activos del equipo; no puede quedar por debajo del equipo activo actual.
-- Errores: **400** `Envía al menos un dato para actualizar`, `Envía el departamento y la ciudad juntos` y los de validación del registro; **409** `Ese código ya lo usa otro negocio. Elige otro.` o `Tienes N integrante(s) activo(s) en el equipo. El número de empleados no puede ser menor; elimina primero del equipo a quien ya no trabaje en el negocio.`
+- Errores: **400** `Envía al menos un dato para actualizar`, `Envía el departamento y la ciudad juntos`, `Envía la latitud y la longitud juntas (o las dos en null para quitarlas)`, `La latitud debe ser un número entre -90 y 90`, `La longitud debe ser un número entre -180 y 180` y los de validación del registro; **409** `Ese código ya lo usa otro negocio. Elige otro.` o `Tienes N integrante(s) activo(s) en el equipo. El número de empleados no puede ser menor; elimina primero del equipo a quien ya no trabaje en el negocio.`
 
 **PUT `/api/v1/admin/empresa/foto`**: sube la foto del negocio o reemplaza la que tenía (la anterior se borra del servidor).
 
@@ -304,8 +312,10 @@ Ambos se envían como `Authorization: Bearer <token>`.
 
 **GET `/api/v1/empresas/perfil/:codigo`**: información del negocio para los clientes, con su foto. Público (sin token), usa el mismo código de acceso de `/empresas/validar/:codigo` y el mismo límite por IP.
 
-- Responde **200** `{ "id", "nombre", "codigoAcceso", "categoria", "direccion", "departamento", "ciudad", "horario", "diasAtencion", "horarioApertura", "horarioCierre", "logoUrl", "fotoUrl", "colorPrimario", "colorSecundario", "recibiendoReservas" }` (`recibiendoReservas: false` si la suscripción venció), con `horario` y los campos calculados igual que en `GET /admin/empresa`. Ya no incluye `telefono` ni `correo`. No incluye nombre de la administradora, número de empleados ni datos de la suscripción. Los campos sin dato llegan como `null`.
+- Responde **200** `{ "id", "nombre", "codigoAcceso", "categoria", "direccion", "departamento", "ciudad", "horario", "diasAtencion", "horarioApertura", "horarioCierre", "logoUrl", "fotoUrl", "colorPrimario", "colorSecundario", "googleMapsUrl", "recibiendoReservas" }` (`recibiendoReservas: false` si la suscripción venció), con `horario` y los campos calculados igual que en `GET /admin/empresa`. Ya no incluye `telefono` ni `correo`. No incluye nombre de la administradora, número de empleados ni datos de la suscripción. Los campos sin dato llegan como `null`.
 - Errores: **404** `Establecimiento no encontrado`; **429** demasiados intentos.
+
+**Ubicación en Google Maps** (`googleMapsUrl`, en `GET /empresas/perfil/:codigo` y en `GET`/`PATCH /admin/empresa`): enlace `https://www.google.com/maps/search/?api=1&query=...` (no necesita clave de API). Con las coordenadas si el negocio las tiene (`query=7.119349%2C-73.122741`); si no, con la dirección, el municipio y el departamento (`query=Calle%2010%20%23%2020-30%2C%20BUCARAMANGA%2C%20SANTANDER`). `null` si no hay ningún dato. Las coordenadas se editan en Mi negocio (`PATCH /admin/empresa` con `latitud` y `longitud`); no se piden en el registro.
 
 **Errores comunes de `/api/v1/admin/...`**
 
@@ -339,7 +349,7 @@ Todos usan `Authorization: Bearer <token>` del barbero o de la cuenta admin. El 
 **GET `/api/v1/clientes`**: **200** clientes del negocio, del más reciente al más antiguo:
 
 ```json
-[{ "id": "…", "nombre": "Juan", "telefono": "3001234567", "indicativo": "57", "totalCitas": 4,
+[{ "id": "…", "nombre": "Juan", "telefono": "+573001234567", "indicativo": "57", "totalCitas": 4,
    "fechaUltimaCita": "2026-10-10", "enListaNegra": false, "listaNegraId": null }]
 ```
 
@@ -351,7 +361,7 @@ Todos usan `Authorization: Bearer <token>` del barbero o de la cuenta admin. El 
 
 **DELETE `/api/v1/clientes/lista-negra/:id`** (`:id` = `id` de la lista negra, o `listaNegraId` del cliente): **200** `{ "mensaje": "Cliente quitado de la lista negra" }`. **404** `Ese registro no está en la lista negra`.
 
-Un teléfono de la lista negra (se comparan solo los dígitos) no puede reservar: `POST /api/v1/citas` responde **403** `No es posible agendar con este número. Comunícate con el negocio.`
+Un teléfono de la lista negra (se comparan solo los dígitos; los dos están en E.164) no puede reservar: `POST /api/v1/citas` responde **403** `No es posible agendar con este número. Comunícate con el negocio.`
 
 #### Equipo (solo admin)
 
@@ -447,6 +457,8 @@ Horas HH:MM de 24 h, fin posterior al inicio; con `todoElDia: true` las horas se
 
 Cuerpo: `{ "empresaId", "barberoId", "servicioId", "fecha": "2026-10-21", "hora": "10:00 AM", "nombre", "telefono", "indicativo"?, "aceptaPoliticaDatos": true, "aceptaTerminos": true }`.
 
+El teléfono se valida y se guarda en E.164 (ver "Teléfonos"); la respuesta trae `cita.telefono` en E.164 (`"+573001234567"`) y `cita.indicativo`. El cliente del negocio es el mismo si el número es el mismo, aunque se escriba distinto (`300 123 4567`, `+57 3001234567`).
+
 - **Como invitado** (sin token; con código, enlace o QR): igual que antes, más la aceptación. `nombre` y `telefono` son obligatorios (**400** `Faltan datos para agendar la cita`) y `aceptaPoliticaDatos` y `aceptaTerminos` deben ser `true` en cada reserva (**400** `Debes aceptar la Política de Tratamiento de Datos y los Términos y Condiciones`). Se guarda la prueba con el teléfono.
 - **Con sesión de cliente** (`Authorization: Bearer <token de la cuenta del cliente>`): se usan el nombre, teléfono e indicativo de la cuenta (lo que llegue en el cuerpo se ignora; una cuenta antigua sin esos datos usa los del cuerpo). No vuelve a aceptar: solo si se publicó una versión nueva de la política o los términos desde que aceptó, debe enviar los dos en `true` (**400** `Publicamos una nueva versión de la Política de Tratamiento de Datos o de los Términos y Condiciones. Acéptala para continuar.`). La cita queda en "Mis citas" (`GET /mi-cuenta/citas`).
 - Cualquier otro token (personal, admin o vencido) se ignora: la reserva es de invitado.
@@ -474,6 +486,33 @@ Además de las reglas de siempre (lista negra, bloqueos, choque con otra cita), 
 ```
 
 Errores: **400** `El campo "desde" es obligatorio`, `El campo "desde" debe ser una fecha real con el formato AAAA-MM-DD`, `La fecha "hasta" no puede ser anterior a "desde"`, `El rango no puede ser mayor que 366 días` o `Identificador de profesional inválido`.
+
+**GET `/api/v1/cartera/resumen?periodo=mes`** (personal, suscripción vigente): resumen de un período. Mismas reglas de acceso que `/cartera` (un admin ve todo el negocio o un integrante con `barberoId`; un empleado solo lo suyo).
+
+- `periodo` (obligatorio): `hoy`; `semana` (de lunes a domingo de esta semana); `mes` (del día 1 al último día de este mes); o `rango` con `desde` y `hasta` (AAAA-MM-DD, máximo 366 días). Fechas de Colombia.
+- Responde **200**, con los profesionales de mayor a menor en ventas:
+
+  ```json
+  {
+    "periodo": "mes", "desde": "2026-10-01", "hasta": "2026-10-31", "barberoId": null,
+    "totalVentas": 60000, "gananciaNegocio": 32000, "citasCompletadas": 3,
+    "porProfesional": [
+      { "barberoId": "…", "nombre": "Carlos", "activo": true, "citas": 2, "ventas": 40000, "ganancia": 20000 },
+      { "barberoId": "…", "nombre": "Luis", "activo": true, "citas": 1, "ventas": 20000, "ganancia": 8000 }
+    ]
+  }
+  ```
+
+  `ganancia` es lo que ganó el profesional (con el porcentaje guardado en cada cita, igual que `/cartera`); `gananciaNegocio` = `totalVentas` − lo que ganó el equipo.
+- Errores: **400** `Elige el período en "periodo": "hoy", "semana", "mes" o "rango" (con "desde" y "hasta")`, y con `rango` los mismos de `/cartera` (`El campo "desde" es obligatorio`, …).
+
+### Teléfonos (formato E.164)
+
+- Todos los teléfonos que recibe el backend (reservas `POST /citas` y cuentas de cliente `POST /cuentas/registro/cliente`) se validan y normalizan con **libphonenumber-js** (`src/shared/telefonos.ts`) y se guardan en **E.164** (`+573162781393`, máx. 16 caracteres). El equipo no tiene teléfono.
+- Se acepta el número como lo escriba la persona: con espacios o guiones, con `+` y código de país (`+57 316 278 1393`), con el indicativo pegado (`573162781393`) o sin código de país; **sin código de país se usa `indicativo`, y si no llega, Colombia (57)**. El `indicativo` que se guarda y se devuelve es el del número.
+- Inválido → **400** `El número de teléfono no es válido. Revisa el número y el indicativo del país (ej. 3001234567 para Colombia).`
+- Unicidad: único **por negocio** en los clientes de cada empresa y **único global** entre las cuentas de cliente (**409** `Ya existe una cuenta con ese número de teléfono`). En las demás tablas no es único global.
+- Los teléfonos guardados antes de la migración 011 que no se pudieron convertir siguen en la base con solo sus dígitos (no empiezan con `+`); ver la migración 011 en "Base de datos y entorno".
 
 ### Cuenta del cliente (`/api/v1/mi-cuenta`)
 
