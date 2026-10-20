@@ -11,7 +11,11 @@ const armarCliente = (c: FilaCliente) => ({
   telefono: c.telefono,
   indicativo: c.indicativo,
   totalCitas: c.total_citas,
+  citasCompletadas: c.citas_completadas,
+  citasCanceladas: c.citas_canceladas,
   fechaUltimaCita: c.fecha_ultima_cita,
+  // Activo: cita (no cancelada) en los últimos 45 días, hoy o próxima
+  estado: c.activo ? ('activo' as const) : ('inactivo' as const),
   enListaNegra: c.lista_negra_id !== null,
   listaNegraId: c.lista_negra_id,
 });

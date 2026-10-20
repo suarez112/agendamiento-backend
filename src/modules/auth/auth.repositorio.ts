@@ -42,8 +42,8 @@ export const buscarRolVigente = async (db: Consultable, barberoId: string, empre
 
 // Rol y empresa actuales de una cuenta (tabla usuarios); undefined si ya no existe
 export const buscarCuentaVigente = async (db: Consultable, usuarioId: string) => {
-  const { rows } = await db.query<{ rol: string; empresa_id: string | null }>(
-    'SELECT rol, empresa_id FROM usuarios WHERE id = $1',
+  const { rows } = await db.query<{ rol: string; empresa_id: string | null; version_sesion: number }>(
+    'SELECT rol, empresa_id, version_sesion FROM usuarios WHERE id = $1',
     [usuarioId],
   );
   return rows[0];

@@ -98,28 +98,58 @@ export const conUbicacionValida = <T extends z.ZodType<ConUbicacion>>(esquema: T
 
 export const esquemaPerfilEmpresa = z.object(perfil, { error: 'Envía los datos de la empresa' });
 
-// Coordenadas del negocio en el mapa (solo en "Mi negocio"). null las quita.
+// Redondea a n decimales (el GPS del celular entrega muchos más)
+const redondear = (decimales: number) => (n: number) => Number(n.toFixed(decimales));
+
+// Coordenadas del negocio en el mapa (solo en "Mi negocio"), con hasta 6 decimales
+// (≈ 11 cm): si llegan más, se redondean. null las quita.
 const coordenada = (campo: 'latitud' | 'longitud', limite: number) => {
   const mensaje = `La ${campo} debe ser un número entre -${limite} y ${limite}`;
   return z
-    .union([z.number({ error: mensaje }).min(-limite, mensaje).max(limite, mensaje), z.null()], { error: mensaje })
+    .union([z.number({ error: mensaje }).min(-limite, mensaje).max(limite, mensaje).transform(redondear(6)), z.null()], {
+      error: mensaje,
+    })
     .optional();
 };
 
+// Precisión del GPS en metros (opcional), redondeada a un decimal
+const MENSAJE_PRECISION = 'La precisión de la ubicación debe ser un número de metros mayor que 0 y hasta 100000';
+const precisionUbicacion = z
+  .union(
+    [
+      z.number({ error: MENSAJE_PRECISION }).gt(0, MENSAJE_PRECISION).max(100000, MENSAJE_PRECISION).transform(redondear(1)),
+      z.null(),
+    ],
+    { error: MENSAJE_PRECISION },
+  )
+  .optional();
+
 const COORDENADAS_JUNTAS = 'Envía la latitud y la longitud juntas (o las dos en null para quitarlas)';
+const PRECISION_CON_COORDENADAS = 'Envía la precisión de la ubicación junto con la latitud y la longitud';
 
 // Edición: todos los campos son opcionales, pero debe venir al menos uno.
 // Campos como id, estado de la suscripción o fin de la prueba se ignoran.
 export const esquemaActualizarEmpresa = conUbicacionValida(
   esquemaPerfilEmpresa
-    .extend({ latitud: coordenada('latitud', 90), longitud: coordenada('longitud', 180) })
+    .extend({
+      latitud: coordenada('latitud', 90),
+      longitud: coordenada('longitud', 180),
+      precisionUbicacion,
+    })
     .partial()
     .refine((d) => Object.values(d).some((v) => v !== undefined), {
       error: 'Envía al menos un dato para actualizar',
     })
     .refine((d) => (d.latitud === undefined) === (d.longitud === undefined) && (d.latitud === null) === (d.longitud === null), {
       error: COORDENADAS_JUNTAS,
-    }),
+    })
+    .refine((d) => d.precisionUbicacion == null || (d.latitud != null && d.longitud != null), {
+      error: PRECISION_CON_COORDENADAS,
+    })
+    // Coordenadas nuevas sin precisión: la anterior ya no aplica y se borra
+    .transform((d) =>
+      d.latitud === undefined ? d : { ...d, precisionUbicacion: d.latitud === null ? null : (d.precisionUbicacion ?? null) },
+    ),
 );
 
 export type PerfilEmpresa = z.output<typeof esquemaPerfilEmpresa>;

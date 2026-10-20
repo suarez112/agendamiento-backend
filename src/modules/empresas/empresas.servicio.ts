@@ -256,6 +256,7 @@ const armarPerfil = ({ perfil: p, horario: h }: PerfilConHorario, urlBase: strin
   colorSecundario: p.color_secundario,
   latitud: numeroONulo(p.latitud),
   longitud: numeroONulo(p.longitud),
+  precisionUbicacion: numeroONulo(p.precision_ubicacion),
   googleMapsUrl: enlaceGoogleMaps(p),
   estadoSuscripcion: p.estado_suscripcion,
   trialEndsAt: p.trial_ends_at,

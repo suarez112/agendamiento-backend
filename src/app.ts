@@ -18,6 +18,7 @@ import { crearRutasClientes } from './modules/clientes/clientes.rutas.js';
 import { crearServicioClientes } from './modules/clientes/clientes.servicio.js';
 import { crearRutasCuentas } from './modules/cuentas/cuentas.rutas.js';
 import { crearServicioCuentas } from './modules/cuentas/cuentas.servicio.js';
+import { crearServicioRecuperacion } from './modules/cuentas/recuperacion.servicio.js';
 import { crearGuardiasCuenta } from './modules/cuentas/cuentas.guardias.js';
 import { crearRutasAdminEmpresa, crearRutasEmpresas } from './modules/empresas/empresas.rutas.js';
 import { crearServicioEmpresas } from './modules/empresas/empresas.servicio.js';
@@ -32,6 +33,7 @@ import { crearServicioProductos } from './modules/productos/productos.servicio.j
 import { crearRutasServicios } from './modules/servicios/servicios.rutas.js';
 import { crearServicioServicios } from './modules/servicios/servicios.servicio.js';
 import { crearRutasUbicaciones } from './modules/ubicaciones/ubicaciones.js';
+import { crearEnviadorCorreo, type EnviadorCorreo } from './shared/correo.js';
 import { crearCors } from './shared/http/cors.js';
 import { type ConfigLimites, crearLimitadores, LIMITES_POR_DEFECTO } from './shared/http/limitadores.js';
 import { manejadorErrores, rutaNoEncontrada } from './shared/http/manejadorErrores.js';
@@ -41,16 +43,24 @@ export type Dependencias = {
   pool: pg.Pool;
   entorno: Entorno;
   limites?: ConfigLimites;
+  // Por defecto: imprime en la consola (desarrollo) o solo avisa en el log (producción sin proveedor)
+  correo?: EnviadorCorreo;
 };
 
 // Punto de composición: aquí se crean los servicios y se conectan con sus rutas.
 // Recibe sus dependencias para poder probar la app con otra base de datos.
-export const crearApp = ({ pool, entorno, limites = LIMITES_POR_DEFECTO }: Dependencias): Express => {
+export const crearApp = ({
+  pool,
+  entorno,
+  limites = LIMITES_POR_DEFECTO,
+  correo = crearEnviadorCorreo(entorno.NODE_ENV),
+}: Dependencias): Express => {
   const tokens = crearServicioTokens(entorno.JWT_SECRET, entorno.JWT_EXPIRA_EN);
   const auth = crearServicioAuth({ pool, tokens });
   const guardias = crearGuardias(auth);
   const cuentas = crearServicioCuentas({ pool, tokens });
   const guardiasCuenta = crearGuardiasCuenta(cuentas);
+  const recuperacion = crearServicioRecuperacion({ pool, secreto: entorno.JWT_SECRET, correo });
   const suscripcion = crearGuardiaSuscripcion({ pool });
   const permisos = crearPermisos(guardias, suscripcion);
   const fotos = crearAlmacenesFotos(entorno.CARPETA_SUBIDAS);
@@ -96,7 +106,7 @@ export const crearApp = ({ pool, entorno, limites = LIMITES_POR_DEFECTO }: Depen
   // Login único (administradora o personal); los dos logins de abajo siguen funcionando
   app.use('/api/v1/login', crearRutasAcceso(auth, cuentas, limitadores));
   app.use('/api/v1/auth', crearRutasAuth(auth, limitadores));
-  app.use('/api/v1/cuentas', crearRutasCuentas(cuentas, limitadores));
+  app.use('/api/v1/cuentas', crearRutasCuentas(cuentas, recuperacion, limitadores));
   app.use('/api/v1/ubicaciones', crearRutasUbicaciones());
   app.use('/api/v1/legal', crearRutasLegal({ pool }));
   // Cuenta del cliente registrado: negocios guardados y sus citas

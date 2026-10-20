@@ -13,9 +13,11 @@ export type FilaUsuario = {
   nombre: string | null;
   telefono: string | null;
   indicativo: string | null;
+  // Sube al cambiar la contraseña: invalida los tokens anteriores
+  version_sesion: number;
 };
 
-const COLUMNAS_USUARIO = 'id, correo, usuario, rol, empresa_id, nombre, telefono, indicativo';
+const COLUMNAS_USUARIO = 'id, correo, usuario, rol, empresa_id, nombre, telefono, indicativo, version_sesion';
 
 export type FilaEmpresaRegistrada = {
   id: string;
@@ -102,6 +104,48 @@ export const buscarUsuarioPorNombreDeUsuario = async (db: Consultable, usuario: 
       [usuario],
     )
   ).rows[0];
+
+// --- Recuperar contraseña ---
+
+// Deja a la cuenta con un solo código: el nuevo reemplaza a los anteriores.
+// Llamar dentro de una transacción.
+export const guardarCodigoRecuperacion = async (
+  db: Consultable,
+  p: { usuarioId: string; codigoHash: string; minutos: number },
+) => {
+  await db.query('DELETE FROM codigos_recuperacion WHERE usuario_id = $1', [p.usuarioId]);
+  await db.query(
+    `INSERT INTO codigos_recuperacion (usuario_id, codigo_hash, vence_en)
+     VALUES ($1, $2, now() + make_interval(mins => $3))`,
+    [p.usuarioId, p.codigoHash, p.minutos],
+  );
+};
+
+// Código que todavía sirve (sin usar, sin vencer y sin bloquear), bloqueado para
+// esta transacción: dos intentos a la vez se esperan y cuentan bien los fallos.
+export const buscarCodigoVigente = async (db: Consultable, usuarioId: string, maxIntentos: number) =>
+  (
+    await db.query<{ id: string; codigo_hash: string }>(
+      `SELECT id, codigo_hash FROM codigos_recuperacion
+       WHERE usuario_id = $1 AND usado_en IS NULL AND vence_en > now() AND intentos < $2
+       ORDER BY creado_en DESC LIMIT 1
+       FOR UPDATE`,
+      [usuarioId, maxIntentos],
+    )
+  ).rows[0];
+
+export const sumarIntentoFallido = (db: Consultable, id: string) =>
+  db.query('UPDATE codigos_recuperacion SET intentos = intentos + 1 WHERE id = $1', [id]);
+
+export const marcarCodigoUsado = (db: Consultable, id: string) =>
+  db.query('UPDATE codigos_recuperacion SET usado_en = now() WHERE id = $1', [id]);
+
+// Cambia la contraseña y sube la versión de sesión: los tokens anteriores dejan de servir
+export const cambiarContrasena = (db: Consultable, usuarioId: string, passwordHash: string) =>
+  db.query('UPDATE usuarios SET password_hash = $2, version_sesion = version_sesion + 1 WHERE id = $1', [
+    usuarioId,
+    passwordHash,
+  ]);
 
 // Rol y empresa vigentes; undefined si la cuenta fue eliminada
 export const buscarUsuarioPorId = async (db: Consultable, id: string) =>

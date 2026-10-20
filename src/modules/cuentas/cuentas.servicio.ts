@@ -47,6 +47,9 @@ const traducirDuplicado = (error: unknown): never => {
 };
 
 export const crearServicioCuentas = ({ pool, tokens }: Dependencias) => {
+  const tokenDe = (usuario: FilaUsuario) =>
+    tokens.firmarCuenta({ usuarioId: usuario.id, version: usuario.version_sesion });
+
   const respuestaUsuario = (usuario: FilaUsuario) => ({
     id: usuario.id,
     correo: usuario.correo,
@@ -63,7 +66,7 @@ export const crearServicioCuentas = ({ pool, tokens }: Dependencias) => {
   // términos debe aceptarlas en su próxima reserva (debeAceptarDocumentos: true)
   const respuestaLogin = async (usuario: FilaUsuario) => ({
     mensaje: 'Autenticación exitosa',
-    token: tokens.firmarCuenta({ usuarioId: usuario.id }),
+    token: tokenDe(usuario),
     usuario: respuestaUsuario(usuario),
     ...(usuario.rol === 'cliente' && {
       debeAceptarDocumentos: !(await tieneAutorizacionVigente(pool, usuario.id)),
@@ -94,7 +97,7 @@ export const crearServicioCuentas = ({ pool, tokens }: Dependencias) => {
 
       return {
         mensaje: `Empresa registrada. Tu prueba gratuita de ${DIAS_PRUEBA} días comenzó hoy.`,
-        token: tokens.firmarCuenta({ usuarioId: usuario.id }),
+        token: tokenDe(usuario),
         usuario: respuestaUsuario(usuario),
         empresa: {
           id: empresa.id,
@@ -124,7 +127,7 @@ export const crearServicioCuentas = ({ pool, tokens }: Dependencias) => {
       }).catch(traducirDuplicado);
       return {
         mensaje: 'Cuenta creada',
-        token: tokens.firmarCuenta({ usuarioId: usuario.id }),
+        token: tokenDe(usuario),
         usuario: respuestaUsuario(usuario),
       };
     },
@@ -157,7 +160,7 @@ export const crearServicioCuentas = ({ pool, tokens }: Dependencias) => {
       const datos = token ? tokens.verificarCuenta(token) : null;
       if (!datos) return null;
       const usuario = await repositorio.buscarUsuarioPorId(pool, datos.usuarioId);
-      return usuario?.rol === 'cliente' ? usuario : null;
+      return usuario?.rol === 'cliente' && usuario.version_sesion === datos.version ? usuario : null;
     },
 
     // Convierte un token en la sesión vigente, con rol y empresa leídos de la base
@@ -166,7 +169,10 @@ export const crearServicioCuentas = ({ pool, tokens }: Dependencias) => {
       const datos = tokens.verificarCuenta(token);
       if (!datos) throw errores.noAutenticado('Sesión vencida o no válida. Inicia sesión de nuevo.');
       const usuario = await repositorio.buscarUsuarioPorId(pool, datos.usuarioId);
-      if (!usuario) throw errores.noAutenticado('Sesión no válida. Inicia sesión de nuevo.');
+      // Cuenta eliminada, o cambió su contraseña después de iniciar esta sesión
+      if (!usuario || usuario.version_sesion !== datos.version) {
+        throw errores.noAutenticado('Sesión no válida. Inicia sesión de nuevo.');
+      }
       return { usuarioId: usuario.id, rol: usuario.rol, empresaId: usuario.empresa_id };
     },
   };

@@ -66,7 +66,8 @@ export const registrarCliente = async (
        VALUES ($1, $2, $3, $4, $5, 1, $6)
        ON CONFLICT (empresa_id, telefono) DO UPDATE
          SET total_citas = clientes.total_citas + 1,
-             fecha_ultima_cita = EXCLUDED.fecha_ultima_cita
+             -- Una reserva para una fecha anterior no hace retroceder la última cita
+             fecha_ultima_cita = GREATEST(clientes.fecha_ultima_cita, EXCLUDED.fecha_ultima_cita)
        RETURNING id`,
       [c.id, c.empresaId, c.telefono, c.indicativo, c.nombre, c.fecha],
     )

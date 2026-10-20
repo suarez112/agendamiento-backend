@@ -13,18 +13,36 @@ export type FilaCliente = {
   total_citas: number;
   fecha_ultima_cita: string | null;
   lista_negra_id: string | null;
+  citas_completadas: number;
+  citas_canceladas: number;
+  activo: boolean;
 };
 
+// Días hacia atrás que cuenta una cita para que el cliente siga "activo"
+export const DIAS_CLIENTE_ACTIVO = 45;
+
+// Activo: tiene una cita no cancelada desde hace 45 días (fecha de Colombia) en
+// adelante. Eso incluye una visita de hoy y cualquier cita próxima.
 const COLUMNAS_CLIENTE = `c.id, c.nombre, c.telefono, c.indicativo, c.total_citas,
   to_char(c.fecha_ultima_cita, 'YYYY-MM-DD') AS fecha_ultima_cita,
   (SELECT ln.id FROM lista_negra ln
    WHERE ln.empresa_id = c.empresa_id AND ${MISMO_TELEFONO('ln.telefono', 'c.telefono')}
-   LIMIT 1) AS lista_negra_id`;
+   LIMIT 1) AS lista_negra_id,
+  est.citas_completadas, est.citas_canceladas, est.activo`;
+
+const DESDE_CLIENTES = `FROM clientes c
+  CROSS JOIN LATERAL (
+    SELECT count(*) FILTER (WHERE ci.estado = 'COMPLETADA')::int AS citas_completadas,
+           count(*) FILTER (WHERE ci.estado = 'CANCELADA')::int AS citas_canceladas,
+           coalesce(bool_or(ci.estado <> 'CANCELADA'
+             AND ci.fecha >= (now() AT TIME ZONE 'America/Bogota')::date - ${DIAS_CLIENTE_ACTIVO}), false) AS activo
+    FROM citas ci WHERE ci.cliente_id = c.id AND ci.empresa_id = c.empresa_id
+  ) est`;
 
 export const listarClientes = async (db: Consultable, empresaId: string) =>
   (
     await db.query<FilaCliente>(
-      `SELECT ${COLUMNAS_CLIENTE} FROM clientes c
+      `SELECT ${COLUMNAS_CLIENTE} ${DESDE_CLIENTES}
        WHERE c.empresa_id = $1
        ORDER BY c.fecha_ultima_cita DESC NULLS LAST, c.nombre`,
       [empresaId],
@@ -33,7 +51,7 @@ export const listarClientes = async (db: Consultable, empresaId: string) =>
 
 export const buscarCliente = async (db: Consultable, id: string, empresaId: string) =>
   (
-    await db.query<FilaCliente>(`SELECT ${COLUMNAS_CLIENTE} FROM clientes c WHERE c.id = $1 AND c.empresa_id = $2`, [
+    await db.query<FilaCliente>(`SELECT ${COLUMNAS_CLIENTE} ${DESDE_CLIENTES} WHERE c.id = $1 AND c.empresa_id = $2`, [
       id,
       empresaId,
     ])

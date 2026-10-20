@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { errores } from '../../shared/errores.js';
 import type { Sesion } from '../auth/auth.servicio.js';
+import { listarHorarios, NOMBRES_DIAS } from '../empresas/horario.js';
 import * as repositorio from './bloqueos.repositorio.js';
 import type { FilaBloqueo } from './bloqueos.repositorio.js';
 
@@ -33,6 +34,29 @@ const armarBloqueo = (b: FilaBloqueo) => ({
   motivo: b.motivo,
 });
 
+const PLURAL_DIAS = ['domingos', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábados'];
+
+// Día de la semana (0 = domingo) de una fecha AAAA-MM-DD, sin depender de la zona horaria
+const diaDeFecha = (fecha: string) => new Date(`${fecha}T12:00:00Z`).getUTCDay();
+
+// Un bloqueo solo puede caer en un día abierto y dentro del horario de ese día.
+// Un bloqueo de día completo cubre todo el horario, así que solo exige que abra.
+const validarContraHorario = async (pool: pg.Pool, empresaId: string, datos: DatosBloqueo) => {
+  const dia = datos.diaSemana ?? diaDeFecha(datos.fecha!);
+  const horario = (await listarHorarios(pool, [empresaId])).find((h) => h.dia_semana === dia);
+  const cuando = datos.fecha ? `el ${NOMBRES_DIAS[dia]} ${datos.fecha}` : `los ${PLURAL_DIAS[dia]}`;
+  if (!horario) {
+    throw errores.solicitudInvalida(`El negocio está cerrado ${cuando}. Elige un día en que esté abierto.`);
+  }
+  const todoElDia = datos.horaInicio === DIA_COMPLETO.horaInicio && datos.horaFin === DIA_COMPLETO.horaFin;
+  // "HH:MM" se compara bien como texto
+  if (!todoElDia && (datos.horaInicio < horario.hora_apertura || datos.horaFin > horario.hora_cierre)) {
+    throw errores.solicitudInvalida(
+      `El bloqueo debe estar dentro del horario del negocio: ${cuando} abre de ${horario.hora_apertura} a ${horario.hora_cierre}.`,
+    );
+  }
+};
+
 // Solo el administrador ve, crea y borra bloqueos (la ruta lo exige).
 export const crearServicioBloqueos = ({ pool }: { pool: pg.Pool }) => ({
   async listar(sesion: Sesion, barberoId: string | undefined) {
@@ -40,6 +64,7 @@ export const crearServicioBloqueos = ({ pool }: { pool: pg.Pool }) => ({
   },
 
   async crear(sesion: Sesion, datos: DatosBloqueo) {
+    await validarContraHorario(pool, sesion.empresaId, datos);
     const bloqueo = await repositorio.crearBloqueo(pool, { ...datos, empresaId: sesion.empresaId });
     if (!bloqueo) throw errores.noEncontrado('Profesional no encontrado');
     return armarBloqueo(bloqueo);

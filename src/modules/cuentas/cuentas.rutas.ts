@@ -13,6 +13,7 @@ import { esquemaIndicativo } from '../citas/citas.esquemas.js';
 import { conTelefonoNormalizado } from '../../shared/telefonos.js';
 import { aceptacionObligatoria } from '../legal/legal.js';
 import type { ServicioCuentas } from './cuentas.servicio.js';
+import type { ServicioRecuperacion } from './recuperacion.servicio.js';
 
 const MENSAJE_CLAVE = 'La contraseña debe tener entre 8 y 64 caracteres';
 
@@ -60,7 +61,25 @@ const esquemaLogin = z.object(
   { error: FALTAN_DATOS },
 );
 
-export const crearRutasCuentas = (cuentas: ServicioCuentas, limitadores: Limitadores) => {
+const esquemaSolicitarRecuperacion = z.object({ correo: esquemaCorreo }, { error: 'Envía el correo de tu cuenta' });
+
+const MENSAJE_CODIGO = 'El código debe tener 6 dígitos';
+
+// La contraseña nueva sigue las mismas reglas del registro
+const esquemaRestablecer = z.object(
+  {
+    correo: esquemaCorreo,
+    codigo: z.string({ error: MENSAJE_CODIGO }).trim().regex(/^\d{6}$/, MENSAJE_CODIGO),
+    clave: esquemaClave,
+  },
+  { error: 'Envía tu correo, el código y la contraseña nueva' },
+);
+
+export const crearRutasCuentas = (
+  cuentas: ServicioCuentas,
+  recuperacion: ServicioRecuperacion,
+  limitadores: Limitadores,
+) => {
   const rutas = Router();
 
   rutas.post('/registro/empresa', limitadores.registro, async (req, res) => {
@@ -73,6 +92,17 @@ export const crearRutasCuentas = (cuentas: ServicioCuentas, limitadores: Limitad
 
   rutas.post('/login', limitadores.login, async (req, res) => {
     res.json(await cuentas.iniciarSesion(parsear(esquemaLogin, req.body)));
+  });
+
+  // Recuperar contraseña (administradoras y clientes con correo). Límite por
+  // conexión y, al pedir el código, también por correo.
+  rutas.post('/solicitar-recuperacion', limitadores.recuperacion, limitadores.recuperacionPorCorreo, async (req, res) => {
+    const { correo } = parsear(esquemaSolicitarRecuperacion, req.body);
+    res.json(await recuperacion.solicitar(correo));
+  });
+
+  rutas.post('/restablecer-contrasena', limitadores.recuperacion, async (req, res) => {
+    res.json(await recuperacion.restablecer(parsear(esquemaRestablecer, req.body)));
   });
 
   return rutas;

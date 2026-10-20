@@ -84,7 +84,8 @@ export const crearServicioAuth = ({ pool, tokens }: Dependencias) => ({
     const cuenta = tokens.verificarCuenta(token);
     if (!cuenta) throw errores.noAutenticado('Sesión vencida. Inicia sesión de nuevo.');
     const usuario = await repositorio.buscarCuentaVigente(pool, cuenta.usuarioId);
-    if (!usuario) throw errores.noAutenticado('Sesión no válida. Inicia sesión de nuevo.');
+    // Cuenta eliminada, o cambió su contraseña después de iniciar esta sesión
+    if (!usuario || usuario.version_sesion !== cuenta.version) throw errores.noAutenticado('Sesión no válida. Inicia sesión de nuevo.');
     if (usuario.rol !== 'admin' || !usuario.empresa_id) {
       throw errores.prohibido('Esta función es solo para el personal del negocio.');
     }

@@ -70,6 +70,7 @@ export type FilaPerfilEmpresa = {
   // numeric: llegan como texto
   latitud: string | null;
   longitud: string | null;
+  precision_ubicacion: string | null;
   estado_suscripcion: string;
   trial_ends_at: Date | null;
   created_at: Date | null;
@@ -77,7 +78,7 @@ export type FilaPerfilEmpresa = {
 
 const COLUMNAS_PERFIL = `id, nombre, codigo_acceso, categoria, direccion, departamento, ciudad,
                          nombre_administradora, numero_empleados, logo_url, foto_url, color_primario, color_secundario,
-                         latitud, longitud, estado_suscripcion, trial_ends_at, created_at`;
+                         latitud, longitud, precision_ubicacion, estado_suscripcion, trial_ends_at, created_at`;
 
 export const buscarPerfilEmpresa = async (db: Consultable, id: string) =>
   (await db.query<FilaPerfilEmpresa>(`SELECT ${COLUMNAS_PERFIL} FROM empresas WHERE id = $1`, [id])).rows[0];
@@ -117,6 +118,7 @@ const COLUMNA_EDITABLE = {
   logoUrl: 'logo_url',
   latitud: 'latitud',
   longitud: 'longitud',
+  precisionUbicacion: 'precision_ubicacion',
 } as const;
 
 export type CambiosPerfil = Partial<Record<keyof typeof COLUMNA_EDITABLE, unknown>>;
