@@ -89,3 +89,16 @@ export const listarCitasCliente = async (db: Consultable, usuarioId: string) =>
       [usuarioId],
     )
   ).rows;
+
+// El cliente cancela una cita suya que sigue confirmada y todavía no empezó (hora de Colombia).
+// No se llena cancelada_por: la agenda mostraría a la administradora como quien canceló.
+export const cancelarCitaCliente = async (db: Consultable, p: { id: string; usuarioId: string }) =>
+  (
+    await db.query<{ estado: string; cancelada_en: Date }>(
+      `UPDATE citas SET estado = 'CANCELADA', cancelada_en = NOW()
+       WHERE id = $1 AND usuario_id = $2 AND estado = 'CONFIRMADA'
+         AND (fecha + hora_inicio) AT TIME ZONE 'America/Bogota' > now()
+       RETURNING estado, cancelada_en`,
+      [p.id, p.usuarioId],
+    )
+  ).rows[0];

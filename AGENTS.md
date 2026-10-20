@@ -18,6 +18,7 @@ src/
   shared/            errores, logs JSON, middlewares HTTP (CORS, límites, validación, errores)
   shared/telefonos.ts  validación y formato E.164 de los teléfonos (libphonenumber-js)
   shared/correo.ts     envío de correos detrás de una interfaz (en desarrollo, a la consola)
+  shared/push.ts       envío de notificaciones push detrás de una interfaz (Expo Push; en las pruebas no envía nada)
   modules/<modulo>/  auth, cuentas, empresas, citas, clientes, equipo, servicios, productos, bloqueos, cartera: <m>.rutas.ts (HTTP + zod) → <m>.servicio.ts (reglas) → <m>.repositorio.ts (SQL)
   modules/auth/acceso.ts          login único (correo o usuario)
   modules/empresas/horario.ts     horario por día (tabla horarios_empresa)
@@ -26,6 +27,7 @@ src/
   modules/empresas/suscripcion.ts estado de la suscripción y guardia 402
   modules/legal/legal.ts          política y términos vigentes, prueba de las autorizaciones (Ley 1581)
   modules/pqrs/                   PQRS: peticiones, quejas, reclamos y sugerencias con radicado y estado
+  modules/notificaciones/         notificaciones push: dispositivos, avisos de citas y tarea de recordatorios (recordatorios.ts)
   modules/superadmin/             panel del dueño de la plataforma: login con TOTP, negocios, PQRS y registro de actividad (totp.ts: segundo paso)
   modules/empresas/activacion.ts  activar un plan a una empresa (lo usan dev:activar-plan y el panel)
   modules/cuentas/eliminacion.servicio.ts  eliminar la cuenta y los datos personales (Ley 1581)
@@ -82,7 +84,7 @@ Puerto por defecto `4000` (`PORT`). Rutas bajo `/api/v1`.
 ## Base de datos y entorno
 
 - PostgreSQL vía `pg` (`src/db/pool.ts`), con las extensiones `btree_gist` (migración 002) y `gen_random_uuid()` (PostgreSQL 13 o superior).
-- Variables en `.env` en la raíz (ignorado por git; nunca lo subas). Se validan al arrancar en `src/config/entorno.ts`: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_POOL_MAX`, `JWT_SECRET`, `JWT_EXPIRA_EN`, `CORS_ORIGINS`, `TRUST_PROXY`, `NODE_ENV`, `PORT`, `CARPETA_SUBIDAS` (opcional, por defecto `uploads`: carpeta de las fotos subidas, ignorada por git) y `URL_PUBLICA` (opcional: dirección pública del servidor, ej. `https://api.mibarberia.co`, para armar las URL de las fotos; si falta se usa la dirección de cada solicitud, así que configúrala en producción).
+- Variables en `.env` en la raíz (ignorado por git; nunca lo subas). Se validan al arrancar en `src/config/entorno.ts`: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_POOL_MAX`, `JWT_SECRET`, `JWT_EXPIRA_EN`, `CORS_ORIGINS`, `TRUST_PROXY`, `NODE_ENV`, `PORT`, `CARPETA_SUBIDAS` (opcional, por defecto `uploads`: carpeta de las fotos subidas, ignorada por git) `URL_PUBLICA` (opcional: dirección pública del servidor, ej. `https://api.mibarberia.co`, para armar las URL de las fotos; si falta se usa la dirección de cada solicitud, así que configúrala en producción) y `EXPO_ACCESS_TOKEN` (opcional: token de acceso de Expo para las notificaciones push; sin él también se envían).
 - El esquema solo cambia con un archivo nuevo en `db/migraciones/` (siguiente número). Nunca edites una migración ya aplicada. Casi siempre es `.sql`; si hace falta código (ej. una librería), puede ser `.ts` y exportar por defecto `async (db: pg.PoolClient) => {…}`, que corre en la misma transacción (ver la 011). Una migración `.ts` no importa nada de `src/`, para que siga haciendo lo mismo aunque el código cambie.
 - Migración 007: horario por día en `horarios_empresa` (un día sin fila = cerrado; reemplaza `dias_atencion`, `horario_apertura` y `horario_cierre`, que se copiaron ahí), quita `nit`, `telefono` y `correo` de `empresas`, agrega `empresas.departamento`, empleados de 1 a 10, código del negocio `^[A-Z0-9]{1,10}$`, `usuarios.usuario` y bloqueos semanales o de una fecha (`bloqueos_tipo_valido`). La 008 corrige el trigger de usuario único.
 - Migración 009: `barberos.atiende_clientes`; plan de la suscripción (`empresas.plan_suscripcion` `mensual`|`anual`, `fecha_pago`, `suscripcion_fin`); cuentas de cliente (`usuarios.nombre`, `telefono`, `indicativo`; `correo` pasa a opcional: correo o usuario); `negocios_guardados`; `citas.usuario_id` (cliente que reservó con su sesión); `documentos_legales` y `autorizaciones_datos`. La 010 publica el borrador `0.1-borrador` de la política y los términos.
@@ -92,7 +94,9 @@ Puerto por defecto `4000` (`PORT`). Rutas bajo `/api/v1`.
 - Migración 014: `empresas.plan_equipo` (`basico` | `equipo` | `pro`, por defecto `pro`): plan por tamaño de equipo. `plan_suscripcion` sigue siendo el periodo (`mensual` | `anual`). A las empresas existentes se les asignó el plan más pequeño que alcanza para su equipo activo (las de prueba, además, el número de empleados del registro si era mayor); no se borró a nadie. Al aplicarla, las tres quedaron en `basico`.
 - Migración 015: tabla `pqrs` (radicado único `PQRS-AAAA-NNNNNN` desde la secuencia `pqrs_numero_seq`, `tipo`, `mensaje`, `nombre`, `contacto`, `usuario_id` opcional con `ON DELETE SET NULL`, `estado`, `respuesta`, `respondida_en`).
 - Migración 016: panel del superadmin. `empresas.suspendida_en` y `empresas.suspension_motivo` (van juntas); tabla `superadmins` (aparte de `usuarios`: ningún login de la app llega a ellos; `totp_secreto` cifrado, `totp_ultimo_paso`, `version_sesion`, `intentos_fallidos`, `bloqueado_hasta`); tabla `actividad_superadmin` (solo se agregan filas: un disparador rechaza `UPDATE`, `DELETE` y `TRUNCATE`; sin llaves foráneas a propósito, copia el correo y los datos del negocio de ese momento).
-- **Publicar una versión nueva de la política o los términos**: una migración nueva que inserte una fila en `documentos_legales` con otra `version` (nunca edites las filas publicadas). La más reciente es la vigente; los clientes con cuenta la aceptan en su próxima reserva.
+- Migración 017: textos legales **versión 1.0** (reemplazan los borradores 0.1) a partir de `docs/legal/documentos-legales.md`: Política de Tratamiento de Datos, Términos y Condiciones y Aviso de privacidad (texto corto). `documentos_legales.tipo` admite un tercer valor, `aviso_privacidad`. Los clientes con cuenta deben aceptar la 1.0 en su próxima reserva.
+- Migración 018: notificaciones push. Tabla `dispositivos_push` (`token` único, de un integrante del equipo `barbero_id` o de una cuenta `usuario_id`, nunca los dos; se borra con su dueño) y `citas.recordatorio_enviado_en` (marca el recordatorio de 24 h ya enviado).
+- **Publicar una versión nueva de la política, los términos o el aviso**: una migración nueva que inserte filas en `documentos_legales` con otra `version` (nunca edites las filas publicadas). La más reciente de cada tipo es la vigente; los clientes con cuenta aceptan la política y los términos nuevos en su próxima reserva. Conviene publicar los tres tipos juntos con el mismo número.
 
 ## Endpoints
 
@@ -107,6 +111,10 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | GET | `/api/v1/planes` | público. Planes por tamaño de equipo con sus precios (ver "Planes") |
 | GET | `/api/v1/legal/politica-datos` | público. Texto vigente de la Política de Tratamiento de Datos, con su versión |
 | GET | `/api/v1/legal/terminos` | público. Texto vigente de los Términos y Condiciones, con su versión |
+| GET | `/api/v1/legal/aviso-privacidad` | público. Texto corto vigente del Aviso de privacidad (va junto a la casilla de autorización), con su versión |
+| PUT | `/api/v1/dispositivos` | cualquier sesión (personal, administradora o cliente con cuenta). Guarda el token de notificaciones push del celular (ver "Notificaciones push") |
+| DELETE | `/api/v1/dispositivos` | cualquier sesión. Borra ese token al cerrar sesión |
+| PATCH | `/api/v1/mi-cuenta/citas/:id/cancelar` | cuenta de cliente. Cancela una cita suya que aún no empezó |
 | GET | `/api/v1/empresas/codigo-disponible/:codigo` | público, limitado. ¿Algún negocio usa ya ese código? |
 | GET | `/api/v1/empresas/validar/:codigo` | público, limitado |
 | GET | `/api/v1/empresas/perfil/:codigo` | público, limitado. Información del negocio con su foto, para clientes |
@@ -667,12 +675,34 @@ Forma de un negocio guardado: `{ "id", "nombre", "codigoAcceso", "categoria", "d
 - **POST `/mi-cuenta/negocios`**: recibe `{ "codigo": "central10" }`. **201** `{ "mensaje": "Negocio guardado", "negocio": { … } }` (si ya estaba, responde igual). Errores: **400** `Envía el código del negocio en "codigo"` o el mensaje del código inválido; **404** `Establecimiento no encontrado`; **429** (mismo límite que `/empresas/validar/:codigo`).
 - **DELETE `/mi-cuenta/negocios/:id`** (`:id` = `id` del negocio): **200** `{ "mensaje": "Negocio quitado de tu lista" }`. **404** `Ese negocio no está en tu lista`.
 - **GET `/mi-cuenta/citas`**: **200** citas que reservó con su sesión, de la más reciente a la más antigua: `[{ "id", "empresaId", "negocio", "codigoAcceso", "servicio", "barberoId", "barberoNombre", "fecha": "2026-10-21", "hora": "10:00 AM", "duracionMin": 30, "precio": 25000, "estado": "CONFIRMADA" }]`. Las reservas como invitado no aparecen.
+- **PATCH `/mi-cuenta/citas/:id/cancelar`**: el cliente cancela una cita **suya** (reservada con su sesión) que sigue `CONFIRMADA` y todavía no empezó (hora de Colombia). **200** `{ "mensaje": "Cita cancelada", "estado": "CANCELADA", "canceladaEn": "<fecha ISO>" }`. **409** `No se pudo cancelar: la cita no existe, no es tuya, ya fue atendida o cancelada, o ya empezó.`; **400** `Identificador de cita inválido`. No se llena `cancelada_por` (la agenda no muestra quién canceló). Avisa por push al profesional y a los administradores (ver "Notificaciones push").
+
+### Notificaciones push (Expo Push)
+
+Los avisos salen por **Expo Push** (`src/shared/push.ts`, interfaz `EnviadorPush`; `crearApp` puede recibir otro en `push`). En `NODE_ENV=test` no se envía nada. La app obtiene el token con `expo-notifications` (`ExponentPushToken[…]`).
+
+**PUT `/api/v1/dispositivos`** (sesión del personal, de la administradora o de un cliente con cuenta): recibe `{ "token": "ExponentPushToken[xxxx]", "plataforma": "ios" | "android" | "web" }` (`plataforma` opcional). **200** `{ "mensaje": "Dispositivo registrado" }`. Se llama después de iniciar sesión y cuando Expo cambie el token. El dueño sale de la sesión. Un token es de una sola persona: si otra inicia sesión en ese celular y lo registra, pasa a ser suyo. Errores: **400** `Envía el token del dispositivo en "token"`, `El token del dispositivo no es válido`, `La plataforma debe ser "ios", "android" o "web"`; **401** sin sesión válida.
+
+**DELETE `/api/v1/dispositivos`**: recibe `{ "token": "…" }` y borra ese token **solo si es de quien lo pide**. Se llama al cerrar sesión, antes de descartar el token de la sesión. **200** `{ "mensaje": "Dispositivo eliminado" }` (igual si no existía). Al eliminar una cuenta se borran sus tokens; un integrante eliminado del equipo deja de recibir avisos.
+
+**Qué se avisa y a quién** (`data.tipo` y `data.citaId` permiten a la app abrir la cita):
+
+| Evento | Quién lo recibe | `data.tipo` |
+| --- | --- | --- |
+| Cita nueva (invitado o cliente con cuenta) | El profesional de la cita y los administradores del negocio (integrantes con rol Administrador y cuentas admin) | `cita_nueva` |
+| El cliente cancela su cita (`PATCH /mi-cuenta/citas/:id/cancelar`) | El profesional y los administradores | `cita_cancelada_por_cliente` |
+| El negocio cancela (`PATCH /citas/:id/cancelar`) | El cliente, solo si reservó con su cuenta | `cita_cancelada` |
+| Recordatorio de 24 h | El cliente con cuenta | `recordatorio` |
+
+- **Un fallo de envío nunca afecta la reserva ni la cancelación**: el aviso se dispara después de guardar y sin esperarlo, y cualquier error solo queda en el log (`push_fallo`, `push_expo_fallo`). Quien no tenga tokens registrados simplemente no recibe nada.
+- **Tokens inválidos**: si Expo responde `DeviceNotRegistered`, el token se borra de `dispositivos_push`. No se consultan los recibos de Expo (solo la respuesta inmediata).
+- **Recordatorios** (`modules/notificaciones/recordatorios.ts`): una tarea que arranca `server.ts` (no `crearApp`, así las pruebas no la inician) y corre al arrancar y luego **cada 15 minutos**. Recuerda las citas `CONFIRMADA` de clientes con cuenta que empiezan dentro de **23 a 24 horas** (hora de Colombia). Una cita reservada con menos de 24 h de anticipación no recibe recordatorio. Cada cita se marca en `citas.recordatorio_enviado_en` en el mismo paso en que se elige (con bloqueo de filas), así que **no se envía dos veces** aunque haya varias instancias o dos vueltas se crucen; si el envío falla, ese recordatorio no se reintenta. Los invitados no reciben recordatorio (no tienen dispositivo).
 
 ### Autorización de tratamiento de datos (Ley 1581 de 2012)
 
 - El registro de empresa, el registro de cliente y la reserva como invitado exigen `"aceptaPoliticaDatos": true` y `"aceptaTerminos": true`; si no, **400** `Debes aceptar la Política de Tratamiento de Datos y los Términos y Condiciones`. Un cliente con cuenta solo acepta de nuevo cuando se publica una versión nueva (ver "Reservas").
-- La app muestra los textos vigentes con **GET `/api/v1/legal/politica-datos`** y **GET `/api/v1/legal/terminos`** (públicos): **200** `{ "tipo": "politica_datos" | "terminos", "version": "0.1-borrador", "titulo", "contenido": "<markdown>", "publicadoEn": "<fecha ISO>" }`.
-- **Los textos actuales son un BORRADOR – PENDIENTE DE REVISIÓN LEGAL** (migración 010), solo para pruebas. Tienen espacios por llenar como `[NOMBRE DEL RESPONSABLE]`, `[NIT]`, `[CORREO DE CONTACTO]` y `[DIRECCIÓN]`. No publiques la app con usuarios reales hasta que un abogado los revise y se publique una versión nueva.
+- La app muestra los textos vigentes con **GET `/api/v1/legal/politica-datos`**, **GET `/api/v1/legal/terminos`** y **GET `/api/v1/legal/aviso-privacidad`** (públicos; el aviso es el texto corto que va junto a la casilla): **200** `{ "tipo": "politica_datos" | "terminos" | "aviso_privacidad", "version": "1.0", "titulo", "contenido": "<markdown>", "publicadoEn": "<fecha ISO>" }`. La casilla sigue siendo una sola: política y términos (el aviso no guarda versión aceptada).
+- **Los textos actuales son la versión 1.0 (migración 017), todavía un BORRADOR de `docs/legal/documentos-legales.md` sin revisión legal.** Conservan espacios por llenar: `[NOMBRE DEL RESPONSABLE]`, `[IDENTIFICACIÓN]`, `[DOMICILIO]`, `[DIRECCIÓN FÍSICA]`, `[CORREO DE CONTACTO]`, `[TELÉFONO]`, `[PROVEEDOR Y PAÍS DEL SERVIDOR]` y `[FECHA DE ENTRADA EN VIGENCIA]`. Antes de publicar la app con usuarios reales, que un abogado los revise y se publique una versión nueva (p. ej. 1.1) con esos datos completos.
 - Prueba de cada autorización en `autorizaciones_datos`: `origen` (`registro_empresa`, `registro_cliente` o `reserva`), quién (`usuario_id`, o `telefono` + `indicativo` si es invitado), `empresa_id` y `cita_id` cuando aplica, `aceptado_en` (fecha y hora) y `version_politica` / `version_terminos` aceptadas. Se acepta siempre la política y los términos juntos. Se borra con la cuenta o el negocio al que pertenece.
 
 ## Autenticación y roles

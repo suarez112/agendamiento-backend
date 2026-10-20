@@ -7,6 +7,7 @@ import type { Sesion } from '../auth/auth.servicio.js';
 import type { FilaUsuario } from '../cuentas/cuentas.repositorio.js';
 import { buscarSuscripcion } from '../empresas/empresas.repositorio.js';
 import { SIN_RESERVAS } from '../empresas/suscripcion.js';
+import type { Avisos } from '../notificaciones/notificaciones.servicio.js';
 import { aceptoAmbos, DEBE_ACEPTAR, NUEVA_VERSION, registrarAutorizacion, tieneAutorizacionVigente } from '../legal/legal.js';
 import type { DatosNuevaCita } from './citas.esquemas.js';
 import * as repositorio from './citas.repositorio.js';
@@ -17,7 +18,8 @@ import { hora12AMinutos, hora24AMinutos, minutosAHHMM } from './horas.js';
 const HORA_OCUPADA = 'Esa hora ya está ocupada. Por favor elige otra.';
 const FALTAN_DATOS = 'Faltan datos para agendar la cita';
 
-export const crearServicioCitas = ({ pool }: { pool: pg.Pool }) => ({
+// notificaciones: avisos push opcionales (nunca hacen fallar la reserva ni la cancelación)
+export const crearServicioCitas = ({ pool, notificaciones }: { pool: pg.Pool; notificaciones?: Avisos }) => ({
   // cuenta: cliente con sesión (usa su nombre y teléfono); null = reserva como invitado
   async crear(datos: DatosNuevaCita, cuenta: FilaUsuario | null = null) {
     const { empresaId, barberoId, servicioId, fecha, hora } = datos;
@@ -114,6 +116,9 @@ export const crearServicioCitas = ({ pool }: { pool: pg.Pool }) => ({
       throw error;
     }
 
+    // Aviso al profesional y a los administradores, sin esperar a que termine el envío
+    void notificaciones?.avisarCitaNueva(citaId);
+
     return {
       mensaje: 'Cita agendada',
       cita: {
@@ -198,6 +203,8 @@ export const crearServicioCitas = ({ pool }: { pool: pg.Pool }) => ({
     if (!r) {
       throw errores.conflicto('No se pudo cancelar: la cita no existe o ya fue atendida o cancelada.');
     }
+    // Si la cita era de un cliente con cuenta, se le avisa que el negocio la canceló
+    void notificaciones?.avisarCancelacionPorNegocio(id);
     return { estado: r.estado, canceladaEn: r.cancelada_en, canceladaPor: r.cancelada_por };
   },
 });

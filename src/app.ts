@@ -28,6 +28,8 @@ import { crearGuardiaSuscripcion } from './modules/empresas/suscripcion.js';
 import { crearRutasEquipo } from './modules/equipo/equipo.rutas.js';
 import { crearServicioEquipo } from './modules/equipo/equipo.servicio.js';
 import { crearRutasLegal } from './modules/legal/legal.js';
+import { crearRutasDispositivos } from './modules/notificaciones/dispositivos.rutas.js';
+import { crearServicioNotificaciones } from './modules/notificaciones/notificaciones.servicio.js';
 import { crearRutasMiCuenta, crearServicioMiCuenta } from './modules/micuenta/micuenta.rutas.js';
 import { crearRutasPqrs } from './modules/pqrs/pqrs.rutas.js';
 import { crearServicioPqrs } from './modules/pqrs/pqrs.servicio.js';
@@ -40,6 +42,7 @@ import { crearRutasSuperadmin } from './modules/superadmin/superadmin.rutas.js';
 import { crearServicioSuperadmin } from './modules/superadmin/superadmin.servicio.js';
 import { crearRutasUbicaciones } from './modules/ubicaciones/ubicaciones.js';
 import { crearEnviadorCorreo, type EnviadorCorreo } from './shared/correo.js';
+import { crearEnviadorPush, type EnviadorPush } from './shared/push.js';
 import { crearCors } from './shared/http/cors.js';
 import { type ConfigLimites, crearLimitadores, LIMITES_POR_DEFECTO } from './shared/http/limitadores.js';
 import { manejadorErrores, rutaNoEncontrada } from './shared/http/manejadorErrores.js';
@@ -51,6 +54,8 @@ export type Dependencias = {
   limites?: ConfigLimites;
   // Por defecto: imprime en la consola (desarrollo) o solo avisa en el log (producción sin proveedor)
   correo?: EnviadorCorreo;
+  // Por defecto: Expo Push (en las pruebas no envía nada)
+  push?: EnviadorPush;
 };
 
 // Punto de composición: aquí se crean los servicios y se conectan con sus rutas.
@@ -60,6 +65,7 @@ export const crearApp = ({
   entorno,
   limites = LIMITES_POR_DEFECTO,
   correo = crearEnviadorCorreo(entorno.NODE_ENV),
+  push = crearEnviadorPush(entorno.NODE_ENV, entorno.EXPO_ACCESS_TOKEN),
 }: Dependencias): Express => {
   const tokens = crearServicioTokens(entorno.JWT_SECRET, entorno.JWT_EXPIRA_EN);
   const auth = crearServicioAuth({ pool, tokens });
@@ -73,6 +79,7 @@ export const crearApp = ({
   const urlBase = crearUrlBase(entorno.URL_PUBLICA);
   const empresas = crearServicioEmpresas({ pool, fotos: fotos.empresas });
   const limitadores = crearLimitadores(limites);
+  const notificaciones = crearServicioNotificaciones({ pool, push });
 
   const app = express();
   app.set('trust proxy', entorno.TRUST_PROXY);
@@ -122,11 +129,13 @@ export const crearApp = ({
     crearRutasSuperadmin(crearServicioSuperadmin({ pool, tokens, secreto: entorno.JWT_SECRET }), limitadores),
   );
   app.use('/api/v1/legal', crearRutasLegal({ pool }));
+  // Celulares con sesión para recibir notificaciones push
+  app.use('/api/v1/dispositivos', crearRutasDispositivos(notificaciones, auth, cuentas, tokens));
   // Cuenta del cliente registrado: negocios guardados y sus citas
-  app.use('/api/v1/mi-cuenta', crearRutasMiCuenta(crearServicioMiCuenta({ pool }), guardiasCuenta, limitadores, urlBase));
+  app.use('/api/v1/mi-cuenta', crearRutasMiCuenta(crearServicioMiCuenta({ pool, notificaciones }), guardiasCuenta, limitadores, urlBase));
   app.use('/api/v1/empresas', crearRutasEmpresas(empresas, guardias, limitadores, urlBase));
   app.use('/api/v1/admin/empresa', crearRutasAdminEmpresa(empresas, guardias, urlBase));
-  app.use('/api/v1/citas', crearRutasCitas(crearServicioCitas({ pool }), guardias, suscripcion, limitadores, cuentas));
+  app.use('/api/v1/citas', crearRutasCitas(crearServicioCitas({ pool, notificaciones }), guardias, suscripcion, limitadores, cuentas));
   // Gestión del negocio: personal (barberos) o la cuenta del administrador de la empresa
   app.use('/api/v1/clientes', crearRutasClientes(crearServicioClientes({ pool }), permisos));
   app.use('/api/v1/equipo', crearRutasEquipo(crearServicioEquipo({ pool, fotos: fotos.barberos }), permisos, urlBase));

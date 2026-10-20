@@ -37,6 +37,8 @@ const esquemaEntorno = esquemaBaseDeDatos
       .url({ protocol: /^https?$/, error: 'debe ser una dirección http:// o https://' })
       .transform((url) => url.replace(/\/+$/, ''))
       .optional(),
+    // Token de acceso de Expo para enviar notificaciones push (opcional: sin él también funciona)
+    EXPO_ACCESS_TOKEN: z.string().min(1).optional(),
   })
   .superRefine((e, ctx) => {
     if (e.NODE_ENV === 'production' && e.JWT_SECRET.length < 32) {

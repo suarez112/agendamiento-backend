@@ -9,15 +9,16 @@ import { cuentaDe, type GuardiasCuenta } from '../cuentas/cuentas.guardias.js';
 import { buscarSuscripcion } from '../empresas/empresas.repositorio.js';
 import { esquemaCodigoNegocio } from '../empresas/empresas.esquemas.js';
 import { urlFoto, type UrlBase } from '../empresas/fotos.js';
+import type { Avisos } from '../notificaciones/notificaciones.servicio.js';
 import * as repositorio from './micuenta.repositorio.js';
 import type { FilaNegocioGuardado } from './micuenta.repositorio.js';
 
 // "Mi cuenta" de un cliente registrado: negocios guardados (para no escribir el
-// código cada vez) y las citas que reservó con su sesión. Solo cuentas de cliente.
+// código cada vez) y las citas que reservó con su sesión (puede cancelarlas). Solo cuentas de cliente.
 
 const NO_ENCONTRADO = 'Establecimiento no encontrado';
 
-export const crearServicioMiCuenta = ({ pool }: { pool: pg.Pool }) => {
+export const crearServicioMiCuenta = ({ pool, notificaciones }: { pool: pg.Pool; notificaciones?: Avisos }) => {
   const armarNegocio = async (n: FilaNegocioGuardado, urlBase: string) => ({
     id: n.id,
     nombre: n.nombre,
@@ -67,6 +68,18 @@ export const crearServicioMiCuenta = ({ pool }: { pool: pg.Pool }) => {
         estado: c.estado,
       }));
     },
+
+    async cancelarCita(usuarioId: string, citaId: string) {
+      const r = await repositorio.cancelarCitaCliente(pool, { id: citaId, usuarioId });
+      if (!r) {
+        throw errores.conflicto(
+          'No se pudo cancelar: la cita no existe, no es tuya, ya fue atendida o cancelada, o ya empezó.',
+        );
+      }
+      // Aviso al profesional y a los administradores, sin esperar a que termine el envío
+      void notificaciones?.avisarCancelacionPorCliente(citaId);
+      return { mensaje: 'Cita cancelada', estado: r.estado, canceladaEn: r.cancelada_en };
+    },
   };
 };
 
@@ -80,6 +93,7 @@ const requerirCliente: RequestHandler = (_req, res, next) => {
 
 const esquemaGuardar = z.object({ codigo: esquemaCodigoNegocio }, { error: 'Envía el código del negocio en "codigo"' });
 const esquemaIdNegocio = esquemaId('Identificador de negocio inválido');
+const esquemaIdCita = esquemaId('Identificador de cita inválido');
 
 export const crearRutasMiCuenta = (
   miCuenta: ServicioMiCuenta,
@@ -107,6 +121,11 @@ export const crearRutasMiCuenta = (
 
   rutas.get('/citas', ...soloCliente, async (_req, res) => {
     res.json(await miCuenta.citas(cuentaDe(res).usuarioId));
+  });
+
+  rutas.patch('/citas/:id/cancelar', ...soloCliente, async (req, res) => {
+    const { id } = parsear(esquemaIdCita, req.params);
+    res.json(await miCuenta.cancelarCita(cuentaDe(res).usuarioId, id));
   });
 
   return rutas;
