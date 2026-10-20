@@ -10,7 +10,7 @@ import { errores } from '../../shared/errores.js';
 // es la más reciente. Publicar una versión nueva = una migración que inserta la fila.
 // Cada aceptación guarda su prueba en autorizaciones_datos.
 
-export type TipoDocumento = 'politica_datos' | 'terminos';
+export type TipoDocumento = 'politica_datos' | 'terminos' | 'aviso_privacidad';
 export type OrigenAutorizacion = 'registro_empresa' | 'registro_cliente' | 'reserva';
 
 export const DEBE_ACEPTAR = 'Debes aceptar la Política de Tratamiento de Datos y los Términos y Condiciones';
@@ -69,9 +69,13 @@ export const tieneAutorizacionVigente = async (db: Consultable, usuarioId: strin
     )
   ).rowCount! > 0;
 
-const RUTA_TIPO: Record<string, TipoDocumento> = { 'politica-datos': 'politica_datos', terminos: 'terminos' };
+const RUTA_TIPO: Record<string, TipoDocumento> = {
+  'politica-datos': 'politica_datos',
+  terminos: 'terminos',
+  'aviso-privacidad': 'aviso_privacidad',
+};
 
-// Endpoints públicos con el texto vigente de cada documento y su versión
+// Endpoints públicos con el texto vigente de cada documento (política, términos y aviso corto) y su versión
 export const crearRutasLegal = ({ pool }: { pool: pg.Pool }) => {
   const rutas = Router();
 
