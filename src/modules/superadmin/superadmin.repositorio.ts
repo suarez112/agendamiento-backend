@@ -454,3 +454,16 @@ export const estadisticasPlataforma = async (db: Consultable) => {
     activosPorPlan: activosPorPlan.rows,
   };
 };
+
+// Ingresos estimados por mes de todo el historial de activaciones (activaciones_plan), más el
+// mes actual de Colombia. Solo los meses con activaciones; el servicio rellena los demás con ceros.
+export const ingresosPorMes = async (db: Consultable) => {
+  const [meses, actual] = await Promise.all([
+    db.query<{ mes: string; total: string; activaciones: number }>(
+      `SELECT to_char(fecha, 'YYYY-MM') AS mes, sum(precio) AS total, count(*)::int AS activaciones
+       FROM activaciones_plan GROUP BY 1 ORDER BY 1`,
+    ),
+    db.query<{ mes: string }>(`SELECT to_char(${HOY}, 'YYYY-MM') AS mes`),
+  ]);
+  return { meses: meses.rows, mesActual: actual.rows[0].mes };
+};

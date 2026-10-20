@@ -203,6 +203,51 @@ export const crearServicioSuperadmin = ({ pool, tokens, secreto }: Dependencias)
       };
     },
 
+    // Ingresos estimados: suman el precio del plan en cada activación del historial. No son pagos
+    // reales (todavía no hay pasarela), por eso todo va marcado como estimado.
+    async ingresos() {
+      const { meses, mesActual } = await repositorio.ingresosPorMes(pool);
+      const porMes = new Map(meses.map((m) => [m.mes, { total: Number(m.total), activaciones: m.activaciones }]));
+
+      // Los últimos 12 meses, el actual al final, con ceros donde no hubo activaciones
+      const [anio, mes] = mesActual.split('-').map(Number);
+      const ultimos12 = Array.from({ length: 12 }, (_, i) => {
+        const d = new Date(Date.UTC(anio, mes - 1 - (11 - i), 1));
+        const clave = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+        return { mes: clave, total: porMes.get(clave)?.total ?? 0, activaciones: porMes.get(clave)?.activaciones ?? 0 };
+      });
+
+      // Por año: desde el primero con activaciones hasta el actual, sin huecos
+      const porAnioMapa = new Map<number, { total: number; activaciones: number }>();
+      for (const m of meses) {
+        const a = Number(m.mes.slice(0, 4));
+        const previo = porAnioMapa.get(a) ?? { total: 0, activaciones: 0 };
+        porAnioMapa.set(a, { total: previo.total + Number(m.total), activaciones: previo.activaciones + m.activaciones });
+      }
+      const primero = meses.length ? Number(meses[0].mes.slice(0, 4)) : anio;
+      const porAnio = Array.from({ length: anio - primero + 1 }, (_, i) => {
+        const a = primero + i;
+        return { anio: a, total: porAnioMapa.get(a)?.total ?? 0, activaciones: porAnioMapa.get(a)?.activaciones ?? 0 };
+      });
+
+      // El mejor mes y el mejor año de todo el historial (si hay empate, el más reciente); null si no hay ingresos
+      const mejor = <T extends { total: number }>(filas: T[]) =>
+        filas.reduce<T | null>((m, f) => (f.total > 0 && (!m || f.total >= m.total) ? f : m), null);
+      const todosLosMeses = meses.map((m) => ({ mes: m.mes, total: Number(m.total), activaciones: m.activaciones }));
+
+      return {
+        estimado: true,
+        moneda: 'COP',
+        total: porAnio.reduce((suma, a) => suma + a.total, 0),
+        activaciones: porAnio.reduce((suma, a) => suma + a.activaciones, 0),
+        porMes: ultimos12,
+        porAnio,
+        mejorMes: mejor(todosLosMeses),
+        mejorAnio: mejor(porAnio),
+        nota: 'Estimado: suma el precio del plan en el momento de cada activación (el plan anual cuenta completo el mes en que se activa). No son pagos reales. Las activaciones anteriores a este historial solo incluyen la última de cada negocio.',
+      };
+    },
+
     async resumen() {
       const r = await repositorio.resumenPlataforma(pool);
       return {
@@ -275,7 +320,7 @@ export const crearServicioSuperadmin = ({ pool, tokens, secreto }: Dependencias)
           throw errores.conflicto('Este negocio está cancelado (su cuenta fue eliminada) y no se puede activar.');
         }
         const antes = (await repositorio.buscarNegocio(tx, id))!;
-        await activarPlanEmpresa(tx, id, d.periodo, d.planEquipo ?? null);
+        await activarPlanEmpresa(tx, id, d.periodo, d.planEquipo ?? null, 'panel');
         const despues = (await repositorio.buscarNegocio(tx, id))!;
         await repositorio.registrarActividad(tx, {
           superadminId: admin.id,

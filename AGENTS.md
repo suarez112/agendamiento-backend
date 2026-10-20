@@ -29,7 +29,7 @@ src/
   modules/pqrs/                   PQRS: peticiones, quejas, reclamos y sugerencias con radicado y estado
   modules/notificaciones/         notificaciones push: dispositivos, avisos de citas y tarea de recordatorios (recordatorios.ts)
   modules/superadmin/             panel del dueño de la plataforma: login con TOTP, negocios, PQRS y registro de actividad (totp.ts: segundo paso)
-  modules/empresas/activacion.ts  activar un plan a una empresa (lo usan dev:activar-plan y el panel)
+  modules/empresas/activacion.ts  activar un plan a una empresa (lo usan dev:activar-plan y el panel) y anotarlo en el historial de ingresos (activaciones_plan)
   modules/cuentas/eliminacion.servicio.ts  eliminar la cuenta y los datos personales (Ley 1581)
   modules/micuenta/               cuenta del cliente: negocios guardados y sus citas
   modules/cuentas/recuperacion.servicio.ts  recuperar la contraseña con un código por correo
@@ -60,7 +60,7 @@ npm run dev:activar-plan -- CODIGO equipo anual # plan: basico | equipo | pro (o
 npm run dev:simular-vencimiento -- CODIGO DIAS # ej. 3, 0 o -2
 ```
 
-- **`dev:activar-plan`**: si lo ejecutas mal (o sin argumentos) muestra el uso con la lista de planes (`basico | equipo | pro`), los periodos (`mensual | anual`) y un ejemplo (`npm run dev:activar-plan -- INFINITY equipo anual`). Recibe el plan por tamaño de equipo (`basico`, `equipo` o `pro`; si no se envía, conserva el que tiene) y el periodo (`mensual` o `anual`). Si el equipo activo no cabe en el plan elegido, lo rechaza y no cambia nada (`✖ Tu equipo tiene 4 integrante(s) activo(s) y el plan Básico permite hasta 3. …`). Deja la empresa `activa` con ese plan, de inmediato (ya no aparece como prueba). Fecha de pago = hoy (Colombia). Fecha de fin = 1 mes o 1 año contados desde: el **fin de la prueba**, si paga durante la prueba (no pierde los días gratis que le quedaban; se guardan en `dias_prueba_sumados` y `/suscripcion` los muestra en `diasPruebaSumados`); el fin del plan actual, si aún no vencía (una renovación anticipada no pierde días); o hoy, en otro caso. Sirve también para activar a mano un negocio en producción mientras no haya pagos. Ejemplo: `npm run dev:activar-plan -- CENTRAL10 equipo anual` → `✔ Barbería Central (CENTRAL10): plan Equipo anual activo (cupo 2/5). Pago: 2026-10-19. Fin: 2027-10-19. Días restantes: 365.` Durante una prueba con 15 días restantes, `-- CENTRAL10 basico mensual` → `… Fin: 2026-12-03. Días restantes: 45. Días de prueba sumados: 15.`
+- **`dev:activar-plan`**: si lo ejecutas mal (o sin argumentos) muestra el uso con la lista de planes (`basico | equipo | pro`), los periodos (`mensual | anual`) y un ejemplo (`npm run dev:activar-plan -- INFINITY equipo anual`). Recibe el plan por tamaño de equipo (`basico`, `equipo` o `pro`; si no se envía, conserva el que tiene) y el periodo (`mensual` o `anual`). Si el equipo activo no cabe en el plan elegido, lo rechaza y no cambia nada (`✖ Tu equipo tiene 4 integrante(s) activo(s) y el plan Básico permite hasta 3. …`). Deja la empresa `activa` con ese plan, de inmediato (ya no aparece como prueba). Fecha de pago = hoy (Colombia). Fecha de fin = 1 mes o 1 año contados desde: el **fin de la prueba**, si paga durante la prueba (no pierde los días gratis que le quedaban; se guardan en `dias_prueba_sumados` y `/suscripcion` los muestra en `diasPruebaSumados`); el fin del plan actual, si aún no vencía (una renovación anticipada no pierde días); o hoy, en otro caso. Sirve también para activar a mano un negocio en producción mientras no haya pagos. Cada activación queda en el historial de ingresos (`activaciones_plan`, origen `comando`). Ejemplo: `npm run dev:activar-plan -- CENTRAL10 equipo anual` → `✔ Barbería Central (CENTRAL10): plan Equipo anual activo (cupo 2/5). Pago: 2026-10-19. Fin: 2027-10-19. Días restantes: 365.` Durante una prueba con 15 días restantes, `-- CENTRAL10 basico mensual` → `… Fin: 2026-12-03. Días restantes: 45. Días de prueba sumados: 15.`
 - **`dev:simular-vencimiento`**: deja a la empresa con `DIAS` días restantes de su prueba (si está en prueba) o de su plan (si está activa), cambiando la fecha de fin. `0` o negativo = vencida. Para un negocio vencido, actívale antes un plan. **No funciona con `NODE_ENV=production`** (responde con error y no cambia nada). Ejemplos: `-- CENTRAL10 5` (recordatorio de los últimos 7 días), `-- CENTRAL10 0` (vencida hoy).
 
 Los dos muestran cómo quedó: estado, fecha de fin y días restantes.
@@ -102,6 +102,7 @@ Puerto por defecto `4000` (`PORT`). Rutas bajo `/api/v1`.
 - Migración 017: textos legales **versión 1.0** (reemplazan los borradores 0.1) a partir de `docs/legal/documentos-legales.md`: Política de Tratamiento de Datos, Términos y Condiciones y Aviso de privacidad (texto corto). `documentos_legales.tipo` admite un tercer valor, `aviso_privacidad`. Los clientes con cuenta deben aceptar la 1.0 en su próxima reserva.
 - Migración 018: notificaciones push. Tabla `dispositivos_push` (`token` único, de un integrante del equipo `barbero_id` o de una cuenta `usuario_id`, nunca los dos; se borra con su dueño) y `citas.recordatorio_enviado_en` (marca el recordatorio de 24 h ya enviado).
 - Migración 019: `superadmins.ultima_actividad` (momento de la última solicitud del superadmin; con más de 15 minutos de diferencia, o `NULL`, la sesión ya no sirve).
+- Migración 020: tabla `activaciones_plan` (historial de activaciones de plan: negocio, `plan_equipo`, `periodo`, `precio` de ese momento, `fecha` en hora de Colombia, `origen` `panel` | `comando` | `historico`). Sin llave foránea (copia el código y el nombre del negocio, como `actividad_superadmin`). La llena `activarPlanEmpresa` en cada activación; al aplicarla se copió la **última** activación de cada negocio que ya había pagado (`origen = 'historico'`, con los precios de `src/config/planes.ts` de ese día). Las activaciones anteriores a esta migración no se guardaron, así que no se pueden recuperar.
 - **Publicar una versión nueva de la política, los términos o el aviso**: una migración nueva que inserte filas en `documentos_legales` con otra `version` (nunca edites las filas publicadas). La más reciente de cada tipo es la vigente; los clientes con cuenta aceptan la política y los términos nuevos en su próxima reserva. Conviene publicar los tres tipos juntos con el mismo número.
 
 ## Endpoints
@@ -143,6 +144,7 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | POST | `/api/v1/superadmin/logout` | superadmin. Cierra la sesión e invalida el token en el servidor |
 | GET | `/api/v1/superadmin/resumen` | superadmin. Cifras de toda la plataforma |
 | GET | `/api/v1/superadmin/estadisticas` | superadmin. Cifras agregadas para los gráficos del panel |
+| GET | `/api/v1/superadmin/ingresos` | superadmin. Ingresos **estimados** por mes (últimos 12), por año, mejor mes, mejor año y total |
 | GET | `/api/v1/superadmin/negocios` | superadmin. Lista con búsqueda, filtros y paginación |
 | GET | `/api/v1/superadmin/negocios/:id` | superadmin. Detalle de un negocio (solo cifras) |
 | POST | `/api/v1/superadmin/negocios/:id/plan` | superadmin. Activa o cambia el plan |
@@ -584,6 +586,34 @@ Errores: **400** `El campo "desde" es obligatorio`, `El campo "desde" debe ser u
   ```
 
   `ganancia` es lo que ganó el profesional (con el porcentaje guardado en cada cita, igual que `/cartera`); `gananciaNegocio` = `totalVentas` − lo que ganó el equipo.
+- Además de lo anterior (que no cambia), la respuesta trae estos campos, calculados con el mismo filtro (un admin ve todo el negocio o un integrante con `barberoId`; un **empleado solo lo suyo**, aunque envíe otro `barberoId`) y las mismas fechas de Colombia y límites de `rango`:
+
+  ```jsonc
+  {
+    "ticketPromedio": 20000,                // totalVentas / citasCompletadas (0 si no hubo citas)
+    "comparacion": {
+      "periodoAnterior": { "desde": "2026-09-01", "hasta": "2026-09-30", "totalVentas": 50000, "gananciaNegocio": 25000, "gananciaEquipo": 25000, "citasCompletadas": 2 },
+      "variacionPorcentaje": { "ventas": 20, "gananciaNegocio": 28, "gananciaEquipo": 12, "citas": 50 }  // % de subida (+) o bajada (−), un decimal
+    },
+    "ventasPorDia": [{ "fecha": "2026-10-01", "ventas": 0, "citas": 0 }, …],   // todos los días del período, con ceros
+    "serviciosMasVendidos": [{ "servicioId": "…", "nombre": "Corte", "cantidad": 12, "ventas": 300000 }],  // hasta 10, por cantidad
+    "ocupacion": {
+      "diasSemana": [{ "dia": 0, "citas": 0 }, …],      // los 7 días (0 = domingo … 6 = sábado)
+      "horas": [{ "hora": "10:00", "citas": 3 }, …],    // solo las horas con citas, en orden
+      "diaMasOcupado": 2, "horaMasOcupada": "10:00"     // null si no hubo citas
+    },
+    "cancelaciones": { "totalCitas": 6, "canceladas": 3, "tasaPorcentaje": 50 },
+    "clientes": { "nuevos": 2, "recurrentes": 1 },
+    "pagoProfesionales": { "total": 12500, "detalle": [{ "barberoId": "…", "nombre": "Carlos", "activo": true, "porcentajeGanancia": 50, "citas": 1, "ventas": 25000, "aPagar": 12500 }] }
+  }
+  ```
+
+  - **Período anterior**: completo y de la misma forma: `hoy` → ayer; `semana` → la semana pasada (lunes a domingo); `mes` → el mes anterior completo; `rango` → los mismos días justo antes de `desde`. Puede quedar antes del registro del negocio (llega en ceros). Si el período actual aún no termina (hoy, esta semana, este mes), se compara contra el anterior completo.
+  - **Variación**: `(actual − anterior) / anterior × 100`, un decimal; negativa = bajó. Si el anterior es 0: `0` si ahora tampoco hay, y `null` si ahora sí hay (no se puede calcular un porcentaje).
+  - `ventasPorDia`, `serviciosMasVendidos`, `ticketPromedio` y `pagoProfesionales` cuentan solo citas **completadas**. `aPagar` = lo que le corresponde al profesional con el porcentaje guardado en cada cita (igual que `ganancia`); `porcentajeGanancia` es el actual, informativo. `total` = lo que corresponde pagar a todo el equipo.
+  - `ocupacion` cuenta las citas **no canceladas** del período (completadas y confirmadas, también las futuras) por día de la semana y por hora de inicio.
+  - `cancelaciones` cuenta todas las citas del período, de cualquier estado; `tasaPorcentaje` = canceladas / totalCitas (las confirmadas que aún no llegan también cuentan en el total).
+  - `clientes`: clientes con alguna cita no cancelada en el período. **Nuevos**: no tenían citas no canceladas antes de `desde`; **recurrentes**: sí. Con un profesional filtrado (o un empleado), se miran solo las citas de ese profesional.
 - Errores: **400** `Elige el período en "periodo": "hoy", "semana", "mes" o "rango" (con "desde" y "hasta")`, y con `rango` los mismos de `/cartera` (`El campo "desde" es obligatorio`, …), `La fecha "desde" no puede ser anterior a la fecha de registro del negocio (2026-10-05).` y `La fecha "hasta" no puede ser posterior a hoy (2026-10-20).`
 
 ### Recuperar contraseña (administradoras y clientes con correo)
@@ -662,6 +692,20 @@ Las listas se paginan con `?pagina=1&limite=25` (máximo 100) y responden `{ "to
 
 - `conversionPruebaAPlan`: de los negocios que **ya pagaron o cuya prueba ya terminó** (`pruebasTerminadas`; uno que sigue en su prueba aún no pudo convertirse), cuántos pagaron o están activos (`convertidos`). `tasaPorcentaje` con un decimal; `null` si aún no hay ninguno.
 - `ingresoMensualEstimado`: **es una estimación, no dinero cobrado** (por eso `estimado: true`). Suma, por cada negocio en estado `activo`, el precio mensual de su plan o el anual dividido en 12, con los precios de `src/config/planes.ts` (hoy de ejemplo). No cuenta pruebas, vencidos ni suspendidos, ni activos de antes de los planes (sin periodo, no hay precio).
+
+**GET `/superadmin/ingresos`**: ingresos **estimados** de la plataforma, sumando el precio del plan en cada activación del historial `activaciones_plan` (migración 020). **No son pagos reales** (todavía no hay pasarela): por eso la respuesta lleva `estimado: true`. Un plan anual cuenta completo en el mes en que se activa. Cada activación o renovación (panel o `dev:activar-plan`) suma una fila. Solo cifras: nada de datos de clientes. Responde **200**:
+
+```jsonc
+{
+  "estimado": true, "moneda": "COP",
+  "total": 530000, "activaciones": 2,                                  // todo el historial
+  "porMes": [{ "mes": "2025-11", "total": 0, "activaciones": 0 }, …],  // últimos 12 meses, el actual al final, con ceros
+  "porAnio": [{ "anio": 2026, "total": 530000, "activaciones": 2 }],   // desde el primer año con activaciones hasta el actual, sin huecos
+  "mejorMes": { "mes": "2026-10", "total": 530000, "activaciones": 2 } | null,  // de todo el historial; null si no hay ingresos
+  "mejorAnio": { "anio": 2026, "total": 530000, "activaciones": 2 } | null,     // con empate gana el más reciente
+  "nota": "Estimado: …"
+}
+```
 
 **Acciones sobre un negocio** (todas responden **200** `{ "mensaje", "negocio": { …forma de la lista… } }`, **404** `Negocio no encontrado`, y quedan en el registro de actividad; `motivo` opcional hasta 300 caracteres salvo donde se indica):
 

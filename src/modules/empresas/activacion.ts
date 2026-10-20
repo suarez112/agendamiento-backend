@@ -4,6 +4,7 @@ import { errores } from '../../shared/errores.js';
 import { planInsuficiente } from './suscripcion.js';
 
 export type Periodo = 'mensual' | 'anual';
+export type OrigenActivacion = 'panel' | 'comando';
 
 // Deja la empresa 'activa' con el plan de hoy (hora de Colombia). Sin plan por tamaño de equipo
 // conserva el que tiene. Si el equipo activo no cabe en el plan elegido, responde 409 y no cambia nada.
@@ -13,12 +14,14 @@ export type Periodo = 'mensual' | 'anual';
 // - el fin del plan actual, si renueva antes de que venza (no pierde días),
 // - hoy, en cualquier otro caso.
 // Debe correr dentro de una transacción: bloquea la fila de la empresa mientras decide.
-// Devuelve false si la empresa no existe.
+// Cada activación queda en el historial (activaciones_plan) con el precio del plan de ese momento,
+// para estimar los ingresos. Devuelve false si la empresa no existe.
 export const activarPlanEmpresa = async (
   tx: pg.PoolClient,
   empresaId: string,
   periodo: Periodo,
   planEquipoId: string | null,
+  origen: OrigenActivacion = 'comando',
 ): Promise<boolean> => {
   const actual = (
     await tx.query<{ activos: number }>(
@@ -51,5 +54,30 @@ export const activarPlanEmpresa = async (
      WHERE e.id = $1`,
     [empresaId, periodo, planEquipo?.id ?? null],
   );
+  // Plan final (puede ser el que ya tenía) y precio de hoy, que es lo que se estima como ingreso
+  const final = (
+    await tx.query<{ plan_equipo: string; codigo_acceso: string; nombre: string; fecha: string }>(
+      `SELECT plan_equipo, codigo_acceso, nombre, to_char((now() AT TIME ZONE 'America/Bogota')::date, 'YYYY-MM-DD') AS fecha
+       FROM empresas WHERE id = $1`,
+      [empresaId],
+    )
+  ).rows[0];
+  const plan = buscarPlan(final.plan_equipo);
+  if (plan) {
+    await tx.query(
+      `INSERT INTO activaciones_plan (empresa_id, empresa_codigo, empresa_nombre, plan_equipo, periodo, precio, fecha, origen)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::date, $8)`,
+      [
+        empresaId,
+        final.codigo_acceso,
+        final.nombre,
+        plan.id,
+        periodo,
+        periodo === 'mensual' ? plan.precioMensual : plan.precioAnual,
+        final.fecha,
+        origen,
+      ],
+    );
+  }
   return true;
 };

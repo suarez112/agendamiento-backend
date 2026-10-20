@@ -8,6 +8,26 @@ export type ConsultaPeriodo = { barberoId?: string } & (
   | { periodo: 'rango'; desde: string; hasta: string }
 );
 
+const DIA_MS = 86_400_000;
+const SERVICIOS_TOP = 10;
+
+const redondear1 = (n: number) => Math.round(n * 10) / 10;
+
+// Cambio en % respecto al período anterior (negativo = bajó). Sin base (anterior en 0): 0 si
+// tampoco hay ahora, y null si ahora sí hay (no se puede calcular un porcentaje)
+const variacion = (actual: number, anterior: number) =>
+  anterior === 0 ? (actual === 0 ? 0 : null) : redondear1(((actual - anterior) / anterior) * 100);
+
+// Período anterior, completo, con el que se compara: el mes anterior para "mes"; para los
+// demás, los mismos días justo antes de "desde" (ayer, la semana pasada o el rango anterior)
+const periodoAnterior = (periodo: string, desde: string, hasta: string) => {
+  const fin = Date.parse(desde) - DIA_MS;
+  const finTexto = new Date(fin).toISOString().slice(0, 10);
+  if (periodo === 'mes') return { desde: `${finTexto.slice(0, 8)}01`, hasta: finTexto };
+  const dias = (Date.parse(hasta) - Date.parse(desde)) / DIA_MS + 1;
+  return { desde: new Date(fin - (dias - 1) * DIA_MS).toISOString().slice(0, 10), hasta: finTexto };
+};
+
 // Suma con centavos sin errores de punto flotante
 const sumar = (valores: number[]) => Math.round(valores.reduce((a, b) => a + b * 100, 0)) / 100;
 
@@ -33,6 +53,40 @@ export const crearServicioCartera = ({ pool }: { pool: pg.Pool }) => ({
     const { desde, hasta } =
       consulta.periodo === 'rango' ? consulta : await repositorio.fechasDePeriodo(pool, consulta.periodo);
     const r = await this.resumen(sesion, desde, hasta, consulta.barberoId);
+
+    // Mismo filtro que el resumen: un empleado solo ve lo suyo, aunque envíe otro barberoId
+    const filtro = { empresaId: sesion.empresaId, desde, hasta, barberoId: r.barberoId };
+    const anterior = periodoAnterior(consulta.periodo, desde, hasta);
+    const [previo, dias, servicios, ocupacion, cancelaciones, clientes] = await Promise.all([
+      this.resumen(sesion, anterior.desde, anterior.hasta, consulta.barberoId),
+      repositorio.ventasPorDia(pool, filtro),
+      repositorio.serviciosMasVendidos(pool, filtro, SERVICIOS_TOP),
+      repositorio.ocupacion(pool, filtro),
+      repositorio.conteoCancelaciones(pool, filtro),
+      repositorio.clientesNuevosYRecurrentes(pool, filtro),
+    ]);
+
+    // Citas por día de la semana (0 = domingo … 6 = sábado, los 7) y por hora (solo las que tienen citas)
+    const porDia = Array.from({ length: 7 }, (_, dia) => ({ dia, citas: 0 }));
+    const porHora = new Map<number, number>();
+    for (const o of ocupacion) {
+      porDia[o.dia].citas += o.citas;
+      porHora.set(o.hora, (porHora.get(o.hora) ?? 0) + o.citas);
+    }
+    const horas = [...porHora].sort(([a], [b]) => a - b).map(([hora, citas]) => ({ hora: `${String(hora).padStart(2, '0')}:00`, citas }));
+    const masOcupado = <T extends { citas: number }>(filas: T[]) =>
+      filas.reduce<T | null>((m, f) => (f.citas > 0 && (!m || f.citas > m.citas) ? f : m), null);
+
+    const pagoProfesionales = r.porProfesional.map((p) => ({
+      barberoId: p.barberoId,
+      nombre: p.nombre,
+      activo: p.activo,
+      porcentajeGanancia: p.porcentajeGanancia,
+      citas: p.citas,
+      ventas: p.ventas,
+      aPagar: p.ganancia,
+    }));
+
     return {
       periodo: consulta.periodo,
       desde,
@@ -49,6 +103,43 @@ export const crearServicioCartera = ({ pool }: { pool: pg.Pool }) => ({
         ventas: p.ventas,
         ganancia: p.ganancia,
       })),
+      ticketPromedio: r.totalCitas ? Math.round((r.totalVentas / r.totalCitas) * 100) / 100 : 0,
+      comparacion: {
+        periodoAnterior: {
+          desde: anterior.desde,
+          hasta: anterior.hasta,
+          totalVentas: previo.totalVentas,
+          gananciaNegocio: previo.gananciaNegocio,
+          gananciaEquipo: previo.gananciaEquipo,
+          citasCompletadas: previo.totalCitas,
+        },
+        variacionPorcentaje: {
+          ventas: variacion(r.totalVentas, previo.totalVentas),
+          gananciaNegocio: variacion(r.gananciaNegocio, previo.gananciaNegocio),
+          gananciaEquipo: variacion(r.gananciaEquipo, previo.gananciaEquipo),
+          citas: variacion(r.totalCitas, previo.totalCitas),
+        },
+      },
+      ventasPorDia: dias.map((d) => ({ fecha: d.fecha, ventas: Number(d.ventas), citas: d.citas })),
+      serviciosMasVendidos: servicios.map((s) => ({
+        servicioId: s.servicio_id,
+        nombre: s.nombre,
+        cantidad: s.cantidad,
+        ventas: Number(s.ventas),
+      })),
+      ocupacion: {
+        diasSemana: porDia,
+        horas,
+        diaMasOcupado: masOcupado(porDia)?.dia ?? null,
+        horaMasOcupada: masOcupado(horas)?.hora ?? null,
+      },
+      cancelaciones: {
+        totalCitas: cancelaciones.total,
+        canceladas: cancelaciones.canceladas,
+        tasaPorcentaje: cancelaciones.total ? redondear1((cancelaciones.canceladas / cancelaciones.total) * 100) : 0,
+      },
+      clientes: { nuevos: clientes.nuevos, recurrentes: clientes.recurrentes },
+      pagoProfesionales: { total: r.gananciaEquipo, detalle: pagoProfesionales },
     };
   },
 

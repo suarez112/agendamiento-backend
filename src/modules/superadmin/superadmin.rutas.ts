@@ -158,6 +158,10 @@ export const crearRutasSuperadmin = (servicio: ServicioSuperadmin, limitadores: 
     res.json(await servicio.estadisticas());
   });
 
+  rutas.get('/ingresos', async (_req, res) => {
+    res.json(await servicio.ingresos());
+  });
+
   rutas.get('/negocios', async (req, res) => {
     const { pagina, limite, ...filtros } = parsear(esquemaListaNegocios, req.query);
     res.json(await servicio.listarNegocios(filtros, { pagina, limite }));
