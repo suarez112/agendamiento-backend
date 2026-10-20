@@ -1,8 +1,9 @@
 import dotenv from 'dotenv';
 import { cargarEntornoBaseDeDatos } from '../config/entorno.js';
 import { buscarPlan, ID_PLANES } from '../config/planes.js';
+import { activarPlanEmpresa } from '../modules/empresas/activacion.js';
 import { buscarSuscripcion } from '../modules/empresas/empresas.repositorio.js';
-import { planInsuficiente } from '../modules/empresas/suscripcion.js';
+import { ErrorApp } from '../shared/errores.js';
 import { crearPool, enTransaccion } from './pool.js';
 
 // npm run dev:activar-plan -- CODIGO [basico|equipo|pro] mensual|anual
@@ -34,44 +35,16 @@ if (
   process.exit(1);
 }
 
-class Rechazo extends Error {}
-
 const pool = crearPool(cargarEntornoBaseDeDatos());
 
 try {
   const rows = await enTransaccion(pool, async (tx) => {
-    const actual = (
-      await tx.query<{ id: string; activos: number }>(
-        `SELECT e.id, (SELECT count(*)::int FROM barberos b WHERE b.empresa_id = e.id AND b.activo) AS activos
-         FROM empresas e WHERE e.codigo_acceso = $1 FOR UPDATE`,
-        [codigo],
-      )
+    const empresa = (
+      await tx.query<{ id: string; nombre: string }>('SELECT id, nombre FROM empresas WHERE codigo_acceso = $1', [codigo])
     ).rows[0];
-    if (!actual) return [];
-    if (planEquipo && actual.activos > planEquipo.cupo) throw new Rechazo(planInsuficiente(planEquipo, actual.activos));
-    const { rows: activada } = await tx.query<{ id: string; nombre: string }>(
-      `UPDATE empresas e
-       SET estado_suscripcion = 'activa',
-           plan_suscripcion = $2::varchar,
-           fecha_pago = hoy.fecha,
-           plan_equipo = COALESCE($3::varchar, e.plan_equipo),
-           suscripcion_fin = (
-             GREATEST(hoy.fecha, CASE e.estado_suscripcion
-                                   WHEN 'activa' THEN e.suscripcion_fin
-                                   WHEN 'trial' THEN (e.trial_ends_at AT TIME ZONE 'America/Bogota')::date
-                                 END)
-             + CASE $2::varchar WHEN 'mensual' THEN interval '1 month' ELSE interval '1 year' END
-           )::date,
-           dias_prueba_sumados = CASE e.estado_suscripcion
-                                   WHEN 'trial' THEN GREATEST((e.trial_ends_at AT TIME ZONE 'America/Bogota')::date - hoy.fecha, 0)
-                                   WHEN 'activa' THEN e.dias_prueba_sumados
-                                 END
-       FROM (SELECT (now() AT TIME ZONE 'America/Bogota')::date AS fecha) hoy
-       WHERE e.codigo_acceso = $1
-       RETURNING e.id, e.nombre`,
-      [codigo, plan, planEquipo?.id ?? null],
-    );
-    return activada;
+    if (!empresa) return [];
+    await activarPlanEmpresa(tx, empresa.id, plan, planEquipo?.id ?? null);
+    return [empresa];
   });
   if (rows.length === 0) {
     console.error(`No existe un negocio con el código ${codigo}`);
@@ -86,7 +59,7 @@ try {
     );
   }
 } catch (error) {
-  console.error(error instanceof Rechazo ? `✖ ${error.message}` : (error as Error).message);
+  console.error(error instanceof ErrorApp ? `✖ ${error.message}` : (error as Error).message);
   process.exitCode = 1;
 } finally {
   await pool.end();

@@ -13,12 +13,15 @@ export type DatosTokenCuenta = { usuarioId: string; version: number };
 
 const ALGORITMO = 'HS256';
 const TIPO_CUENTA = 'cuenta';
+const TIPO_SUPERADMIN = 'superadmin';
+// La sesión del superadmin es corta y no depende de JWT_EXPIRA_EN
+const DURACION_SUPERADMIN = '1h';
 
 export const crearServicioTokens = (secreto: string, expiraEn: string) => {
-  const opciones = (subject: string): SignOptions => ({
+  const opciones = (subject: string, duracion = expiraEn): SignOptions => ({
     algorithm: ALGORITMO,
     subject,
-    expiresIn: expiraEn as NonNullable<SignOptions['expiresIn']>,
+    expiresIn: duracion as NonNullable<SignOptions['expiresIn']>,
   });
 
   // Contenido del token si la firma es válida y no venció; null en otro caso
@@ -54,6 +57,17 @@ export const crearServicioTokens = (secreto: string, expiraEn: string) => {
       const version = datos.ver ?? 0;
       if (typeof version !== 'number' || !Number.isInteger(version)) return null;
       return { usuarioId: datos.sub, version };
+    },
+
+    // Token del superadmin (tabla superadmins): ninguna otra guardia lo acepta. Dura 1 hora.
+    firmarSuperadmin: ({ superadminId, version }: { superadminId: string; version: number }): string =>
+      jwt.sign({ tipo: TIPO_SUPERADMIN, ver: version }, secreto, opciones(superadminId, DURACION_SUPERADMIN)),
+
+    verificarSuperadmin: (token: string): { superadminId: string; version: number } | null => {
+      const datos = leer(token);
+      if (!datos || datos.tipo !== TIPO_SUPERADMIN || typeof datos.sub !== 'string') return null;
+      if (typeof datos.ver !== 'number' || !Number.isInteger(datos.ver)) return null;
+      return { superadminId: datos.sub, version: datos.ver };
     },
   };
 };

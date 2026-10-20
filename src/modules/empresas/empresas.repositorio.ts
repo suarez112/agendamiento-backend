@@ -170,6 +170,8 @@ export type FilaSuscripcion = {
   dias_restantes: number | null;
   // Días de prueba que quedaban al pagar durante la prueba y se sumaron al plan
   dias_prueba_sumados: number | null;
+  // Un negocio suspendido por soporte no está habilitado, aunque su plan siga vigente
+  suspendida: boolean;
   habilitada: boolean;
   // Plan por tamaño de equipo (basico | equipo | pro) e integrantes activos
   plan_equipo: string;
@@ -190,10 +192,12 @@ export const buscarSuscripcion = async (db: Consultable, empresaId: string) =>
               to_char(fecha_pago, 'YYYY-MM-DD') AS fecha_pago,
               to_char(fin, 'YYYY-MM-DD') AS fecha_fin,
               fin - hoy AS dias_restantes, dias_prueba_sumados,
-              estado_suscripcion IN ('trial', 'activa') AND (fin IS NULL OR fin > hoy) AS habilitada,
+              suspendida,
+              NOT suspendida AND estado_suscripcion IN ('trial', 'activa') AND (fin IS NULL OR fin > hoy) AS habilitada,
               plan_equipo, equipo_activo, to_char(registro, 'YYYY-MM-DD') AS fecha_registro
        FROM (
          SELECT estado_suscripcion, trial_ends_at, plan_suscripcion, fecha_pago, dias_prueba_sumados, plan_equipo,
+                suspendida_en IS NOT NULL AS suspendida,
                 (SELECT count(*)::int FROM barberos b WHERE b.empresa_id = empresas.id AND b.activo) AS equipo_activo,
                 (created_at::timestamptz AT TIME ZONE 'America/Bogota')::date AS registro,
                 CASE estado_suscripcion

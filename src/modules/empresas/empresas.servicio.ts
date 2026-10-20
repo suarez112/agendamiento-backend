@@ -192,6 +192,8 @@ export const crearServicioEmpresas = ({ pool, fotos }: { pool: pg.Pool; fotos: A
         // prueba vencida; null si el plan no se activó durante una prueba o si está en prueba)
         diasPruebaSumados: estado === 'prueba' ? null : s.dias_prueba_sumados,
         mostrarRecordatorio,
+        // true si soporte suspendió el negocio: se ve como vencida, con su propio mensaje
+        suspendida: s.suspendida,
         mensaje: estado === 'vencida' ? mensajeBloqueo(s) : recordatorio(estado, s.plan, dias, mostrarRecordatorio),
         // Plan por tamaño de equipo y cuántos integrantes activos usan su cupo
         planEquipo: { id: plan.id, nombre: plan.nombre, cupo: plan.cupo },

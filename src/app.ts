@@ -36,6 +36,8 @@ import { crearRutasProductos } from './modules/productos/productos.rutas.js';
 import { crearServicioProductos } from './modules/productos/productos.servicio.js';
 import { crearRutasServicios } from './modules/servicios/servicios.rutas.js';
 import { crearServicioServicios } from './modules/servicios/servicios.servicio.js';
+import { crearRutasSuperadmin } from './modules/superadmin/superadmin.rutas.js';
+import { crearServicioSuperadmin } from './modules/superadmin/superadmin.servicio.js';
 import { crearRutasUbicaciones } from './modules/ubicaciones/ubicaciones.js';
 import { crearEnviadorCorreo, type EnviadorCorreo } from './shared/correo.js';
 import { crearCors } from './shared/http/cors.js';
@@ -114,6 +116,11 @@ export const crearApp = ({
   app.use('/api/v1/ubicaciones', crearRutasUbicaciones());
   app.use('/api/v1/planes', crearRutasPlanes());
   app.use('/api/v1/pqrs', crearRutasPqrs(crearServicioPqrs({ pool }), cuentas, guardiasCuenta, limitadores));
+  // Panel del dueño de la plataforma: sesión propia, con verificación en dos pasos
+  app.use(
+    '/api/v1/superadmin',
+    crearRutasSuperadmin(crearServicioSuperadmin({ pool, tokens, secreto: entorno.JWT_SECRET }), limitadores),
+  );
   app.use('/api/v1/legal', crearRutasLegal({ pool }));
   // Cuenta del cliente registrado: negocios guardados y sus citas
   app.use('/api/v1/mi-cuenta', crearRutasMiCuenta(crearServicioMiCuenta({ pool }), guardiasCuenta, limitadores, urlBase));

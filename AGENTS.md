@@ -26,10 +26,12 @@ src/
   modules/empresas/suscripcion.ts estado de la suscripción y guardia 402
   modules/legal/legal.ts          política y términos vigentes, prueba de las autorizaciones (Ley 1581)
   modules/pqrs/                   PQRS: peticiones, quejas, reclamos y sugerencias con radicado y estado
+  modules/superadmin/             panel del dueño de la plataforma: login con TOTP, negocios, PQRS y registro de actividad (totp.ts: segundo paso)
+  modules/empresas/activacion.ts  activar un plan a una empresa (lo usan dev:activar-plan y el panel)
   modules/cuentas/eliminacion.servicio.ts  eliminar la cuenta y los datos personales (Ley 1581)
   modules/micuenta/               cuenta del cliente: negocios guardados y sus citas
   modules/cuentas/recuperacion.servicio.ts  recuperar la contraseña con un código por correo
-  db/activarPlan.ts, db/simularVencimiento.ts, db/pqrs.ts   comandos de desarrollador (ver "Comandos de desarrollador")
+  db/activarPlan.ts, db/simularVencimiento.ts, db/pqrs.ts, db/crearSuperadmin.ts   comandos de desarrollador (ver "Comandos de desarrollador")
 db/migraciones/      numeradas NNN_nombre.sql (o .ts si SQL no alcanza); cada archivo en su propia transacción
 test/                node:test; cada archivo crea y borra su propia base temporal
 odd/tasks/           bitácoras de trabajo (specs, tareas, evidencia)
@@ -68,6 +70,13 @@ npm run dev:pqrs -- responder RADICADO estado ["respuesta"]  # ej. -- responder 
 
 - **`dev:pqrs`**: `listar` muestra las PQRS (las sin resolver primero, de la más antigua a la más reciente; con un estado, solo las de ese estado) con radicado, tipo, quién la envió, mensaje y respuesta. `responder` cambia el estado de la PQRS con ese radicado (sin distinguir mayúsculas) y, si se envía texto (máx. 2000), guarda la respuesta y la fecha; sin texto conserva la respuesta anterior. Un radicado que no existe responde `No existe una PQRS con el radicado …`. La app ve el cambio en `GET /pqrs/mias`.
 
+```bash
+npm run dev:crear-superadmin -- correo              # crea tu cuenta de superadmin
+npm run dev:crear-superadmin -- correo --reiniciar  # si perdiste la contraseña o el segundo paso
+```
+
+- **`dev:crear-superadmin`**: única forma de crear un superadmin (no hay registro ni endpoint). Genera una contraseña al azar (20 caracteres) y la clave de la verificación en dos pasos, y muestra las dos **una sola vez**: la clave como código QR (para escanear con Google Authenticator, Authy…) y también escrita (`F7DO BPG2 …`) por si no se puede escanear. Si el correo ya existe responde `✖ Ya existe un superadmin con el correo …`. Con `--reiniciar` cambia la contraseña y el segundo paso de uno que ya existe y cierra sus sesiones abiertas. Funciona también con `NODE_ENV=production` (es como se crea en producción). Lee la base y `JWT_SECRET` del `.env`.
+
 Puerto por defecto `4000` (`PORT`). Rutas bajo `/api/v1`.
 
 ## Base de datos y entorno
@@ -82,6 +91,7 @@ Puerto por defecto `4000` (`PORT`). Rutas bajo `/api/v1`.
 - Migración 013: `empresas.precision_ubicacion` (precisión del GPS en metros, opcional, solo con coordenadas); `usuarios.version_sesion` (sube al cambiar la contraseña e invalida los tokens anteriores); tabla `codigos_recuperacion` (códigos para recuperar la contraseña: HMAC del código, vencimiento, intentos y uso).
 - Migración 014: `empresas.plan_equipo` (`basico` | `equipo` | `pro`, por defecto `pro`): plan por tamaño de equipo. `plan_suscripcion` sigue siendo el periodo (`mensual` | `anual`). A las empresas existentes se les asignó el plan más pequeño que alcanza para su equipo activo (las de prueba, además, el número de empleados del registro si era mayor); no se borró a nadie. Al aplicarla, las tres quedaron en `basico`.
 - Migración 015: tabla `pqrs` (radicado único `PQRS-AAAA-NNNNNN` desde la secuencia `pqrs_numero_seq`, `tipo`, `mensaje`, `nombre`, `contacto`, `usuario_id` opcional con `ON DELETE SET NULL`, `estado`, `respuesta`, `respondida_en`).
+- Migración 016: panel del superadmin. `empresas.suspendida_en` y `empresas.suspension_motivo` (van juntas); tabla `superadmins` (aparte de `usuarios`: ningún login de la app llega a ellos; `totp_secreto` cifrado, `totp_ultimo_paso`, `version_sesion`, `intentos_fallidos`, `bloqueado_hasta`); tabla `actividad_superadmin` (solo se agregan filas: un disparador rechaza `UPDATE`, `DELETE` y `TRUNCATE`; sin llaves foráneas a propósito, copia el correo y los datos del negocio de ese momento).
 - **Publicar una versión nueva de la política o los términos**: una migración nueva que inserte una fila en `documentos_legales` con otra `version` (nunca edites las filas publicadas). La más reciente es la vigente; los clientes con cuenta la aceptan en su próxima reserva.
 
 ## Endpoints
@@ -115,6 +125,18 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | POST | `/api/v1/cuentas/eliminar` | cuenta (administradora o cliente), limitado. Elimina la cuenta y sus datos personales (ver "Eliminar la cuenta") |
 | POST | `/api/v1/pqrs` | público, limitado. Radica una petición, queja, reclamo o sugerencia, como invitado o con sesión (ver "PQRS") |
 | GET | `/api/v1/pqrs/mias` | cuenta (administradora o cliente). Las PQRS que radicó con su sesión |
+| POST | `/api/v1/superadmin/login` | público, limitado, **solo el superadmin**. `{ correo, clave, codigo }` con el código de 6 dígitos de la app autenticadora. Sesión de 1 hora (ver "Panel del superadministrador") |
+| GET | `/api/v1/superadmin/resumen` | superadmin. Cifras de toda la plataforma |
+| GET | `/api/v1/superadmin/negocios` | superadmin. Lista con búsqueda, filtros y paginación |
+| GET | `/api/v1/superadmin/negocios/:id` | superadmin. Detalle de un negocio (solo cifras) |
+| POST | `/api/v1/superadmin/negocios/:id/plan` | superadmin. Activa o cambia el plan |
+| POST | `/api/v1/superadmin/negocios/:id/extender-prueba` | superadmin. Alarga la prueba X días |
+| POST | `/api/v1/superadmin/negocios/:id/suspender` | superadmin. Suspende el negocio (con motivo) |
+| POST | `/api/v1/superadmin/negocios/:id/reactivar` | superadmin. Quita la suspensión (con motivo) |
+| GET | `/api/v1/superadmin/pqrs` | superadmin. Todas las PQRS, con filtros y paginación |
+| GET | `/api/v1/superadmin/pqrs/:radicado` | superadmin. Detalle de una PQRS |
+| PATCH | `/api/v1/superadmin/pqrs/:radicado` | superadmin. Cambia el estado y responde |
+| GET | `/api/v1/superadmin/actividad` | superadmin. Registro de actividad del superadmin |
 | GET | `/api/v1/admin/empresa/suscripcion` | personal admin (los dos tipos), **aunque esté vencida**. Estado, plan, fechas, días restantes y recordatorio |
 | GET | `/api/v1/admin/empresa/prueba` | personal admin, aunque esté vencida (se mantiene; usa `/suscripcion`) |
 | GET | `/api/v1/admin/empresa` | personal admin, aunque esté vencida ("Mi negocio") |
@@ -290,6 +312,7 @@ Ambos se envían como `Authorization: Bearer <token>`.
 - `fechaPago` y `plan` son `null` en la prueba. `fechaFin` (AAAA-MM-DD) es el día en que termina la prueba o el plan. Las empresas activas de antes de los planes tienen `plan`, `fechaPago`, `fechaFin` y `diasRestantes` en `null` y no vencen.
 - `diasRestantes` = `fechaFin` − hoy, con la **fecha actual de Colombia**: baja uno cada día a medianoche. El día de `fechaFin` ya es 0 y la suscripción queda **vencida**. Vencida = `0`.
 - `mostrarRecordatorio`: `true` siempre durante la prueba y en los últimos 7 días de un plan (`diasRestantes` ≤ 7). `mensaje` es el texto para mostrar (o el aviso de vencida); `null` si no hay nada que mostrar.
+- `suspendida`: `true` si soporte suspendió el negocio (ver "Panel del superadministrador"). Entonces `estado` es `"vencida"`, `diasRestantes` es `0` y `mensaje` es `Negocio suspendido; contacta a soporte`.
 - Los planes se activan con `npm run dev:activar-plan` (no hay pagos reales; ver "Comandos de desarrollador").
 
 **Planes** (`GET /api/v1/planes`, público): tres planes por tamaño de equipo, cada uno mensual o anual. Cupo y precios en `src/config/planes.ts` (los precios actuales son **de ejemplo**).
@@ -299,6 +322,7 @@ Ambos se envían como `Authorization: Bearer <token>`.
 - El plan se cambia con `npm run dev:activar-plan` (no hay pagos reales). Cambiar a un plan menor se rechaza si el equipo activo no cabe.
 
 **Cuando la suscripción está vencida**:
+- Un negocio **suspendido** por el superadmin se comporta igual que uno vencido (misma lista de abajo), con estas diferencias de texto: a la administradora le responde 402 `Negocio suspendido; contacta a soporte`; a los empleados, el aviso de negocio inactivo de siempre; a los clientes, `recibiendoReservas: false` y 403 al reservar. Reactivarlo lo deja como estaba (la suspensión no cambia el plan ni las fechas: el tiempo suspendido sigue corriendo).
 - La administradora (cuenta o integrante admin) **puede iniciar sesión** y usar Mi negocio (`GET`/`PATCH /admin/empresa`, `PUT /admin/empresa/foto`) y la consulta de suscripción. Todo lo demás responde **402** (equipo, servicios, productos, bloqueos, clientes, cartera, agenda, completar y cancelar citas).
 - Los **empleados** no pueden entrar: el login, la agenda, completar citas y la cartera responden **402** `Este negocio está inactivo por ahora. Comunícate con el administrador del negocio.` (`/empresas/actual` sigue respondiendo: es la misma información pública de `/empresas/validar/:codigo`).
 - Los **clientes no pueden reservar**: `POST /citas` responde **403** `Este negocio no está recibiendo reservas por ahora`. `/empresas/validar/:codigo` (`empresa.recibiendoReservas`), `/empresas/perfil/:codigo` y `/mi-cuenta/negocios` traen `recibiendoReservas: false` para avisar antes.
@@ -582,6 +606,37 @@ Para cuentas de la tabla `usuarios` con correo (administradoras y clientes). El 
 
 **GET `/api/v1/pqrs/mias`**: cuenta (administradora o cliente; **401** sin sesión). **200** las que radicó con su sesión, de la más reciente a la más antigua, con la misma forma de `pqrs` de arriba. Las de invitado no aparecen: se consultan con el radicado que recibió.
 
+### Panel del superadministrador (dueño de la plataforma)
+
+Rol aparte de `admin` y `cliente`: vive en la tabla `superadmins`, no en `usuarios`. **No se puede crear desde la app ni con el registro**: solo con `npm run dev:crear-superadmin` (ver "Comandos de desarrollador"). Ningún otro login (`/login`, `/cuentas/login`, `/auth/login`, recuperar contraseña) llega a esa cuenta.
+
+**POST `/api/v1/superadmin/login`**: recibe `{ "correo", "clave", "codigo" }` (`codigo` = 6 dígitos de la app autenticadora, TOTP RFC 6238: SHA-1, 30 s, se acepta un paso antes y uno después).
+
+- Responde **200** `{ "mensaje": "Autenticación exitosa", "token": "<jwt>", "expiraEnSegundos": 3600, "superadmin": { "id", "correo" } }`. El token es de otro tipo (`tipo: "superadmin"`): solo sirve en `/api/v1/superadmin/...` y los demás endpoints lo rechazan (y al revés). Dura **1 hora** fija (no usa `JWT_EXPIRA_EN`). Se envía como `Authorization: Bearer <token>`. Las respuestas del panel llevan `Cache-Control: no-store`.
+- Seguridad: cada código sirve **una sola vez** (se guarda el último paso usado); la clave del segundo paso se guarda **cifrada** (AES-256-GCM, llave derivada de `JWT_SECRET`: si cambias `JWT_SECRET`, reinicia el segundo paso con `--reiniciar`); la contraseña se compara siempre con bcrypt aunque el correo no exista; límite por IP (los intentos fallidos de `limitadores.login`) y bloqueo de la cuenta 15 minutos tras 5 fallos seguidos. `--reiniciar` sube `version_sesion` y cierra las sesiones abiertas.
+- Errores: **400** `Debes enviar tu correo, tu contraseña y el código de tu app autenticadora` o `El código de la app autenticadora debe tener 6 dígitos`; **401** `Correo, contraseña o código incorrectos` (igual si falla cualquiera de los tres) o `Ese código ya se usó. Espera el siguiente código de tu app autenticadora.`; **429** `Demasiados intentos fallidos. Espera 15 minutos para volver a intentar.` o el límite por IP.
+- Los demás endpoints responden **401** `Sesión no válida. Inicia sesión de nuevo.` (sin token) o `Sesión vencida o no válida. Inicia sesión de nuevo.`
+
+Las listas se paginan con `?pagina=1&limite=25` (máximo 100) y responden `{ "total", "pagina", "limite", "datos": [...] }`.
+
+**Estado de un negocio** (se calcula hoy, hora de Colombia, igual que `buscarSuscripcion`): `suspendido` (manda sobre los demás); `prueba` o `activo` mientras no pase su fecha de fin; `vencido` en otro caso (incluye los cancelados). Un negocio activo sin fecha de fin (anterior a los planes) no vence.
+
+**GET `/superadmin/resumen`**: **200** `{ "totalNegocios", "enPrueba", "activos", "vencidos", "suspendidos", "nuevosEsteMes", "porVencerEn7Dias", "citasHoy" }`. `enPrueba + activos + vencidos + suspendidos = totalNegocios`. `porVencerEn7Dias` = en prueba o activos con 7 días o menos. `citasHoy` = citas de hoy de todos los negocios, sin contar las canceladas.
+
+**GET `/superadmin/negocios?buscar=&estado=&pagina=&limite=`**: `buscar` busca en el nombre o el código (sin distinguir mayúsculas); `estado` = `prueba` | `activo` | `vencido` | `suspendido` | `por_vencer` (en prueba o activos con ≤ 7 días). Del más reciente al más antiguo. Cada negocio: `{ "id", "nombre", "codigoAcceso", "planEquipo": { "id", "nombre", "cupo" }, "plan": "mensual" | "anual" | null, "estado", "diasRestantes", "cupoUsado", "municipio", "departamento", "fechaRegistro" }` (`diasRestantes`: `null` si no tiene fecha de fin, nunca negativo). **400** `El estado debe ser uno de: …`.
+
+**GET `/superadmin/negocios/:id`**: lo de la lista más `categoria`, `direccion`, `administradora: { nombre, correo }`, `suscripcion: { estadoGuardado, fechaPago, fechaFin, finDePrueba, diasPruebaSumados }`, `suspension: { desde, motivo } | null`, `equipo: { activos, cupo, administradores, empleados }`, `cifras: { clientes, servicios, productos, citas: { total, confirmadas, completadas, canceladas, esteMes, ultima }, ventas: { total, esteMes } }` y `actividadReciente` (las últimas 10 acciones del superadmin sobre ese negocio). **Solo cifras**: nunca nombres, teléfonos ni otros datos de los clientes del negocio. **404** `Negocio no encontrado`.
+
+**Acciones sobre un negocio** (todas responden **200** `{ "mensaje", "negocio": { …forma de la lista… } }`, **404** `Negocio no encontrado`, y quedan en el registro de actividad; `motivo` opcional hasta 300 caracteres salvo donde se indica):
+
+- **POST `/negocios/:id/plan`** `{ "periodo": "mensual" | "anual", "planEquipo"?: "basico" | "equipo" | "pro", "motivo"? }`: misma regla que `dev:activar-plan` (`activarPlanEmpresa`): queda `activa` hoy; la fecha de fin cuenta desde el fin de la prueba, el fin del plan vigente u hoy; sin `planEquipo` conserva el actual. **409** si el equipo activo no cabe en el plan (`Tu equipo tiene …`) o `Este negocio está cancelado (su cuenta fue eliminada) y no se puede activar.`; **400** `El periodo debe ser "mensual" o "anual"`.
+- **POST `/negocios/:id/extender-prueba`** `{ "dias": 1-365, "motivo"? }`: alarga la prueba desde su fin (o desde hoy si ya había terminado). **409** `Este negocio no está en prueba gratuita. Para darle más tiempo, actívale un plan.`; **400** `Los días deben ser un número entero entre 1 y 365`.
+- **POST `/negocios/:id/suspender`** `{ "motivo" }` y **POST `/negocios/:id/reactivar`** `{ "motivo" }`: el **motivo es obligatorio** (**400** `El campo "motivo" es obligatorio`). **409** `Este negocio ya está suspendido.` / `Este negocio no está suspendido.` Suspender no toca el plan ni las fechas; ver "Cuando la suscripción está vencida".
+
+**PQRS**: **GET `/superadmin/pqrs?estado=&tipo=&pagina=&limite=`** (las sin resolver primero, de la más antigua a la más reciente) y **GET `/superadmin/pqrs/:radicado`** (sin distinguir mayúsculas; **404** `No existe una PQRS con ese radicado`). Forma: `{ "radicado", "tipo", "estado", "mensaje", "nombre", "contacto", "conCuenta", "respuesta", "respondidaEn", "creadaEn", "actualizadaEn" }`. **PATCH `/superadmin/pqrs/:radicado`** `{ "estado", "respuesta"? }` (respuesta hasta 2000; sin texto conserva la anterior): **200** `{ "mensaje": "PQRS actualizada", "pqrs": {…} }`. Es lo mismo que `dev:pqrs responder`.
+
+**Registro de actividad**: **GET `/superadmin/actividad?accion=&empresaId=&desde=&hasta=&pagina=&limite=`** (`desde` y `hasta` AAAA-MM-DD, hora de Colombia), de la más reciente a la más antigua: `{ "id", "superadmin": "correo", "accion", "negocio": { "id", "codigoAcceso", "nombre" } | null, "referencia", "detalle", "motivo", "fecha" }`. Acciones: `inicio_sesion` (con la IP en `detalle`), `activar_plan`, `extender_prueba`, `suspender`, `reactivar` y `responder_pqrs` (`referencia` = radicado). Las consultas no se registran. No hay endpoint para editarlo ni borrarlo, y la base rechaza `UPDATE`, `DELETE` y `TRUNCATE` (migración 016). El nombre y el código del negocio quedan copiados tal como estaban en ese momento.
+
 ### Eliminar la cuenta (Ley 1581 de 2012)
 
 **POST `/api/v1/cuentas/eliminar`**: una administradora o un cliente con cuenta elimina su cuenta y sus datos personales. Requiere su sesión (`Authorization: Bearer <token>`) y confirmar con la contraseña. Los intentos con contraseña errónea cuentan en el límite de login.
@@ -628,6 +683,7 @@ Forma de un negocio guardado: `{ "id", "nombre", "codigoAcceso", "categoria", "d
 - Usuario de la administradora (`usuarios.usuario`, migración 007): obligatorio para `rol = admin`, `null` en clientes, único sin distinguir mayúsculas. El trigger `verificar_usuario_login_unico` (corregido en la 008) impide que coincida con un barbero activo y al revés. A las administradoras que ya existían se les creó a partir de su correo (lo que va antes de la @; si se repetía, con un número al final).
 - Cuentas: login con `correo` + `clave` contra `usuarios` (bcrypt, costo 12). El token lleva `sub` (id del usuario), `tipo: "cuenta"` y `ver` (la `version_sesion` de la cuenta al firmarlo; los tokens de antes de la migración 013 cuentan como 0). Las guardias responden 401 a un token cuya versión ya no coincide: así, cambiar la contraseña cierra todas las sesiones abiertas. `requerirCuenta` **lee `rol` y `empresa_id` de la base en cada solicitud**; `requerirAdminEmpresa` exige `rol = admin` con empresa (`src/modules/cuentas/cuentas.guardias.ts`).
 - Los tokens son JWT HS256 y duran `JWT_EXPIRA_EN`.
+- Superadmin (`src/modules/superadmin/`): tabla `superadmins`, token propio (`tipo: "superadmin"`, 1 hora, con `ver` = `version_sesion`) que las demás guardias rechazan. La guardia lee la cuenta de la base en cada solicitud. Detalle en "Panel del superadministrador".
 - Cuentas de cliente: `rol = cliente`, sin empresa, con `nombre`, `telefono`, `indicativo` y correo o usuario (los dos opcionales, al menos uno). `cuentas.clienteDeToken` reconoce su token en `POST /citas`; `requerirCuenta` + `requerirCliente` protegen `/mi-cuenta`.
 - Suscripción (`src/modules/empresas/suscripcion.ts`, `buscarSuscripcion` en `empresas.repositorio.ts`): el estado se **calcula** en cada consulta con la fecha de Colombia, sin tareas programadas. Fin = día de `trial_ends_at` (prueba) o `suscripcion_fin` (plan); habilitada si el estado guardado es `trial` o `activa` y el fin es posterior a hoy (o `activa` sin fin, empresas de antes de los planes, que quedaron `activa`). `requerirSuscripcionVigente` va después de la guardia de sesión en los endpoints de gestión, agenda y citas, y responde 402 (mensaje de negocio inactivo a los empleados). Mi negocio y `/suscripcion` no la llevan.
 

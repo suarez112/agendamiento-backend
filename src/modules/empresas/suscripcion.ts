@@ -20,6 +20,9 @@ export const SIN_RESERVAS = 'Este negocio no está recibiendo reservas por ahora
 export const planInsuficiente = (plan: Plan, activos: number) =>
   `Tu equipo tiene ${activos} integrante(s) activo(s) y el plan ${plan.nombre} permite hasta ${plan.cupo}. Elimina primero del equipo a quien ya no trabaje en el negocio, o elige un plan más grande.`;
 
+// Aviso cuando el superadmin suspendió el negocio (se comporta como vencido)
+export const NEGOCIO_SUSPENDIDO = 'Negocio suspendido; contacta a soporte';
+
 // Mensaje para el administrador según el estado guardado cuando ya no permite entrar.
 // Un plan 'activa' cuya fecha de fin ya pasó es una suscripción vencida.
 const MENSAJE_BLOQUEO: Record<string, string> = {
@@ -29,7 +32,7 @@ const MENSAJE_BLOQUEO: Record<string, string> = {
 };
 
 export const mensajeBloqueo = (s: FilaSuscripcion) =>
-  MENSAJE_BLOQUEO[s.estado_suscripcion] ?? MENSAJE_BLOQUEO.vencida;
+  s.suspendida ? NEGOCIO_SUSPENDIDO : MENSAJE_BLOQUEO[s.estado_suscripcion] ?? MENSAJE_BLOQUEO.vencida;
 
 // Estado que ve la app: prueba, activa o vencida
 export const estadoEfectivo = (s: FilaSuscripcion): 'prueba' | 'activa' | 'vencida' => {
