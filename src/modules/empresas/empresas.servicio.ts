@@ -6,7 +6,8 @@ import * as repositorio from './empresas.repositorio.js';
 import { armarHorario, guardarHorario, listarHorarios } from './horario.js';
 import { type AlmacenFotos, urlFoto } from './fotos.js';
 import type { FilaEmpresa, FilaPerfilEmpresa } from './empresas.repositorio.js';
-import { DIAS_RECORDATORIO, estadoEfectivo, mensajeBloqueo } from './suscripcion.js';
+import { buscarPlan, PLANES, planParaPersonas } from '../../config/planes.js';
+import { DIAS_RECORDATORIO, estadoEfectivo, mensajeBloqueo, planInsuficiente } from './suscripcion.js';
 
 // Mismo formato que la restricción empresas_codigo_acceso_valido (migración 007)
 const CODIGO_VALIDO = /^[A-Z0-9]{1,10}$/;
@@ -19,9 +20,6 @@ type Visibilidad = {
   // Los clientes solo ven a quienes atienden clientes (los que se pueden reservar).
   esPublica: boolean;
 };
-
-const empleadosInsuficientes = (activos: number) =>
-  `Tienes ${activos} integrante(s) activo(s) en el equipo. El número de empleados no puede ser menor; elimina primero del equipo a quien ya no trabaje en el negocio.`;
 
 export const crearServicioEmpresas = ({ pool, fotos }: { pool: pg.Pool; fotos: AlmacenFotos }) => {
   const armarNegocio = async (empresa: FilaEmpresa, { esPublica }: Visibilidad, urlBase: string) => {
@@ -116,14 +114,18 @@ export const crearServicioEmpresas = ({ pool, fotos }: { pool: pg.Pool; fotos: A
     },
 
     // Datos y horario se guardan juntos: si algo falla, no cambia nada.
-    // El número de empleados no puede quedar por debajo del equipo activo. El UPDATE
-    // bloquea la fila de la empresa, así que un integrante nuevo creado a la vez espera.
+    // Durante la prueba, el número de empleados decide el plan (1-3 Básico, 4-5 Equipo,
+    // 6-10 Pro); un plan cuyo cupo no alcanza para el equipo activo se rechaza. Fuera de
+    // la prueba es solo informativo: el plan lo cambia el pago. El UPDATE bloquea la
+    // fila de la empresa, así que un integrante nuevo creado a la vez espera.
     async actualizarPerfil(empresaId: string, { horario, ...cambios }: CambiosEmpresa, urlBase: string) {
       const perfil = await enTransaccion(pool, async (tx) => {
         const actualizado = await repositorio.actualizarPerfilEmpresa(tx, empresaId, cambios);
-        if (actualizado && cambios.numeroEmpleados !== undefined) {
+        if (actualizado && cambios.numeroEmpleados !== undefined && actualizado.estado_suscripcion === 'trial') {
+          const plan = planParaPersonas(cambios.numeroEmpleados);
           const activos = await repositorio.contarEquipoActivo(tx, empresaId);
-          if (activos > cambios.numeroEmpleados) throw errores.conflicto(empleadosInsuficientes(activos));
+          if (activos > plan.cupo) throw errores.conflicto(planInsuficiente(plan, activos));
+          await repositorio.cambiarPlanEquipo(tx, empresaId, plan.id);
         }
         if (actualizado && horario) await guardarHorario(tx, empresaId, horario);
         return actualizado;
@@ -176,6 +178,7 @@ export const crearServicioEmpresas = ({ pool, fotos }: { pool: pg.Pool; fotos: A
       const s = await repositorio.buscarSuscripcion(pool, empresaId);
       if (!s) throw errores.noEncontrado('Establecimiento no encontrado');
       const estado = estadoEfectivo(s);
+      const plan = buscarPlan(s.plan_equipo) ?? PLANES[PLANES.length - 1];
       const dias = estado === 'vencida' ? 0 : s.dias_restantes;
       const mostrarRecordatorio =
         estado === 'prueba' || (estado === 'activa' && dias !== null && dias <= DIAS_RECORDATORIO);
@@ -190,6 +193,12 @@ export const crearServicioEmpresas = ({ pool, fotos }: { pool: pg.Pool; fotos: A
         diasPruebaSumados: estado === 'prueba' ? null : s.dias_prueba_sumados,
         mostrarRecordatorio,
         mensaje: estado === 'vencida' ? mensajeBloqueo(s) : recordatorio(estado, s.plan, dias, mostrarRecordatorio),
+        // Plan por tamaño de equipo y cuántos integrantes activos usan su cupo
+        planEquipo: { id: plan.id, nombre: plan.nombre, cupo: plan.cupo },
+        cupoUsado: s.equipo_activo,
+        cupoDisponible: Math.max(0, plan.cupo - s.equipo_activo),
+        // Día del registro (hora de Colombia): la cartera no acepta rangos que empiecen antes
+        fechaRegistro: s.fecha_registro,
       };
     },
   };

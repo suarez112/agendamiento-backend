@@ -1,3 +1,4 @@
+import { planParaPersonas } from '../../config/planes.js';
 import type { Consultable } from '../../db/pool.js';
 import type { PerfilEmpresa } from '../empresas/empresas.esquemas.js';
 
@@ -37,9 +38,9 @@ export const insertarEmpresaEnPrueba = async (
   (
     await db.query<FilaEmpresaRegistrada>(
       `INSERT INTO empresas (id, nombre, codigo_acceso, categoria, direccion, departamento, ciudad,
-         nombre_administradora, numero_empleados, logo_url, estado_suscripcion, trial_ends_at)
+         nombre_administradora, numero_empleados, logo_url, estado_suscripcion, trial_ends_at, plan_equipo)
        VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9,
-         'trial', now() + make_interval(days => $10))
+         'trial', now() + make_interval(days => $10), $11)
        ON CONFLICT (codigo_acceso) DO NOTHING
        RETURNING id, nombre, codigo_acceso, estado_suscripcion, trial_ends_at`,
       [
@@ -53,6 +54,8 @@ export const insertarEmpresaEnPrueba = async (
         perfil.numeroEmpleados,
         perfil.logoUrl ?? null,
         diasPrueba,
+        // Durante la prueba, el plan sale del número de empleados del registro
+        planParaPersonas(perfil.numeroEmpleados).id,
       ],
     )
   ).rows[0];

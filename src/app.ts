@@ -28,6 +28,7 @@ import { crearRutasEquipo } from './modules/equipo/equipo.rutas.js';
 import { crearServicioEquipo } from './modules/equipo/equipo.servicio.js';
 import { crearRutasLegal } from './modules/legal/legal.js';
 import { crearRutasMiCuenta, crearServicioMiCuenta } from './modules/micuenta/micuenta.rutas.js';
+import { crearRutasPlanes } from './modules/planes/planes.js';
 import { crearRutasProductos } from './modules/productos/productos.rutas.js';
 import { crearServicioProductos } from './modules/productos/productos.servicio.js';
 import { crearRutasServicios } from './modules/servicios/servicios.rutas.js';
@@ -108,6 +109,7 @@ export const crearApp = ({
   app.use('/api/v1/auth', crearRutasAuth(auth, limitadores));
   app.use('/api/v1/cuentas', crearRutasCuentas(cuentas, recuperacion, limitadores));
   app.use('/api/v1/ubicaciones', crearRutasUbicaciones());
+  app.use('/api/v1/planes', crearRutasPlanes());
   app.use('/api/v1/legal', crearRutasLegal({ pool }));
   // Cuenta del cliente registrado: negocios guardados y sus citas
   app.use('/api/v1/mi-cuenta', crearRutasMiCuenta(crearServicioMiCuenta({ pool }), guardiasCuenta, limitadores, urlBase));

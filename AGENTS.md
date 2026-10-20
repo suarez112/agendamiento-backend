@@ -13,6 +13,7 @@ src/
   server.ts          arranque y apagado ordenado
   app.ts             crea servicios y conecta rutas (recibe pool y entorno)
   config/entorno.ts  variables de entorno validadas con zod
+  config/planes.ts   planes por tamaño de equipo (Básico, Equipo, Pro): cupo y precios (los reales los pone el dueño)
   db/                pool, migraciones (migrar.ts) y scripts de mantenimiento
   shared/            errores, logs JSON, middlewares HTTP (CORS, límites, validación, errores)
   shared/telefonos.ts  validación y formato E.164 de los teléfonos (libphonenumber-js)
@@ -20,6 +21,7 @@ src/
   modules/<modulo>/  auth, cuentas, empresas, citas, clientes, equipo, servicios, productos, bloqueos, cartera: <m>.rutas.ts (HTTP + zod) → <m>.servicio.ts (reglas) → <m>.repositorio.ts (SQL)
   modules/auth/acceso.ts          login único (correo o usuario)
   modules/empresas/horario.ts     horario por día (tabla horarios_empresa)
+  modules/planes/planes.ts        GET /api/v1/planes (planes y precios, público)
   modules/ubicaciones/            departamentos y municipios de Colombia (DIVIPOLA del DANE, divipola.ts generado)
   modules/empresas/suscripcion.ts estado de la suscripción y guardia 402
   modules/legal/legal.ts          política y términos vigentes, prueba de las autorizaciones (Ley 1581)
@@ -48,11 +50,11 @@ npm test             # integración; requiere PostgreSQL y permiso CREATEDB
 No hay pagos reales. Para probar las suscripciones se usan dos comandos. `CODIGO` es el código del negocio (sin distinguir mayúsculas). Lee la base del `.env`; no hace falta tener el servidor encendido.
 
 ```bash
-npm run dev:activar-plan -- CODIGO mensual     # o: anual
+npm run dev:activar-plan -- CODIGO equipo anual # plan: basico | equipo | pro (opcional); periodo: mensual | anual
 npm run dev:simular-vencimiento -- CODIGO DIAS # ej. 3, 0 o -2
 ```
 
-- **`dev:activar-plan`**: deja la empresa `activa` con ese plan, de inmediato (ya no aparece como prueba). Fecha de pago = hoy (Colombia). Fecha de fin = 1 mes o 1 año contados desde: el **fin de la prueba**, si paga durante la prueba (no pierde los días gratis que le quedaban; se guardan en `dias_prueba_sumados` y `/suscripcion` los muestra en `diasPruebaSumados`); el fin del plan actual, si aún no vencía (una renovación anticipada no pierde días); o hoy, en otro caso. Sirve también para activar a mano un negocio en producción mientras no haya pagos. Ejemplo: `npm run dev:activar-plan -- CENTRAL10 anual` → `✔ Barbería Central (CENTRAL10): plan anual activo. Pago: 2026-10-19. Fin: 2027-10-19. Días restantes: 365.` Durante una prueba con 15 días restantes, `-- CENTRAL10 mensual` → `… Fin: 2026-12-03. Días restantes: 45. Días de prueba sumados: 15.`
+- **`dev:activar-plan`**: recibe el plan por tamaño de equipo (`basico`, `equipo` o `pro`; si no se envía, conserva el que tiene) y el periodo (`mensual` o `anual`). Si el equipo activo no cabe en el plan elegido, lo rechaza y no cambia nada (`✖ Tu equipo tiene 4 integrante(s) activo(s) y el plan Básico permite hasta 3. …`). Deja la empresa `activa` con ese plan, de inmediato (ya no aparece como prueba). Fecha de pago = hoy (Colombia). Fecha de fin = 1 mes o 1 año contados desde: el **fin de la prueba**, si paga durante la prueba (no pierde los días gratis que le quedaban; se guardan en `dias_prueba_sumados` y `/suscripcion` los muestra en `diasPruebaSumados`); el fin del plan actual, si aún no vencía (una renovación anticipada no pierde días); o hoy, en otro caso. Sirve también para activar a mano un negocio en producción mientras no haya pagos. Ejemplo: `npm run dev:activar-plan -- CENTRAL10 equipo anual` → `✔ Barbería Central (CENTRAL10): plan Equipo anual activo (cupo 2/5). Pago: 2026-10-19. Fin: 2027-10-19. Días restantes: 365.` Durante una prueba con 15 días restantes, `-- CENTRAL10 basico mensual` → `… Fin: 2026-12-03. Días restantes: 45. Días de prueba sumados: 15.`
 - **`dev:simular-vencimiento`**: deja a la empresa con `DIAS` días restantes de su prueba (si está en prueba) o de su plan (si está activa), cambiando la fecha de fin. `0` o negativo = vencida. Para un negocio vencido, actívale antes un plan. **No funciona con `NODE_ENV=production`** (responde con error y no cambia nada). Ejemplos: `-- CENTRAL10 5` (recordatorio de los últimos 7 días), `-- CENTRAL10 0` (vencida hoy).
 
 Los dos muestran cómo quedó: estado, fecha de fin y días restantes.
@@ -69,6 +71,7 @@ Puerto por defecto `4000` (`PORT`). Rutas bajo `/api/v1`.
 - Migración 011 (`.ts`): **teléfonos en E.164** (`+573162781393`) en `varchar(16)` en `clientes`, `lista_negra`, `usuarios` y `autorizaciones_datos`. `clientes` pasa a ser único por `(empresa_id, telefono)`; índice único `usuarios_telefono_cliente_key` en `usuarios (telefono) WHERE rol = 'cliente'`. `lista_negra` sigue única por negocio. Los teléfonos que no se pudieron convertir **no se borraron**: quedaron solo con sus dígitos (no empiezan con `+`). Para verlos: `SELECT id, empresa_id, nombre, telefono FROM clientes WHERE telefono !~ '^\+'` (igual en las otras tablas). Al aplicarla quedaron 2 pendientes en `clientes`: `3768300614` (Popo) y `357491541` (DESQ), ambos del negocio INFINITY.
 - Migración 012: `empresas.latitud` y `empresas.longitud` (opcionales, siempre juntas, rangos validados) y `empresas.dias_prueba_sumados` (días de prueba que quedaban al pagar durante la prueba).
 - Migración 013: `empresas.precision_ubicacion` (precisión del GPS en metros, opcional, solo con coordenadas); `usuarios.version_sesion` (sube al cambiar la contraseña e invalida los tokens anteriores); tabla `codigos_recuperacion` (códigos para recuperar la contraseña: HMAC del código, vencimiento, intentos y uso).
+- Migración 014: `empresas.plan_equipo` (`basico` | `equipo` | `pro`, por defecto `pro`): plan por tamaño de equipo. `plan_suscripcion` sigue siendo el periodo (`mensual` | `anual`). A las empresas existentes se les asignó el plan más pequeño que alcanza para su equipo activo (las de prueba, además, el número de empleados del registro si era mayor); no se borró a nadie. Al aplicarla, las tres quedaron en `basico`.
 - **Publicar una versión nueva de la política o los términos**: una migración nueva que inserte una fila en `documentos_legales` con otra `version` (nunca edites las filas publicadas). La más reciente es la vigente; los clientes con cuenta la aceptan en su próxima reserva.
 
 ## Endpoints
@@ -81,6 +84,7 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | POST | `/api/v1/login` | público, limitado. **Login único**: administradora, personal o cliente con cuenta. Cuerpo `{ usuario: "correo o usuario", clave }` |
 | POST | `/api/v1/auth/login` | público, limitado. Personal (barberos). Cuerpo `{ usuario, clave }` (se mantiene) |
 | GET | `/api/v1/ubicaciones` | público. Departamentos de Colombia con sus municipios |
+| GET | `/api/v1/planes` | público. Planes por tamaño de equipo con sus precios (ver "Planes") |
 | GET | `/api/v1/legal/politica-datos` | público. Texto vigente de la Política de Tratamiento de Datos, con su versión |
 | GET | `/api/v1/legal/terminos` | público. Texto vigente de los Términos y Condiciones, con su versión |
 | GET | `/api/v1/empresas/codigo-disponible/:codigo` | público, limitado. ¿Algún negocio usa ya ese código? |
@@ -132,7 +136,7 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | POST | `/api/v1/bloqueos` | personal admin, suscripción vigente |
 | DELETE | `/api/v1/bloqueos/:id` | personal admin, suscripción vigente |
 | GET | `/api/v1/cartera?desde=&hasta=&barberoId=` | personal (admin: todo el negocio o un integrante; empleado: lo suyo), suscripción vigente |
-| GET | `/api/v1/cartera/resumen?periodo=&desde=&hasta=&barberoId=` | personal (igual que `/cartera`), suscripción vigente. Resumen por período: `hoy`, `semana`, `mes` o `rango` |
+| GET | `/api/v1/cartera/resumen?periodo=&desde=&hasta=&barberoId=` | personal (igual que `/cartera`), suscripción vigente. Resumen por período: `hoy`, `semana`, `mes` o `rango` (el rango va del registro del negocio a hoy) |
 | GET | `/uploads/empresas/<archivo>`, `/uploads/barberos/<archivo>`, `/uploads/productos/<archivo>` | público. La imagen guardada (se usa la dirección que devuelve la API) |
 
 "Sesión del personal" acepta **dos tokens**: el del barbero (`/api/v1/auth/login`) y el de la **cuenta del administrador de la empresa** (`/api/v1/cuentas/login`, `rol = admin`). La cuenta admin cuenta como administrador del negocio (`esAdmin`), siempre de su propia empresa. "Personal admin" = integrante del equipo con rol Administrador (`esAdmin`) o cuenta admin: **los dos tienen los mismos permisos** sobre su empresa (Mi negocio, suscripción, equipo, servicios, productos, bloqueos, clientes y la cartera completa). Un **empleado** (integrante con rol Empleado) solo usa su agenda y su propia cartera. Detalle en "Gestión del negocio".
@@ -177,7 +181,7 @@ Ambos se envían como `Authorization: Bearer <token>`.
       { "dia": 6, "abierto": true, "apertura": "09:00", "cierre": "14:00" }
     ],
     "nombreAdministradora": "Ana Pérez",   // obligatorio, máx. 120
-    "numeroEmpleados": 4,                  // obligatorio, entero de 1 a 10
+    "numeroEmpleados": 4,                  // obligatorio, entero de 1 a 10; decide el plan de la prueba (1-3 Básico, 4-5 Equipo, 6-10 Pro)
     "logoUrl": "https://cdn.central.co/logo.png", // opcional (o null); http:// o https://
     "correo": "ana@central.co",            // obligatorio: correo de inicio de sesión; único entre todas las cuentas
     "usuario": "ana.perez",                // obligatorio: 4 a 20, solo letras, números, punto y guion bajo; único (ver abajo)
@@ -260,8 +264,13 @@ Ambos se envían como `Authorization: Bearer <token>`.
   ```json
   { "estado": "activa", "plan": "mensual", "fechaPago": "2026-10-19", "fechaFin": "2026-11-19",
     "diasRestantes": 5, "diasPruebaSumados": null, "mostrarRecordatorio": true,
-    "mensaje": "Te quedan 5 días de tu plan mensual. Renuévalo para no perder el acceso." }
+    "mensaje": "Te quedan 5 días de tu plan mensual. Renuévalo para no perder el acceso.",
+    "planEquipo": { "id": "equipo", "nombre": "Equipo", "cupo": 5 }, "cupoUsado": 3, "cupoDisponible": 2,
+    "fechaRegistro": "2026-10-05" }
   ```
+
+- `plan` es el **periodo** (`"mensual"` o `"anual"`); `planEquipo` es el **plan por tamaño de equipo** (ver "Planes"), también durante la prueba. `cupoUsado` = integrantes activos en Equipo; `cupoDisponible` = cuántos más se pueden agregar.
+- `fechaRegistro` (AAAA-MM-DD, hora de Colombia): día en que se registró el negocio. Es la fecha más antigua que acepta el resumen de la cartera con `rango`. `null` en empresas sin fecha de creación.
 
 - `estado`: `"prueba"` (15 días gratis desde el registro), `"activa"` (plan `"mensual"` o `"anual"`) o `"vencida"`.
 - Si la empresa activó el plan **durante la prueba**, pasa de inmediato a `"activa"` y el plan empieza a contar desde el fin de la prueba. `diasPruebaSumados` = días de prueba que le quedaban y se sumaron al plan (`0` si pagó con la prueba ya vencida). `null` en la prueba o si el plan no se activó durante una prueba. Se conserva al renovar.
@@ -269,6 +278,12 @@ Ambos se envían como `Authorization: Bearer <token>`.
 - `diasRestantes` = `fechaFin` − hoy, con la **fecha actual de Colombia**: baja uno cada día a medianoche. El día de `fechaFin` ya es 0 y la suscripción queda **vencida**. Vencida = `0`.
 - `mostrarRecordatorio`: `true` siempre durante la prueba y en los últimos 7 días de un plan (`diasRestantes` ≤ 7). `mensaje` es el texto para mostrar (o el aviso de vencida); `null` si no hay nada que mostrar.
 - Los planes se activan con `npm run dev:activar-plan` (no hay pagos reales; ver "Comandos de desarrollador").
+
+**Planes** (`GET /api/v1/planes`, público): tres planes por tamaño de equipo, cada uno mensual o anual. Cupo y precios en `src/config/planes.ts` (los precios actuales son **de ejemplo**).
+
+- Responde **200** `[{ "id": "basico", "nombre": "Básico", "cupo": 3, "precioMensual": 30000, "precioAnual": 300000, "moneda": "COP" }, { "id": "equipo", "nombre": "Equipo", "cupo": 5, … }, { "id": "pro", "nombre": "Pro", "cupo": 10, … }]`.
+- El cupo es el máximo de integrantes activos en Equipo (ver "Equipo"). Al registrarse, el plan de la prueba sale de `numeroEmpleados`: 1-3 Básico, 4-5 Equipo, 6-10 Pro.
+- El plan se cambia con `npm run dev:activar-plan` (no hay pagos reales). Cambiar a un plan menor se rechaza si el equipo activo no cabe.
 
 **Cuando la suscripción está vencida**:
 - La administradora (cuenta o integrante admin) **puede iniciar sesión** y usar Mi negocio (`GET`/`PATCH /admin/empresa`, `PUT /admin/empresa/foto`) y la consulta de suscripción. Todo lo demás responde **402** (equipo, servicios, productos, bloqueos, clientes, cartera, agenda, completar y cancelar citas).
@@ -294,8 +309,8 @@ Ambos se envían como `Authorization: Bearer <token>`.
 - Recibe uno o más de: `nombre`, `categoria`, `codigoAcceso`, `direccion`, `departamento` + `ciudad` (siempre juntos), `horario` (los 7 días, reemplaza el horario completo), `nombreAdministradora`, `numeroEmpleados`, `logoUrl`, `latitud` + `longitud` (siempre juntas; números, `null` en las dos las quita; si traen más de 6 decimales se redondean a 6), `precisionUbicacion` (opcional, metros: mayor que 0 y hasta 100000, redondeada a un decimal; solo junto con `latitud` y `longitud`; si se envían coordenadas nuevas sin ella queda en `null`, y al quitar las coordenadas también se quita). Mismas validaciones del registro. Se ignoran `id`, `empresaId`, `estadoSuscripcion`, `trialEndsAt`, `correo`, `usuario`, `clave` y cualquier otro campo (el acceso de la administradora no se cambia aquí).
 - Cambiar `codigoAcceso` cambia el código que usan los clientes: el anterior deja de funcionar de inmediato.
 - Responde **200** con el perfil actualizado (misma forma que el GET). Los datos y el horario se guardan juntos: si algo falla, no cambia nada.
-- `numeroEmpleados` es el máximo de integrantes activos del equipo; no puede quedar por debajo del equipo activo actual.
-- Errores: **400** `Envía al menos un dato para actualizar`, `Envía el departamento y la ciudad juntos`, `Envía la latitud y la longitud juntas (o las dos en null para quitarlas)`, `Envía la precisión de la ubicación junto con la latitud y la longitud`, `La precisión de la ubicación debe ser un número de metros mayor que 0 y hasta 100000`, `La latitud debe ser un número entre -90 y 90`, `La longitud debe ser un número entre -180 y 180` y los de validación del registro; **409** `Ese código ya lo usa otro negocio. Elige otro.` o `Tienes N integrante(s) activo(s) en el equipo. El número de empleados no puede ser menor; elimina primero del equipo a quien ya no trabaje en el negocio.`
+- `numeroEmpleados` ya **no limita** el equipo (el límite es el cupo del plan). **Durante la prueba** cambia el plan: 1-3 Básico, 4-5 Equipo, 6-10 Pro; si el equipo activo no cabe en ese plan, responde 409. Fuera de la prueba es solo informativo.
+- Errores: **400** `Envía al menos un dato para actualizar`, `Envía el departamento y la ciudad juntos`, `Envía la latitud y la longitud juntas (o las dos en null para quitarlas)`, `Envía la precisión de la ubicación junto con la latitud y la longitud`, `La precisión de la ubicación debe ser un número de metros mayor que 0 y hasta 100000`, `La latitud debe ser un número entre -90 y 90`, `La longitud debe ser un número entre -180 y 180` y los de validación del registro; **409** `Ese código ya lo usa otro negocio. Elige otro.` o (en la prueba) `Tu equipo tiene 4 integrante(s) activo(s) y el plan Básico permite hasta 3. Elimina primero del equipo a quien ya no trabaje en el negocio, o elige un plan más grande.`
 
 **PUT `/api/v1/admin/empresa/foto`**: sube la foto del negocio o reemplaza la que tenía (la anterior se borra del servidor).
 
@@ -379,7 +394,7 @@ Forma de un profesional: `{ "id", "nombre", "usuario", "rol": "admin" | "emplead
 
 - **Rol**: `"admin"` (Administrador: los mismos permisos que la cuenta admin) o `"empleado"` (Empleado: solo su agenda y su cartera). `esAdmin` se mantiene igual a `rol === "admin"`.
 - **Atiende clientes** (`atiendeClientes`): si recibe reservas como profesional. Quien no atiende no aparece en la vista pública del negocio (`/empresas/validar/:codigo`) y no se puede reservar con él (`POST /citas` responde 404 `Servicio o profesional no encontrado`). En `/empresas/actual` aparecen todos, con `atiendeClientes`.
-- **Límite**: no puede haber más integrantes activos que el `numeroEmpleados` de la empresa (máximo 10; las empresas sin ese dato tienen 10). Los eliminados no cuentan. Si un negocio ya tenía más, conserva su equipo pero no puede agregar a nadie hasta quedar por debajo.
+- **Límite (cupo del plan)**: no puede haber más integrantes activos que el cupo del plan de la empresa (Básico 3, Equipo 5, Pro 10; ver "Planes"). Cuentan los integrantes activos de Equipo: la cuenta de correo de la administradora no cuenta, salvo que también esté agregada como integrante. Los eliminados no cuentan. Si un negocio ya tenía más, conserva su equipo pero no puede agregar a nadie hasta quedar por debajo.
 
 **GET `/api/v1/equipo`**: **200** lista del equipo activo.
 
@@ -398,7 +413,7 @@ Forma de un profesional: `{ "id", "nombre", "usuario", "rol": "admin" | "emplead
 }
 ```
 
-**201** con el profesional. Errores: **400** validación (ej. `La contraseña debe tener entre 8 y 64 caracteres`, `El rol debe ser "admin" (Administrador) o "empleado" (Empleado)`); **409** `Ese usuario ya está en uso. Elige otro.` (también si es el usuario de una administradora o de un cliente) o, con el equipo lleno, `Tu equipo ya tiene 2 integrante(s) activo(s) y registraste 2 empleado(s). Para agregar a alguien más, aumenta el número de empleados en Mi negocio (máximo 10).` (con 10: `Tu equipo ya tiene 10 integrantes activos, el máximo permitido (10).`)
+**201** con el profesional. Errores: **400** validación (ej. `La contraseña debe tener entre 8 y 64 caracteres`, `El rol debe ser "admin" (Administrador) o "empleado" (Empleado)`); **409** `Ese usuario ya está en uso. Elige otro.` (también si es el usuario de una administradora o de un cliente) o, con el cupo lleno, `Tu equipo ya tiene 3 integrante(s) activo(s) y tu plan Básico permite hasta 3. Para agregar a alguien más, sube al plan Equipo (hasta 5 personas).` (en Pro: `… tu plan Pro permite hasta 10. Es el plan más grande: para agregar a alguien, elimina primero del equipo a quien ya no trabaje en el negocio.`)
 
 **PATCH `/api/v1/equipo/:id`**: uno o más campos del POST (`rol` cambia el rol, `atiendeClientes` activa o quita las reservas, `clave` cambia la contraseña; `especialidad: null` la quita). **200** con el profesional. Errores: **400** `No puedes quitarte a ti mismo el rol de administrador.`; **404** `Profesional no encontrado`; **409** usuario repetido.
 
@@ -501,7 +516,7 @@ Errores: **400** `El campo "desde" es obligatorio`, `El campo "desde" debe ser u
 
 **GET `/api/v1/cartera/resumen?periodo=mes`** (personal, suscripción vigente): resumen de un período. Mismas reglas de acceso que `/cartera` (un admin ve todo el negocio o un integrante con `barberoId`; un empleado solo lo suyo).
 
-- `periodo` (obligatorio): `hoy`; `semana` (de lunes a domingo de esta semana); `mes` (del día 1 al último día de este mes); o `rango` con `desde` y `hasta` (AAAA-MM-DD, máximo 366 días). Fechas de Colombia.
+- `periodo` (obligatorio): `hoy`; `semana` (de lunes a domingo de esta semana); `mes` (del día 1 al último día de este mes); o `rango` con `desde` y `hasta` (AAAA-MM-DD, máximo 366 días). Fechas de Colombia. Con `rango`, `desde` no puede ser anterior al registro del negocio (`fechaRegistro` de `/admin/empresa/suscripcion`) y `hasta` no puede ser posterior a hoy.
 - Responde **200**, con los profesionales de mayor a menor en ventas:
 
   ```json
@@ -516,7 +531,7 @@ Errores: **400** `El campo "desde" es obligatorio`, `El campo "desde" debe ser u
   ```
 
   `ganancia` es lo que ganó el profesional (con el porcentaje guardado en cada cita, igual que `/cartera`); `gananciaNegocio` = `totalVentas` − lo que ganó el equipo.
-- Errores: **400** `Elige el período en "periodo": "hoy", "semana", "mes" o "rango" (con "desde" y "hasta")`, y con `rango` los mismos de `/cartera` (`El campo "desde" es obligatorio`, …).
+- Errores: **400** `Elige el período en "periodo": "hoy", "semana", "mes" o "rango" (con "desde" y "hasta")`, y con `rango` los mismos de `/cartera` (`El campo "desde" es obligatorio`, …), `La fecha "desde" no puede ser anterior a la fecha de registro del negocio (2026-10-05).` y `La fecha "hasta" no puede ser posterior a hoy (2026-10-20).`
 
 ### Recuperar contraseña (administradoras y clientes con correo)
 

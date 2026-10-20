@@ -96,13 +96,13 @@ export const actualizarMiembro = async (db: Consultable, id: string, empresaId: 
     )
   ).rows[0];
 
-// Límite del equipo: número de empleados de la empresa (las empresas anteriores
-// al registro no lo tienen; para ellas el máximo es 10) e integrantes activos.
-// FOR UPDATE bloquea la empresa: dos altas a la vez se esperan y la segunda ve a la primera.
+// Límite del equipo: plan de la empresa (su cupo está en src/config/planes.ts) e
+// integrantes activos. FOR UPDATE bloquea la empresa: dos altas a la vez se esperan
+// y la segunda ve a la primera.
 export const bloquearLimiteEquipo = async (db: Consultable, empresaId: string) =>
   (
-    await db.query<{ maximo: number; activos: number }>(
-      `SELECT COALESCE(e.numero_empleados, 10) AS maximo,
+    await db.query<{ plan: string; activos: number }>(
+      `SELECT e.plan_equipo AS plan,
               (SELECT count(*)::int FROM barberos b WHERE b.empresa_id = e.id AND b.activo) AS activos
        FROM empresas e WHERE e.id = $1
        FOR UPDATE`,

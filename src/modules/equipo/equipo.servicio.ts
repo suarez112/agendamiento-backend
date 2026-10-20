@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
+import { buscarPlan, type Plan, planSiguiente, PLANES } from '../../config/planes.js';
 import { CODIGO_PG, enTransaccion, esErrorPg } from '../../db/pool.js';
 import { errores } from '../../shared/errores.js';
 import type { Sesion } from '../auth/auth.servicio.js';
@@ -33,13 +34,14 @@ const armarMiembro = (m: FilaMiembro, urlBase: string) => ({
   foto: urlFoto(urlBase, m.foto_url),
 });
 
-// Mensaje cuando el equipo ya tiene tantos integrantes activos como empleados registró la empresa
-const limiteAlcanzado = ({ maximo, activos }: { maximo: number; activos: number }) =>
-  maximo >= MAXIMO_EMPLEADOS
-    ? `Tu equipo ya tiene ${activos} integrantes activos, el máximo permitido (${MAXIMO_EMPLEADOS}).`
-    : `Tu equipo ya tiene ${activos} integrante(s) activo(s) y registraste ${maximo} empleado(s). Para agregar a alguien más, aumenta el número de empleados en Mi negocio (máximo ${MAXIMO_EMPLEADOS}).`;
-
-const MAXIMO_EMPLEADOS = 10;
+// Mensaje cuando el equipo ya llenó el cupo de su plan: invita a subir de plan
+export const cupoAlcanzado = (plan: Plan, activos: number) => {
+  const siguiente = planSiguiente(plan.id);
+  const lleno = `Tu equipo ya tiene ${activos} integrante(s) activo(s) y tu plan ${plan.nombre} permite hasta ${plan.cupo}.`;
+  return siguiente
+    ? `${lleno} Para agregar a alguien más, sube al plan ${siguiente.nombre} (hasta ${siguiente.cupo} personas).`
+    : `${lleno} Es el plan más grande: para agregar a alguien, elimina primero del equipo a quien ya no trabaje en el negocio.`;
+};
 
 // El usuario de inicio de sesión es único entre el equipo activo de todos los negocios
 const traducirUsuarioRepetido = (error: unknown): never => {
@@ -52,13 +54,14 @@ export const crearServicioEquipo = ({ pool, fotos }: { pool: pg.Pool; fotos: Alm
     return (await repositorio.listarEquipo(pool, empresaId)).map((m) => armarMiembro(m, urlBase));
   },
 
-  // No puede haber más integrantes activos que el número de empleados de la empresa
+  // No puede haber más integrantes activos que el cupo del plan de la empresa
   async crear(empresaId: string, { clave, ...datos }: DatosMiembro, urlBase: string) {
     const passwordHash = await cifrarContrasena(clave);
     const miembro = await enTransaccion(pool, async (tx) => {
       const limite = await repositorio.bloquearLimiteEquipo(tx, empresaId);
       if (!limite) throw errores.noEncontrado('Establecimiento no encontrado');
-      if (limite.activos >= limite.maximo) throw errores.conflicto(limiteAlcanzado(limite));
+      const plan = buscarPlan(limite.plan) ?? PLANES[PLANES.length - 1];
+      if (limite.activos >= plan.cupo) throw errores.conflicto(cupoAlcanzado(plan, limite.activos));
       return repositorio.crearMiembro(tx, {
         ...datos,
         id: randomUUID(),

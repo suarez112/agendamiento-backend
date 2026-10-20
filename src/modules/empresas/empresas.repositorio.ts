@@ -150,6 +150,11 @@ export const contarEquipoActivo = async (db: Consultable, empresaId: string) =>
     )
   ).rows[0].total;
 
+// Cambia el plan por tamaño de equipo (lo usa "Mi negocio" durante la prueba)
+export const cambiarPlanEquipo = async (db: Consultable, empresaId: string, plan: string) => {
+  await db.query('UPDATE empresas SET plan_equipo = $2 WHERE id = $1', [empresaId, plan]);
+};
+
 // true si ningún negocio usa ese código (los códigos se guardan en mayúsculas)
 export const codigoDisponible = async (db: Consultable, codigo: string) =>
   (await db.query('SELECT 1 FROM empresas WHERE codigo_acceso = $1', [codigo])).rowCount === 0;
@@ -166,6 +171,11 @@ export type FilaSuscripcion = {
   // Días de prueba que quedaban al pagar durante la prueba y se sumaron al plan
   dias_prueba_sumados: number | null;
   habilitada: boolean;
+  // Plan por tamaño de equipo (basico | equipo | pro) e integrantes activos
+  plan_equipo: string;
+  equipo_activo: number;
+  // Día del registro de la empresa (AAAA-MM-DD, hora de Colombia); null en empresas muy antiguas
+  fecha_registro: string | null;
 };
 
 // Estado de la suscripción con la fecha actual de Colombia, así los días que
@@ -180,9 +190,12 @@ export const buscarSuscripcion = async (db: Consultable, empresaId: string) =>
               to_char(fecha_pago, 'YYYY-MM-DD') AS fecha_pago,
               to_char(fin, 'YYYY-MM-DD') AS fecha_fin,
               fin - hoy AS dias_restantes, dias_prueba_sumados,
-              estado_suscripcion IN ('trial', 'activa') AND (fin IS NULL OR fin > hoy) AS habilitada
+              estado_suscripcion IN ('trial', 'activa') AND (fin IS NULL OR fin > hoy) AS habilitada,
+              plan_equipo, equipo_activo, to_char(registro, 'YYYY-MM-DD') AS fecha_registro
        FROM (
-         SELECT estado_suscripcion, trial_ends_at, plan_suscripcion, fecha_pago, dias_prueba_sumados,
+         SELECT estado_suscripcion, trial_ends_at, plan_suscripcion, fecha_pago, dias_prueba_sumados, plan_equipo,
+                (SELECT count(*)::int FROM barberos b WHERE b.empresa_id = empresas.id AND b.activo) AS equipo_activo,
+                (created_at::timestamptz AT TIME ZONE 'America/Bogota')::date AS registro,
                 CASE estado_suscripcion
                   WHEN 'trial' THEN (trial_ends_at AT TIME ZONE 'America/Bogota')::date
                   WHEN 'activa' THEN suscripcion_fin

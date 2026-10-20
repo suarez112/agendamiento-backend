@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { errores } from '../../shared/errores.js';
 import type { Sesion } from '../auth/auth.servicio.js';
 import * as repositorio from './cartera.repositorio.js';
 
@@ -15,7 +16,20 @@ const sumar = (valores: number[]) => Math.round(valores.reduce((a, b) => a + b *
 export const crearServicioCartera = ({ pool }: { pool: pg.Pool }) => ({
   // Resumen de un período: hoy, esta semana, este mes o un rango de fechas. Mismas
   // reglas de acceso que resumen(). Los profesionales van de mayor a menor en ventas.
+  // Un rango no puede empezar antes del registro del negocio ni terminar después de hoy
+  // (fechas de Colombia). Las fechas AAAA-MM-DD se comparan bien como texto.
   async resumenPeriodo(sesion: Sesion, consulta: ConsultaPeriodo) {
+    if (consulta.periodo === 'rango') {
+      const limites = await repositorio.limitesDeRango(pool, sesion.empresaId);
+      if (limites?.fecha_registro && consulta.desde < limites.fecha_registro) {
+        throw errores.solicitudInvalida(
+          `La fecha "desde" no puede ser anterior a la fecha de registro del negocio (${limites.fecha_registro}).`,
+        );
+      }
+      if (limites && consulta.hasta > limites.hoy) {
+        throw errores.solicitudInvalida(`La fecha "hasta" no puede ser posterior a hoy (${limites.hoy}).`);
+      }
+    }
     const { desde, hasta } =
       consulta.periodo === 'rango' ? consulta : await repositorio.fechasDePeriodo(pool, consulta.periodo);
     const r = await this.resumen(sesion, desde, hasta, consulta.barberoId);

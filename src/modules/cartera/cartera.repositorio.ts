@@ -61,3 +61,15 @@ export const fechasDePeriodo = async (db: Consultable, periodo: Periodo) =>
       [periodo],
     )
   ).rows[0];
+
+// Día del registro de la empresa y hoy, los dos con la fecha de Colombia (AAAA-MM-DD).
+// fecha_registro es null en empresas sin fecha de creación.
+export const limitesDeRango = async (db: Consultable, empresaId: string) =>
+  (
+    await db.query<{ fecha_registro: string | null; hoy: string }>(
+      `SELECT to_char((created_at::timestamptz AT TIME ZONE 'America/Bogota')::date, 'YYYY-MM-DD') AS fecha_registro,
+              to_char((now() AT TIME ZONE 'America/Bogota')::date, 'YYYY-MM-DD') AS hoy
+       FROM empresas WHERE id = $1`,
+      [empresaId],
+    )
+  ).rows[0];
