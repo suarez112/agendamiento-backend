@@ -13,7 +13,8 @@
     "db:migrate": "tsx src/db/migrar.ts",
     "db:cifrar-contrasenas": "tsx src/db/cifrarContrasenas.ts",
     "dev:activar-plan": "tsx src/db/activarPlan.ts",
-    "dev:simular-vencimiento": "tsx src/db/simularVencimiento.ts"
+    "dev:simular-vencimiento": "tsx src/db/simularVencimiento.ts",
+    "dev:pqrs": "tsx src/db/pqrs.ts"
   },
   "keywords": [],
   "author": "",

@@ -12,7 +12,9 @@ import { texto } from '../../shared/http/esquemas.js';
 import { esquemaIndicativo } from '../citas/citas.esquemas.js';
 import { conTelefonoNormalizado } from '../../shared/telefonos.js';
 import { aceptacionObligatoria } from '../legal/legal.js';
+import { cuentaDe, type GuardiasCuenta } from './cuentas.guardias.js';
 import type { ServicioCuentas } from './cuentas.servicio.js';
+import type { ServicioEliminacion } from './eliminacion.servicio.js';
 import type { ServicioRecuperacion } from './recuperacion.servicio.js';
 
 const MENSAJE_CLAVE = 'La contraseña debe tener entre 8 y 64 caracteres';
@@ -75,9 +77,20 @@ const esquemaRestablecer = z.object(
   { error: 'Envía tu correo, el código y la contraseña nueva' },
 );
 
+// Para eliminar la cuenta se confirma con la contraseña
+const esquemaEliminar = z.object(
+  {
+    clave: z.string({ error: 'Envía tu contraseña para confirmar' }).min(1, 'Envía tu contraseña para confirmar').max(64),
+    eliminarNegocio: z.boolean({ error: '"eliminarNegocio" debe ser true o false' }).default(false),
+  },
+  { error: 'Envía tu contraseña para confirmar' },
+);
+
 export const crearRutasCuentas = (
   cuentas: ServicioCuentas,
   recuperacion: ServicioRecuperacion,
+  eliminacion: ServicioEliminacion,
+  guardias: GuardiasCuenta,
   limitadores: Limitadores,
 ) => {
   const rutas = Router();
@@ -103,6 +116,11 @@ export const crearRutasCuentas = (
 
   rutas.post('/restablecer-contrasena', limitadores.recuperacion, async (req, res) => {
     res.json(await recuperacion.restablecer(parsear(esquemaRestablecer, req.body)));
+  });
+
+  // Elimina la cuenta de una administradora o de un cliente (los fallos de contraseña cuentan como intentos de login)
+  rutas.post('/eliminar', limitadores.login, guardias.requerirCuenta, async (req, res) => {
+    res.json(await eliminacion.eliminar(cuentaDe(res), parsear(esquemaEliminar, req.body)));
   });
 
   return rutas;

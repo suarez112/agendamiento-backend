@@ -19,6 +19,7 @@ const LIMITES_PRUEBA: ConfigLimites = {
   registro: 1_000,
   recuperacion: 1_000,
   recuperacionPorCorreo: 1_000,
+  pqrs: 1_000,
 };
 
 export type Contexto = { url: string; pool: pg.Pool; cerrar: () => Promise<void> };

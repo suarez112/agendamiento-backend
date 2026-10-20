@@ -19,6 +19,7 @@ export type ConfigLimites = {
   registro: number; // empresas y cuentas nuevas
   recuperacion: number; // recuperar contraseña: solicitudes y restablecer, por IP
   recuperacionPorCorreo: number; // solicitudes de código para un mismo correo
+  pqrs: number; // PQRS radicadas por IP
 };
 
 export const LIMITES_POR_DEFECTO: ConfigLimites = {
@@ -30,6 +31,7 @@ export const LIMITES_POR_DEFECTO: ConfigLimites = {
   registro: 10,
   recuperacion: 10,
   recuperacionPorCorreo: 3,
+  pqrs: 10,
 };
 
 const limitar = (
@@ -52,6 +54,7 @@ const limitar = (
   });
 
 export const crearLimitadores = (c: ConfigLimites) => ({
+  pqrs: limitar(c.ventanaMs, c.pqrs, 'Enviaste varias PQRS seguidas. Intenta de nuevo en unos minutos.'),
   general: limitar(c.ventanaMs, c.general, 'Demasiadas solicitudes. Intenta de nuevo en unos minutos.'),
   login: limitar(
     c.ventanaMs,

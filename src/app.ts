@@ -18,6 +18,7 @@ import { crearRutasClientes } from './modules/clientes/clientes.rutas.js';
 import { crearServicioClientes } from './modules/clientes/clientes.servicio.js';
 import { crearRutasCuentas } from './modules/cuentas/cuentas.rutas.js';
 import { crearServicioCuentas } from './modules/cuentas/cuentas.servicio.js';
+import { crearServicioEliminacion } from './modules/cuentas/eliminacion.servicio.js';
 import { crearServicioRecuperacion } from './modules/cuentas/recuperacion.servicio.js';
 import { crearGuardiasCuenta } from './modules/cuentas/cuentas.guardias.js';
 import { crearRutasAdminEmpresa, crearRutasEmpresas } from './modules/empresas/empresas.rutas.js';
@@ -28,6 +29,8 @@ import { crearRutasEquipo } from './modules/equipo/equipo.rutas.js';
 import { crearServicioEquipo } from './modules/equipo/equipo.servicio.js';
 import { crearRutasLegal } from './modules/legal/legal.js';
 import { crearRutasMiCuenta, crearServicioMiCuenta } from './modules/micuenta/micuenta.rutas.js';
+import { crearRutasPqrs } from './modules/pqrs/pqrs.rutas.js';
+import { crearServicioPqrs } from './modules/pqrs/pqrs.servicio.js';
 import { crearRutasPlanes } from './modules/planes/planes.js';
 import { crearRutasProductos } from './modules/productos/productos.rutas.js';
 import { crearServicioProductos } from './modules/productos/productos.servicio.js';
@@ -107,9 +110,10 @@ export const crearApp = ({
   // Login único (administradora o personal); los dos logins de abajo siguen funcionando
   app.use('/api/v1/login', crearRutasAcceso(auth, cuentas, limitadores));
   app.use('/api/v1/auth', crearRutasAuth(auth, limitadores));
-  app.use('/api/v1/cuentas', crearRutasCuentas(cuentas, recuperacion, limitadores));
+  app.use('/api/v1/cuentas', crearRutasCuentas(cuentas, recuperacion, crearServicioEliminacion({ pool }), guardiasCuenta, limitadores));
   app.use('/api/v1/ubicaciones', crearRutasUbicaciones());
   app.use('/api/v1/planes', crearRutasPlanes());
+  app.use('/api/v1/pqrs', crearRutasPqrs(crearServicioPqrs({ pool }), cuentas, guardiasCuenta, limitadores));
   app.use('/api/v1/legal', crearRutasLegal({ pool }));
   // Cuenta del cliente registrado: negocios guardados y sus citas
   app.use('/api/v1/mi-cuenta', crearRutasMiCuenta(crearServicioMiCuenta({ pool }), guardiasCuenta, limitadores, urlBase));

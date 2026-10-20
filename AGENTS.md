@@ -25,9 +25,11 @@ src/
   modules/ubicaciones/            departamentos y municipios de Colombia (DIVIPOLA del DANE, divipola.ts generado)
   modules/empresas/suscripcion.ts estado de la suscripción y guardia 402
   modules/legal/legal.ts          política y términos vigentes, prueba de las autorizaciones (Ley 1581)
+  modules/pqrs/                   PQRS: peticiones, quejas, reclamos y sugerencias con radicado y estado
+  modules/cuentas/eliminacion.servicio.ts  eliminar la cuenta y los datos personales (Ley 1581)
   modules/micuenta/               cuenta del cliente: negocios guardados y sus citas
   modules/cuentas/recuperacion.servicio.ts  recuperar la contraseña con un código por correo
-  db/activarPlan.ts, db/simularVencimiento.ts   comandos de desarrollador (ver "Comandos de desarrollador")
+  db/activarPlan.ts, db/simularVencimiento.ts, db/pqrs.ts   comandos de desarrollador (ver "Comandos de desarrollador")
 db/migraciones/      numeradas NNN_nombre.sql (o .ts si SQL no alcanza); cada archivo en su propia transacción
 test/                node:test; cada archivo crea y borra su propia base temporal
 odd/tasks/           bitácoras de trabajo (specs, tareas, evidencia)
@@ -59,6 +61,13 @@ npm run dev:simular-vencimiento -- CODIGO DIAS # ej. 3, 0 o -2
 
 Los dos muestran cómo quedó: estado, fecha de fin y días restantes.
 
+```bash
+npm run dev:pqrs -- listar [estado]                          # estado: recibida | en_proceso | resuelta | cerrada
+npm run dev:pqrs -- responder RADICADO estado ["respuesta"]  # ej. -- responder PQRS-2026-000001 resuelta "Ya lo corregimos"
+```
+
+- **`dev:pqrs`**: `listar` muestra las PQRS (las sin resolver primero, de la más antigua a la más reciente; con un estado, solo las de ese estado) con radicado, tipo, quién la envió, mensaje y respuesta. `responder` cambia el estado de la PQRS con ese radicado (sin distinguir mayúsculas) y, si se envía texto (máx. 2000), guarda la respuesta y la fecha; sin texto conserva la respuesta anterior. Un radicado que no existe responde `No existe una PQRS con el radicado …`. La app ve el cambio en `GET /pqrs/mias`.
+
 Puerto por defecto `4000` (`PORT`). Rutas bajo `/api/v1`.
 
 ## Base de datos y entorno
@@ -72,6 +81,7 @@ Puerto por defecto `4000` (`PORT`). Rutas bajo `/api/v1`.
 - Migración 012: `empresas.latitud` y `empresas.longitud` (opcionales, siempre juntas, rangos validados) y `empresas.dias_prueba_sumados` (días de prueba que quedaban al pagar durante la prueba).
 - Migración 013: `empresas.precision_ubicacion` (precisión del GPS en metros, opcional, solo con coordenadas); `usuarios.version_sesion` (sube al cambiar la contraseña e invalida los tokens anteriores); tabla `codigos_recuperacion` (códigos para recuperar la contraseña: HMAC del código, vencimiento, intentos y uso).
 - Migración 014: `empresas.plan_equipo` (`basico` | `equipo` | `pro`, por defecto `pro`): plan por tamaño de equipo. `plan_suscripcion` sigue siendo el periodo (`mensual` | `anual`). A las empresas existentes se les asignó el plan más pequeño que alcanza para su equipo activo (las de prueba, además, el número de empleados del registro si era mayor); no se borró a nadie. Al aplicarla, las tres quedaron en `basico`.
+- Migración 015: tabla `pqrs` (radicado único `PQRS-AAAA-NNNNNN` desde la secuencia `pqrs_numero_seq`, `tipo`, `mensaje`, `nombre`, `contacto`, `usuario_id` opcional con `ON DELETE SET NULL`, `estado`, `respuesta`, `respondida_en`).
 - **Publicar una versión nueva de la política o los términos**: una migración nueva que inserte una fila en `documentos_legales` con otra `version` (nunca edites las filas publicadas). La más reciente es la vigente; los clientes con cuenta la aceptan en su próxima reserva.
 
 ## Endpoints
@@ -102,6 +112,9 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | POST | `/api/v1/cuentas/login` | público, limitado. Administradores de empresa y clientes (con correo) |
 | POST | `/api/v1/cuentas/solicitar-recuperacion` | público, limitado por conexión y por correo. Envía un código para recuperar la contraseña (ver "Recuperar contraseña") |
 | POST | `/api/v1/cuentas/restablecer-contrasena` | público, limitado. Cambia la contraseña con el código y cierra las sesiones abiertas |
+| POST | `/api/v1/cuentas/eliminar` | cuenta (administradora o cliente), limitado. Elimina la cuenta y sus datos personales (ver "Eliminar la cuenta") |
+| POST | `/api/v1/pqrs` | público, limitado. Radica una petición, queja, reclamo o sugerencia, como invitado o con sesión (ver "PQRS") |
+| GET | `/api/v1/pqrs/mias` | cuenta (administradora o cliente). Las PQRS que radicó con su sesión |
 | GET | `/api/v1/admin/empresa/suscripcion` | personal admin (los dos tipos), **aunque esté vencida**. Estado, plan, fechas, días restantes y recordatorio |
 | GET | `/api/v1/admin/empresa/prueba` | personal admin, aunque esté vencida (se mantiene; usa `/suscripcion`) |
 | GET | `/api/v1/admin/empresa` | personal admin, aunque esté vencida ("Mi negocio") |
@@ -557,6 +570,29 @@ Para cuentas de la tabla `usuarios` con correo (administradoras y clientes). El 
   - `CORREO_REMITENTE`: quien envía, ej. `"Agendamiento <no-responder@mibarberia.co>"` (dominio verificado en el proveedor).
   - Con una API (Resend, SendGrid, Brevo…): `CORREO_PROVEEDOR` (ej. `resend`) y `CORREO_API_KEY`.
   - O con SMTP: `SMTP_HOST`, `SMTP_PORT` (587 o 465), `SMTP_USUARIO`, `SMTP_CLAVE` y `SMTP_SEGURO` (`true` con el puerto 465).
+
+### PQRS (peticiones, quejas, reclamos y sugerencias)
+
+**POST `/api/v1/pqrs`**: público, límite por IP (10 cada 15 minutos). Sirve como invitado o con el token de una cuenta (administradora o cliente); un token vencido o inválido no falla: se radica como invitado.
+
+- Recibe `{ "tipo": "queja", "mensaje": "La app se cierra", "nombre": "Ana", "contacto": "ana@x.co" }`: `tipo` = `peticion` | `queja` | `reclamo` | `sugerencia`; `mensaje` hasta 2000 caracteres; `nombre` hasta 100 y `contacto` (correo o teléfono, texto libre) hasta 150. Con sesión, `nombre` y `contacto` son opcionales: se toman de la cuenta (nombre; correo o, si no, teléfono). Como invitado son obligatorios.
+- Responde **201** `{ "mensaje": "Recibimos tu queja. Guarda tu número de radicado: PQRS-2026-000001.", "pqrs": { "radicado", "tipo", "mensaje", "estado": "recibida", "respuesta": null, "respondidaEn": null, "creadaEn" } }`.
+- Errores: **400** `El tipo debe ser "peticion", "queja", "reclamo" o "sugerencia"`, `El campo "mensaje" es obligatorio`, `El campo "nombre" es obligatorio`, `El campo "contacto" es obligatorio`, `Envía el tipo y el mensaje de tu PQRS`; **429** `Enviaste varias PQRS seguidas. Intenta de nuevo en unos minutos.`
+- Estados: `recibida` → `en_proceso` → `resuelta` → `cerrada`. Los cambia el equipo de soporte con `npm run dev:pqrs` (ver "Comandos de desarrollador"), con una respuesta de texto.
+
+**GET `/api/v1/pqrs/mias`**: cuenta (administradora o cliente; **401** sin sesión). **200** las que radicó con su sesión, de la más reciente a la más antigua, con la misma forma de `pqrs` de arriba. Las de invitado no aparecen: se consultan con el radicado que recibió.
+
+### Eliminar la cuenta (Ley 1581 de 2012)
+
+**POST `/api/v1/cuentas/eliminar`**: una administradora o un cliente con cuenta elimina su cuenta y sus datos personales. Requiere su sesión (`Authorization: Bearer <token>`) y confirmar con la contraseña. Los intentos con contraseña errónea cuentan en el límite de login.
+
+- Recibe `{ "clave": "…", "eliminarNegocio": false }` (`eliminarNegocio` es opcional y solo importa para una administradora; ver abajo).
+- Responde **200** `{ "mensaje": "Tu cuenta y tus datos personales fueron eliminados." }`. El token deja de servir de inmediato (401). Todo ocurre en una transacción.
+- Errores: **400** `Envía tu contraseña para confirmar`; **401** `La contraseña no es correcta` o sesión no válida; **409** (solo administradora) `Eres la única persona que administra este negocio. Agrega primero a otro administrador en Equipo, o envía "eliminarNegocio": true para cerrar también el negocio.`; **429**.
+- **Qué se borra**: la fila de la cuenta completa (correo, usuario, teléfono, nombre y contraseña) y con ella sus negocios guardados, códigos de recuperación y la prueba de autorizaciones de la cuenta.
+- **Qué se conserva, sin datos personales**: las citas y la cartera (la cita deja de apuntar a la cuenta). En cada negocio, el registro del cliente con ese teléfono queda como `Cliente eliminado` con un teléfono de relleno único que no es un número. Las PQRS de la cuenta se conservan (son un registro de atención) con nombre y contacto `Cuenta eliminada`.
+- **Qué se conserva a propósito**: la lista negra de cada negocio (nombre y teléfono; es un registro del negocio, y borrarla permitiría eludirla con una cuenta nueva) y la prueba de las autorizaciones dadas como invitado, que se guardan por teléfono (evidencia legal). El mensaje de una PQRS no se edita.
+- **Administradora**: si el negocio tiene otra persona que lo administre (un integrante activo con rol Administrador u otra cuenta admin), solo se elimina su cuenta y el negocio sigue. Si es la única, responde 409 salvo que envíe `"eliminarNegocio": true`: entonces el negocio queda `cancelada` (nadie del equipo entra y no recibe reservas), el equipo queda inactivo, `nombre_administradora` pasa a `Cuenta eliminada`, los clientes del negocio se anonimizan y su lista negra se borra. Las citas y la cartera quedan guardadas. No se borran el negocio ni sus fotos del servidor.
 
 ### Teléfonos (formato E.164)
 

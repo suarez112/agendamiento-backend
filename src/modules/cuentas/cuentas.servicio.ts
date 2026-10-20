@@ -163,6 +163,15 @@ export const crearServicioCuentas = ({ pool, tokens }: Dependencias) => {
       return usuario?.rol === 'cliente' && usuario.version_sesion === datos.version ? usuario : null;
     },
 
+    // Cuenta (administradora o cliente) del token, si es válido. null si no hay token o no sirve:
+    // sirve para endpoints públicos que mejoran con sesión (ej. radicar una PQRS).
+    async cuentaDeToken(token: string | undefined): Promise<FilaUsuario | null> {
+      const datos = token ? tokens.verificarCuenta(token) : null;
+      if (!datos) return null;
+      const usuario = await repositorio.buscarUsuarioPorId(pool, datos.usuarioId);
+      return usuario && usuario.version_sesion === datos.version ? usuario : null;
+    },
+
     // Convierte un token en la sesión vigente, con rol y empresa leídos de la base
     async validarSesion(token: string | undefined): Promise<SesionCuenta> {
       if (!token) throw errores.noAutenticado('Sesión no válida. Inicia sesión de nuevo.');
