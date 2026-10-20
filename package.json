@@ -15,7 +15,9 @@
     "dev:activar-plan": "tsx src/db/activarPlan.ts",
     "dev:simular-vencimiento": "tsx src/db/simularVencimiento.ts",
     "dev:pqrs": "tsx src/db/pqrs.ts",
-    "dev:crear-superadmin": "tsx src/db/crearSuperadmin.ts"
+    "dev:crear-superadmin": "tsx src/db/crearSuperadmin.ts",
+    "dev:restablecer-superadmin": "tsx src/db/restablecerSuperadmin.ts",
+    "dev:eliminar-superadmin": "tsx src/db/eliminarSuperadmin.ts"
   },
   "keywords": [],
   "author": "",

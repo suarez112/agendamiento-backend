@@ -33,7 +33,7 @@ src/
   modules/cuentas/eliminacion.servicio.ts  eliminar la cuenta y los datos personales (Ley 1581)
   modules/micuenta/               cuenta del cliente: negocios guardados y sus citas
   modules/cuentas/recuperacion.servicio.ts  recuperar la contraseña con un código por correo
-  db/activarPlan.ts, db/simularVencimiento.ts, db/pqrs.ts, db/crearSuperadmin.ts   comandos de desarrollador (ver "Comandos de desarrollador")
+  db/activarPlan.ts, db/simularVencimiento.ts, db/pqrs.ts, db/crearSuperadmin.ts, db/restablecerSuperadmin.ts, db/eliminarSuperadmin.ts   comandos de desarrollador (ver "Comandos de desarrollador")
 db/migraciones/      numeradas NNN_nombre.sql (o .ts si SQL no alcanza); cada archivo en su propia transacción
 test/                node:test; cada archivo crea y borra su propia base temporal
 odd/tasks/           bitácoras de trabajo (specs, tareas, evidencia)
@@ -60,7 +60,7 @@ npm run dev:activar-plan -- CODIGO equipo anual # plan: basico | equipo | pro (o
 npm run dev:simular-vencimiento -- CODIGO DIAS # ej. 3, 0 o -2
 ```
 
-- **`dev:activar-plan`**: recibe el plan por tamaño de equipo (`basico`, `equipo` o `pro`; si no se envía, conserva el que tiene) y el periodo (`mensual` o `anual`). Si el equipo activo no cabe en el plan elegido, lo rechaza y no cambia nada (`✖ Tu equipo tiene 4 integrante(s) activo(s) y el plan Básico permite hasta 3. …`). Deja la empresa `activa` con ese plan, de inmediato (ya no aparece como prueba). Fecha de pago = hoy (Colombia). Fecha de fin = 1 mes o 1 año contados desde: el **fin de la prueba**, si paga durante la prueba (no pierde los días gratis que le quedaban; se guardan en `dias_prueba_sumados` y `/suscripcion` los muestra en `diasPruebaSumados`); el fin del plan actual, si aún no vencía (una renovación anticipada no pierde días); o hoy, en otro caso. Sirve también para activar a mano un negocio en producción mientras no haya pagos. Ejemplo: `npm run dev:activar-plan -- CENTRAL10 equipo anual` → `✔ Barbería Central (CENTRAL10): plan Equipo anual activo (cupo 2/5). Pago: 2026-10-19. Fin: 2027-10-19. Días restantes: 365.` Durante una prueba con 15 días restantes, `-- CENTRAL10 basico mensual` → `… Fin: 2026-12-03. Días restantes: 45. Días de prueba sumados: 15.`
+- **`dev:activar-plan`**: si lo ejecutas mal (o sin argumentos) muestra el uso con la lista de planes (`basico | equipo | pro`), los periodos (`mensual | anual`) y un ejemplo (`npm run dev:activar-plan -- INFINITY equipo anual`). Recibe el plan por tamaño de equipo (`basico`, `equipo` o `pro`; si no se envía, conserva el que tiene) y el periodo (`mensual` o `anual`). Si el equipo activo no cabe en el plan elegido, lo rechaza y no cambia nada (`✖ Tu equipo tiene 4 integrante(s) activo(s) y el plan Básico permite hasta 3. …`). Deja la empresa `activa` con ese plan, de inmediato (ya no aparece como prueba). Fecha de pago = hoy (Colombia). Fecha de fin = 1 mes o 1 año contados desde: el **fin de la prueba**, si paga durante la prueba (no pierde los días gratis que le quedaban; se guardan en `dias_prueba_sumados` y `/suscripcion` los muestra en `diasPruebaSumados`); el fin del plan actual, si aún no vencía (una renovación anticipada no pierde días); o hoy, en otro caso. Sirve también para activar a mano un negocio en producción mientras no haya pagos. Ejemplo: `npm run dev:activar-plan -- CENTRAL10 equipo anual` → `✔ Barbería Central (CENTRAL10): plan Equipo anual activo (cupo 2/5). Pago: 2026-10-19. Fin: 2027-10-19. Días restantes: 365.` Durante una prueba con 15 días restantes, `-- CENTRAL10 basico mensual` → `… Fin: 2026-12-03. Días restantes: 45. Días de prueba sumados: 15.`
 - **`dev:simular-vencimiento`**: deja a la empresa con `DIAS` días restantes de su prueba (si está en prueba) o de su plan (si está activa), cambiando la fecha de fin. `0` o negativo = vencida. Para un negocio vencido, actívale antes un plan. **No funciona con `NODE_ENV=production`** (responde con error y no cambia nada). Ejemplos: `-- CENTRAL10 5` (recordatorio de los últimos 7 días), `-- CENTRAL10 0` (vencida hoy).
 
 Los dos muestran cómo quedó: estado, fecha de fin y días restantes.
@@ -75,9 +75,14 @@ npm run dev:pqrs -- responder RADICADO estado ["respuesta"]  # ej. -- responder 
 ```bash
 npm run dev:crear-superadmin -- correo              # crea tu cuenta de superadmin
 npm run dev:crear-superadmin -- correo --reiniciar  # si perdiste la contraseña o el segundo paso
+npm run dev:restablecer-superadmin -- correo         # olvidaste la contraseña: genera una nueva
+npm run dev:restablecer-superadmin -- correo --totp  # además, una clave nueva de la verificación en dos pasos
+npm run dev:eliminar-superadmin -- correo            # elimina un superadmin (pide confirmación)
 ```
 
 - **`dev:crear-superadmin`**: única forma de crear un superadmin (no hay registro ni endpoint). Genera una contraseña al azar (20 caracteres) y la clave de la verificación en dos pasos, y muestra las dos **una sola vez**: la clave como código QR (para escanear con Google Authenticator, Authy…) y también escrita (`F7DO BPG2 …`) por si no se puede escanear. Si el correo ya existe responde `✖ Ya existe un superadmin con el correo …`. Con `--reiniciar` cambia la contraseña y el segundo paso de uno que ya existe y cierra sus sesiones abiertas. Funciona también con `NODE_ENV=production` (es como se crea en producción). Lee la base y `JWT_SECRET` del `.env`.
+- **`dev:restablecer-superadmin`**: para cuando olvidas la contraseña. Genera una contraseña nueva (20 caracteres, se muestra **una sola vez**), cierra las sesiones abiertas y desbloquea la cuenta; la verificación en dos pasos sigue igual. Con `--totp` también genera una clave nueva del segundo paso (por ejemplo si perdiste el celular; la anterior deja de servir): la muestra como código QR **y escrita** (`F7DO BPG2 …`) y guarda el QR como imagen PNG en `secretos-superadmin/` (carpeta en `.gitignore`: no se sube a GitHub; borra la imagen cuando ya configuraste la app). `dev:crear-superadmin` guarda su QR en la misma carpeta. Un correo que no existe responde `✖ No existe un superadmin con el correo …`. **No hay recuperación por correo para el superadmin**: este comando es la única vía. Funciona con `NODE_ENV=production`.
+- **`dev:eliminar-superadmin`**: elimina un superadmin (por ejemplo uno creado por error). Pregunta `¿Eliminar al superadmin …? No se puede deshacer. (s/N)` y solo borra con `s`. **Nunca borra al último** (`✖ Es el único superadmin y no se puede eliminar: …`: sin superadmins nadie podría entrar al panel); la comprobación se repite dentro de la transacción con las filas bloqueadas. Al terminar muestra los que quedan. El registro de actividad no se toca.
 
 Puerto por defecto `4000` (`PORT`). Rutas bajo `/api/v1`.
 
@@ -96,6 +101,7 @@ Puerto por defecto `4000` (`PORT`). Rutas bajo `/api/v1`.
 - Migración 016: panel del superadmin. `empresas.suspendida_en` y `empresas.suspension_motivo` (van juntas); tabla `superadmins` (aparte de `usuarios`: ningún login de la app llega a ellos; `totp_secreto` cifrado, `totp_ultimo_paso`, `version_sesion`, `intentos_fallidos`, `bloqueado_hasta`); tabla `actividad_superadmin` (solo se agregan filas: un disparador rechaza `UPDATE`, `DELETE` y `TRUNCATE`; sin llaves foráneas a propósito, copia el correo y los datos del negocio de ese momento).
 - Migración 017: textos legales **versión 1.0** (reemplazan los borradores 0.1) a partir de `docs/legal/documentos-legales.md`: Política de Tratamiento de Datos, Términos y Condiciones y Aviso de privacidad (texto corto). `documentos_legales.tipo` admite un tercer valor, `aviso_privacidad`. Los clientes con cuenta deben aceptar la 1.0 en su próxima reserva.
 - Migración 018: notificaciones push. Tabla `dispositivos_push` (`token` único, de un integrante del equipo `barbero_id` o de una cuenta `usuario_id`, nunca los dos; se borra con su dueño) y `citas.recordatorio_enviado_en` (marca el recordatorio de 24 h ya enviado).
+- Migración 019: `superadmins.ultima_actividad` (momento de la última solicitud del superadmin; con más de 15 minutos de diferencia, o `NULL`, la sesión ya no sirve).
 - **Publicar una versión nueva de la política, los términos o el aviso**: una migración nueva que inserte filas en `documentos_legales` con otra `version` (nunca edites las filas publicadas). La más reciente de cada tipo es la vigente; los clientes con cuenta aceptan la política y los términos nuevos en su próxima reserva. Conviene publicar los tres tipos juntos con el mismo número.
 
 ## Endpoints
@@ -133,8 +139,10 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | POST | `/api/v1/cuentas/eliminar` | cuenta (administradora o cliente), limitado. Elimina la cuenta y sus datos personales (ver "Eliminar la cuenta") |
 | POST | `/api/v1/pqrs` | público, limitado. Radica una petición, queja, reclamo o sugerencia, como invitado o con sesión (ver "PQRS") |
 | GET | `/api/v1/pqrs/mias` | cuenta (administradora o cliente). Las PQRS que radicó con su sesión |
-| POST | `/api/v1/superadmin/login` | público, limitado, **solo el superadmin**. `{ correo, clave, codigo }` con el código de 6 dígitos de la app autenticadora. Sesión de 1 hora (ver "Panel del superadministrador") |
+| POST | `/api/v1/superadmin/login` | público, limitado, **solo el superadmin**. `{ correo, clave, codigo }` con el código de 6 dígitos de la app autenticadora. Sesión de 1 hora que se cierra sola tras 15 minutos sin actividad (ver "Panel del superadministrador") |
+| POST | `/api/v1/superadmin/logout` | superadmin. Cierra la sesión e invalida el token en el servidor |
 | GET | `/api/v1/superadmin/resumen` | superadmin. Cifras de toda la plataforma |
+| GET | `/api/v1/superadmin/estadisticas` | superadmin. Cifras agregadas para los gráficos del panel |
 | GET | `/api/v1/superadmin/negocios` | superadmin. Lista con búsqueda, filtros y paginación |
 | GET | `/api/v1/superadmin/negocios/:id` | superadmin. Detalle de un negocio (solo cifras) |
 | POST | `/api/v1/superadmin/negocios/:id/plan` | superadmin. Activa o cambia el plan |
@@ -620,10 +628,12 @@ Rol aparte de `admin` y `cliente`: vive en la tabla `superadmins`, no en `usuari
 
 **POST `/api/v1/superadmin/login`**: recibe `{ "correo", "clave", "codigo" }` (`codigo` = 6 dígitos de la app autenticadora, TOTP RFC 6238: SHA-1, 30 s, se acepta un paso antes y uno después).
 
-- Responde **200** `{ "mensaje": "Autenticación exitosa", "token": "<jwt>", "expiraEnSegundos": 3600, "superadmin": { "id", "correo" } }`. El token es de otro tipo (`tipo: "superadmin"`): solo sirve en `/api/v1/superadmin/...` y los demás endpoints lo rechazan (y al revés). Dura **1 hora** fija (no usa `JWT_EXPIRA_EN`). Se envía como `Authorization: Bearer <token>`. Las respuestas del panel llevan `Cache-Control: no-store`.
+- Responde **200** `{ "mensaje": "Autenticación exitosa", "token": "<jwt>", "expiraEnSegundos": 3600, "inactividadMinutos": 15, "superadmin": { "id", "correo" } }`. El token es de otro tipo (`tipo: "superadmin"`): solo sirve en `/api/v1/superadmin/...` y los demás endpoints lo rechazan (y al revés). Dura **1 hora** fija (no usa `JWT_EXPIRA_EN`). Se envía como `Authorization: Bearer <token>`. Las respuestas del panel llevan `Cache-Control: no-store`.
 - Seguridad: cada código sirve **una sola vez** (se guarda el último paso usado); la clave del segundo paso se guarda **cifrada** (AES-256-GCM, llave derivada de `JWT_SECRET`: si cambias `JWT_SECRET`, reinicia el segundo paso con `--reiniciar`); la contraseña se compara siempre con bcrypt aunque el correo no exista; límite por IP (los intentos fallidos de `limitadores.login`) y bloqueo de la cuenta 15 minutos tras 5 fallos seguidos. `--reiniciar` sube `version_sesion` y cierra las sesiones abiertas.
 - Errores: **400** `Debes enviar tu correo, tu contraseña y el código de tu app autenticadora` o `El código de la app autenticadora debe tener 6 dígitos`; **401** `Correo, contraseña o código incorrectos` (igual si falla cualquiera de los tres) o `Ese código ya se usó. Espera el siguiente código de tu app autenticadora.`; **429** `Demasiados intentos fallidos. Espera 15 minutos para volver a intentar.` o el límite por IP.
-- Los demás endpoints responden **401** `Sesión no válida. Inicia sesión de nuevo.` (sin token) o `Sesión vencida o no válida. Inicia sesión de nuevo.`
+- Los demás endpoints responden **401** `Sesión no válida. Inicia sesión de nuevo.` (sin token), `Sesión vencida o no válida. Inicia sesión de nuevo.` o `Sesión cerrada por 15 minutos sin actividad. Inicia sesión de nuevo.`
+- **Cierre automático por inactividad**: cada solicitud autenticada guarda `superadmins.ultima_actividad`. Si pasan **15 minutos sin ninguna**, el token deja de servir (el 401 de arriba) aunque no haya vencido su hora; hay que iniciar sesión otra vez. Lo decide el servidor, así que la app solo debe llevar al login al recibir ese 401 (`inactividadMinutos` del login sirve para mostrar un aviso).
+- **POST `/api/v1/superadmin/logout`** (sin cuerpo): cierra la sesión **en el servidor**: sube `version_sesion` y borra `ultima_actividad`, así este token y cualquier otro anterior de esa cuenta dejan de servir (401 `Sesión no válida…`), aunque no hayan vencido. Responde **200** `{ "mensaje": "Sesión cerrada" }` y queda como acción `cerrar_sesion` en el registro de actividad. La app debe borrar el token al llamarlo.
 
 Las listas se paginan con `?pagina=1&limite=25` (máximo 100) y responden `{ "total", "pagina", "limite", "datos": [...] }`.
 
@@ -635,6 +645,24 @@ Las listas se paginan con `?pagina=1&limite=25` (máximo 100) y responden `{ "to
 
 **GET `/superadmin/negocios/:id`**: lo de la lista más `categoria`, `direccion`, `administradora: { nombre, correo }`, `suscripcion: { estadoGuardado, fechaPago, fechaFin, finDePrueba, diasPruebaSumados }`, `suspension: { desde, motivo } | null`, `equipo: { activos, cupo, administradores, empleados }`, `cifras: { clientes, servicios, productos, citas: { total, confirmadas, completadas, canceladas, esteMes, ultima }, ventas: { total, esteMes } }` y `actividadReciente` (las últimas 10 acciones del superadmin sobre ese negocio). **Solo cifras**: nunca nombres, teléfonos ni otros datos de los clientes del negocio. **404** `Negocio no encontrado`.
 
+**GET `/superadmin/estadisticas`**: cifras agregadas para dibujar gráficos. **Solo conteos y totales de la plataforma: nada de nombres, teléfonos ni otros datos de clientes** (los negocios que vencen sí traen su nombre y código, que son del negocio). Las listas vienen completas (con ceros) para graficar sin rellenar huecos. Responde **200**:
+
+```jsonc
+{
+  "negociosNuevosPorMes": [{ "mes": "2025-11", "total": 0 }, …],        // últimos 12 meses, el actual al final (por fecha de registro)
+  "negociosPorEstado": [{ "estado": "prueba" | "activo" | "vencido" | "suspendido", "total": 3 }, …],  // los 4, aunque sean 0
+  "negociosPorPlan": [{ "plan": "basico", "nombre": "Básico", "total": 5, "activos": 2 }, …],         // los 3 planes; "activos" = estado activo
+  "citasPorDia": [{ "dia": "2026-09-21", "total": 12 }, …],             // últimos 30 días hasta hoy (hora de Colombia), sin las canceladas
+  "topDepartamentos": [{ "departamento": "SANTANDER", "total": 4 }, …], // hasta 5, más negocios primero
+  "conversionPruebaAPlan": { "pruebasTerminadas": 20, "convertidos": 8, "tasaPorcentaje": 40 },
+  "vencenEn7Dias": { "total": 2, "negocios": [{ "id", "nombre", "codigoAcceso", "estado", "diasRestantes", "fechaFin" }] },  // prueba o activos, hasta 50
+  "ingresoMensualEstimado": { "estimado": true, "moneda": "COP", "total": 160000, "detalle": [{ "plan": "equipo", "periodo": "anual", "negocios": 2, "ingreso": 83333 }], "nota": "…" }
+}
+```
+
+- `conversionPruebaAPlan`: de los negocios que **ya pagaron o cuya prueba ya terminó** (`pruebasTerminadas`; uno que sigue en su prueba aún no pudo convertirse), cuántos pagaron o están activos (`convertidos`). `tasaPorcentaje` con un decimal; `null` si aún no hay ninguno.
+- `ingresoMensualEstimado`: **es una estimación, no dinero cobrado** (por eso `estimado: true`). Suma, por cada negocio en estado `activo`, el precio mensual de su plan o el anual dividido en 12, con los precios de `src/config/planes.ts` (hoy de ejemplo). No cuenta pruebas, vencidos ni suspendidos, ni activos de antes de los planes (sin periodo, no hay precio).
+
 **Acciones sobre un negocio** (todas responden **200** `{ "mensaje", "negocio": { …forma de la lista… } }`, **404** `Negocio no encontrado`, y quedan en el registro de actividad; `motivo` opcional hasta 300 caracteres salvo donde se indica):
 
 - **POST `/negocios/:id/plan`** `{ "periodo": "mensual" | "anual", "planEquipo"?: "basico" | "equipo" | "pro", "motivo"? }`: misma regla que `dev:activar-plan` (`activarPlanEmpresa`): queda `activa` hoy; la fecha de fin cuenta desde el fin de la prueba, el fin del plan vigente u hoy; sin `planEquipo` conserva el actual. **409** si el equipo activo no cabe en el plan (`Tu equipo tiene …`) o `Este negocio está cancelado (su cuenta fue eliminada) y no se puede activar.`; **400** `El periodo debe ser "mensual" o "anual"`.
@@ -643,7 +671,7 @@ Las listas se paginan con `?pagina=1&limite=25` (máximo 100) y responden `{ "to
 
 **PQRS**: **GET `/superadmin/pqrs?estado=&tipo=&pagina=&limite=`** (las sin resolver primero, de la más antigua a la más reciente) y **GET `/superadmin/pqrs/:radicado`** (sin distinguir mayúsculas; **404** `No existe una PQRS con ese radicado`). Forma: `{ "radicado", "tipo", "estado", "mensaje", "nombre", "contacto", "conCuenta", "respuesta", "respondidaEn", "creadaEn", "actualizadaEn" }`. **PATCH `/superadmin/pqrs/:radicado`** `{ "estado", "respuesta"? }` (respuesta hasta 2000; sin texto conserva la anterior): **200** `{ "mensaje": "PQRS actualizada", "pqrs": {…} }`. Es lo mismo que `dev:pqrs responder`.
 
-**Registro de actividad**: **GET `/superadmin/actividad?accion=&empresaId=&desde=&hasta=&pagina=&limite=`** (`desde` y `hasta` AAAA-MM-DD, hora de Colombia), de la más reciente a la más antigua: `{ "id", "superadmin": "correo", "accion", "negocio": { "id", "codigoAcceso", "nombre" } | null, "referencia", "detalle", "motivo", "fecha" }`. Acciones: `inicio_sesion` (con la IP en `detalle`), `activar_plan`, `extender_prueba`, `suspender`, `reactivar` y `responder_pqrs` (`referencia` = radicado). Las consultas no se registran. No hay endpoint para editarlo ni borrarlo, y la base rechaza `UPDATE`, `DELETE` y `TRUNCATE` (migración 016). El nombre y el código del negocio quedan copiados tal como estaban en ese momento.
+**Registro de actividad**: **GET `/superadmin/actividad?accion=&empresaId=&desde=&hasta=&pagina=&limite=`** (`desde` y `hasta` AAAA-MM-DD, hora de Colombia), de la más reciente a la más antigua: `{ "id", "superadmin": "correo", "accion", "negocio": { "id", "codigoAcceso", "nombre" } | null, "referencia", "detalle", "motivo", "fecha" }`. Acciones: `inicio_sesion` (con la IP en `detalle`), `cerrar_sesion`, `activar_plan`, `extender_prueba`, `suspender`, `reactivar` y `responder_pqrs` (`referencia` = radicado). Las consultas no se registran. No hay endpoint para editarlo ni borrarlo, y la base rechaza `UPDATE`, `DELETE` y `TRUNCATE` (migración 016). El nombre y el código del negocio quedan copiados tal como estaban en ese momento.
 
 ### Eliminar la cuenta (Ley 1581 de 2012)
 

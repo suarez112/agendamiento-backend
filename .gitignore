@@ -8,3 +8,6 @@ dist/
 
 # Fotos subidas por los negocios (CARPETA_SUBIDAS)
 uploads/
+
+# Códigos QR del segundo paso del superadmin (dev:crear-superadmin y dev:restablecer-superadmin)
+secretos-superadmin/

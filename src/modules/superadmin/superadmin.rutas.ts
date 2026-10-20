@@ -145,8 +145,17 @@ export const crearRutasSuperadmin = (servicio: ServicioSuperadmin, limitadores: 
   };
   rutas.use(requerirSuperadmin);
 
+  // Invalida la sesión en el servidor (el token ya no sirve, aunque no haya vencido)
+  rutas.post('/logout', async (_req, res) => {
+    res.json(await servicio.cerrarSesion(sesionDe(res)));
+  });
+
   rutas.get('/resumen', async (_req, res) => {
     res.json(await servicio.resumen());
+  });
+
+  rutas.get('/estadisticas', async (_req, res) => {
+    res.json(await servicio.estadisticas());
   });
 
   rutas.get('/negocios', async (req, res) => {

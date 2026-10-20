@@ -1,3 +1,4 @@
+import type pg from 'pg';
 import type { Consultable } from '../../db/pool.js';
 
 export type FilaSuperadmin = {
@@ -8,10 +9,15 @@ export type FilaSuperadmin = {
   totp_ultimo_paso: string | null;
   version_sesion: number;
   bloqueado: boolean;
+  inactivo: boolean;
 };
 
+// Minutos sin actividad después de los cuales la sesión se cierra sola
+export const MINUTOS_INACTIVIDAD = 15;
+
 const COLUMNAS_SUPERADMIN = `id, correo, password_hash, totp_secreto, totp_ultimo_paso, version_sesion,
-  COALESCE(bloqueado_hasta > now(), false) AS bloqueado`;
+  COALESCE(bloqueado_hasta > now(), false) AS bloqueado,
+  (ultima_actividad IS NULL OR ultima_actividad < now() - make_interval(mins => ${MINUTOS_INACTIVIDAD})) AS inactivo`;
 
 export const buscarSuperadminPorCorreo = async (db: Consultable, correo: string) =>
   (
@@ -47,7 +53,8 @@ export const registrarEntrada = async (db: Consultable, id: string, paso: number
   (
     (
       await db.query(
-        `UPDATE superadmins SET totp_ultimo_paso = $2, intentos_fallidos = 0, bloqueado_hasta = NULL
+        `UPDATE superadmins SET totp_ultimo_paso = $2, intentos_fallidos = 0, bloqueado_hasta = NULL,
+                ultima_actividad = now()
          WHERE id = $1 AND (totp_ultimo_paso IS NULL OR totp_ultimo_paso < $2)`,
         [id, paso],
       )
@@ -65,23 +72,57 @@ export const insertarSuperadmin = async (
   ]);
 };
 
-// Contraseña y segundo paso nuevos. Sube la versión de la sesión: cierra las sesiones abiertas.
+// Contraseña nueva y, si se envía totpSecreto, también un segundo paso nuevo (sin él conserva el actual).
+// Sube la versión de la sesión: cierra las sesiones abiertas.
 export const reiniciarSuperadmin = async (
   db: Consultable,
   correo: string,
-  d: { passwordHash: string; totpSecreto: string },
+  d: { passwordHash: string; totpSecreto?: string },
 ) =>
   (
     (
       await db.query(
         `UPDATE superadmins
-         SET password_hash = $2, totp_secreto = $3, totp_ultimo_paso = NULL, version_sesion = version_sesion + 1,
+         SET password_hash = $2, totp_secreto = COALESCE($3::text, totp_secreto),
+             totp_ultimo_paso = CASE WHEN $3::text IS NULL THEN totp_ultimo_paso END,
+             version_sesion = version_sesion + 1, ultima_actividad = NULL,
              intentos_fallidos = 0, bloqueado_hasta = NULL
          WHERE lower(correo) = lower($1)`,
-        [correo, d.passwordHash, d.totpSecreto],
+        [correo, d.passwordHash, d.totpSecreto ?? null],
       )
     ).rowCount ?? 0
   ) > 0;
+
+// Marca actividad ahora. Solo cuenta si la sesión sigue viva (la condición evita revivir una vencida).
+export const registrarActividadDeSesion = async (db: Consultable, id: string) =>
+  (
+    (
+      await db.query(
+        `UPDATE superadmins SET ultima_actividad = now()
+         WHERE id = $1 AND ultima_actividad >= now() - make_interval(mins => $2)`,
+        [id, MINUTOS_INACTIVIDAD],
+      )
+    ).rowCount ?? 0
+  ) > 0;
+
+// Cierra la sesión: sube la versión (todos los tokens anteriores dejan de servir) y borra la actividad
+export const cerrarSesionSuperadmin = async (db: Consultable, id: string) => {
+  await db.query('UPDATE superadmins SET version_sesion = version_sesion + 1, ultima_actividad = NULL WHERE id = $1', [id]);
+};
+
+// Elimina un superadmin, salvo que sea el último. Devuelve 'eliminado', 'no_existe' o 'ultimo'.
+// Bloquea todas las filas mientras cuenta, para que dos eliminaciones a la vez no dejen la tabla vacía.
+export const eliminarSuperadmin = async (tx: pg.PoolClient, correo: string): Promise<'eliminado' | 'no_existe' | 'ultimo'> => {
+  const filas = (await tx.query<{ id: string; correo: string }>('SELECT id, correo FROM superadmins FOR UPDATE')).rows;
+  const objetivo = filas.find((f) => f.correo.toLowerCase() === correo.toLowerCase());
+  if (!objetivo) return 'no_existe';
+  if (filas.length <= 1) return 'ultimo';
+  await tx.query('DELETE FROM superadmins WHERE id = $1', [objetivo.id]);
+  return 'eliminado';
+};
+
+export const listarCorreosSuperadmin = async (db: Consultable) =>
+  (await db.query<{ correo: string }>('SELECT correo FROM superadmins ORDER BY creado_en')).rows.map((f) => f.correo);
 
 // ---- Registro de actividad (solo se agregan filas; la base rechaza cambiarlas o borrarlas) ----
 
@@ -352,3 +393,64 @@ export const extenderPrueba = async (db: Consultable, id: string, dias: number) 
       [id, dias],
     )
   ).rows[0];
+
+// ---- Estadísticas para gráficos (solo cifras de la plataforma, nunca datos de clientes) ----
+
+const HOY = "(now() AT TIME ZONE 'America/Bogota')::date";
+
+export const estadisticasPlataforma = async (db: Consultable) => {
+  const [nuevosPorMes, porEstado, porPlan, citasPorDia, departamentos, conversion, porVencer, activosPorPlan] =
+    await Promise.all([
+      db.query<{ mes: string; total: number }>(
+        `SELECT to_char(m.mes, 'YYYY-MM') AS mes, count(n.id)::int AS total
+         FROM generate_series(date_trunc('month', ${HOY}::timestamp) - interval '11 months',
+                              date_trunc('month', ${HOY}::timestamp), interval '1 month') AS m(mes)
+         LEFT JOIN ${NEGOCIOS} ON date_trunc('month', n.registro::timestamp) = m.mes
+         GROUP BY m.mes ORDER BY m.mes`,
+      ),
+      db.query<{ estado: string; total: number }>(
+        `SELECT estado, count(*)::int AS total FROM ${NEGOCIOS} GROUP BY estado`,
+      ),
+      db.query<{ plan_equipo: string; total: number; activos: number }>(
+        `SELECT plan_equipo, count(*)::int AS total, count(*) FILTER (WHERE estado = 'activo')::int AS activos
+         FROM ${NEGOCIOS} GROUP BY plan_equipo`,
+      ),
+      db.query<{ dia: string; total: number }>(
+        `SELECT to_char(d.dia, 'YYYY-MM-DD') AS dia, count(c.id)::int AS total
+         FROM generate_series((${HOY} - 29)::timestamp, ${HOY}::timestamp, interval '1 day') AS d(dia)
+         LEFT JOIN citas c ON c.fecha = d.dia::date AND c.estado <> 'CANCELADA'
+         GROUP BY d.dia ORDER BY d.dia`,
+      ),
+      db.query<{ departamento: string; total: number }>(
+        `SELECT departamento, count(*)::int AS total FROM ${NEGOCIOS}
+         WHERE departamento IS NOT NULL GROUP BY departamento ORDER BY total DESC, departamento LIMIT 5`,
+      ),
+      // Base: negocios que ya pagaron o cuya prueba ya terminó (uno que sigue en su prueba aún no pudo convertirse)
+      db.query<{ base: number; convertidos: number }>(
+        `SELECT count(*) FILTER (WHERE fecha_pago IS NOT NULL OR estado_suscripcion = 'activa' OR trial_ends_at <= now())::int AS base,
+                count(*) FILTER (WHERE fecha_pago IS NOT NULL OR estado_suscripcion = 'activa')::int AS convertidos
+         FROM ${NEGOCIOS}`,
+      ),
+      db.query<{ id: string; nombre: string; codigo_acceso: string; estado: string; dias: number; fecha_fin: string; total: number }>(
+        `SELECT id, nombre, codigo_acceso, estado, dias, to_char(fin, 'YYYY-MM-DD') AS fecha_fin, count(*) OVER ()::int AS total
+         FROM ${NEGOCIOS}
+         WHERE estado IN ('prueba', 'activo') AND dias IS NOT NULL AND dias <= $1::int
+         ORDER BY dias, nombre LIMIT 50`,
+        [DIAS_POR_VENCER],
+      ),
+      db.query<{ plan_equipo: string; periodo: 'mensual' | 'anual' | null; negocios: number }>(
+        `SELECT plan_equipo, periodo, count(*)::int AS negocios FROM ${NEGOCIOS}
+         WHERE estado = 'activo' GROUP BY plan_equipo, periodo`,
+      ),
+    ]);
+  return {
+    nuevosPorMes: nuevosPorMes.rows,
+    porEstado: porEstado.rows,
+    porPlan: porPlan.rows,
+    citasPorDia: citasPorDia.rows,
+    departamentos: departamentos.rows,
+    conversion: conversion.rows[0],
+    porVencer: porVencer.rows,
+    activosPorPlan: activosPorPlan.rows,
+  };
+};

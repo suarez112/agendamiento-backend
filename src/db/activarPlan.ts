@@ -18,7 +18,13 @@ import { crearPool, enTransaccion } from './pool.js';
 // - hoy, en cualquier otro caso.
 dotenv.config({ quiet: true });
 
-const USO = `Uso: npm run dev:activar-plan -- CODIGO [${ID_PLANES.join('|')}] mensual|anual`;
+const USO = `Uso: npm run dev:activar-plan -- CODIGO [plan] periodo
+
+  CODIGO   código del negocio (sin distinguir mayúsculas)
+  plan     opcional: ${ID_PLANES.join(' | ')} (si no lo envías, conserva el que tiene)
+  periodo  mensual | anual
+
+Ejemplo: npm run dev:activar-plan -- INFINITY equipo anual`;
 const argumentos = process.argv.slice(2).map((a) => a.trim().toLowerCase());
 const codigo = argumentos[0]?.toUpperCase();
 const planEquipo = argumentos.length === 3 ? buscarPlan(argumentos[1]) : undefined;

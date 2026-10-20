@@ -19,6 +19,7 @@ export type Pagina = { pagina: number; limite: number };
 const INCORRECTOS = 'Correo, contraseña o código incorrectos';
 const NEGOCIO_NO_ENCONTRADO = 'Negocio no encontrado';
 const PQRS_NO_ENCONTRADA = 'No existe una PQRS con ese radicado';
+const MENSAJE_INACTIVIDAD = `Sesión cerrada por ${repositorio.MINUTOS_INACTIVIDAD} minutos sin actividad. Inicia sesión de nuevo.`;
 // La sesión dura una hora (ver tokens.ts)
 const SEGUNDOS_SESION = 3600;
 
@@ -117,6 +118,7 @@ export const crearServicioSuperadmin = ({ pool, tokens, secreto }: Dependencias)
         mensaje: 'Autenticación exitosa',
         token: tokens.firmarSuperadmin({ superadminId: cuenta.id, version: cuenta.version_sesion }),
         expiraEnSegundos: SEGUNDOS_SESION,
+        inactividadMinutos: repositorio.MINUTOS_INACTIVIDAD,
         superadmin: { id: cuenta.id, correo: cuenta.correo },
       };
     },
@@ -130,7 +132,75 @@ export const crearServicioSuperadmin = ({ pool, tokens, secreto }: Dependencias)
       if (!cuenta || cuenta.version_sesion !== datos.version) {
         throw errores.noAutenticado('Sesión no válida. Inicia sesión de nuevo.');
       }
+      // Cierre automático: tras 15 minutos sin solicitudes el token deja de servir, aunque no haya vencido
+      if (cuenta.inactivo || !(await repositorio.registrarActividadDeSesion(pool, cuenta.id))) {
+        throw errores.noAutenticado(MENSAJE_INACTIVIDAD);
+      }
       return { id: cuenta.id, correo: cuenta.correo };
+    },
+
+    // Invalida la sesión en el servidor: sube la versión, así este token y los anteriores ya no sirven
+    async cerrarSesion(admin: SesionSuperadmin) {
+      await repositorio.cerrarSesionSuperadmin(pool, admin.id);
+      await repositorio.registrarActividad(pool, {
+        superadminId: admin.id,
+        superadminCorreo: admin.correo,
+        accion: 'cerrar_sesion',
+      });
+      return { mensaje: 'Sesión cerrada' };
+    },
+
+    // Cifras para los gráficos del panel. Todo es agregado: ningún dato personal de los clientes.
+    async estadisticas() {
+      const e = await repositorio.estadisticasPlataforma(pool);
+      const porEstado = new Map(e.porEstado.map((f) => [f.estado, f.total]));
+      const porPlan = new Map(e.porPlan.map((f) => [f.plan_equipo, f]));
+      const detalleIngreso = e.activosPorPlan.flatMap((f) => {
+        const plan = buscarPlan(f.plan_equipo);
+        // Un negocio activo de antes de los planes no tiene periodo: no hay precio con qué estimarlo
+        if (!plan || !f.periodo) return [];
+        const porNegocio = f.periodo === 'mensual' ? plan.precioMensual : plan.precioAnual / 12;
+        return [{ plan: plan.id, periodo: f.periodo, negocios: f.negocios, ingreso: Math.round(porNegocio * f.negocios) }];
+      });
+      return {
+        negociosNuevosPorMes: e.nuevosPorMes,
+        negociosPorEstado: ['prueba', 'activo', 'vencido', 'suspendido'].map((estado) => ({
+          estado,
+          total: porEstado.get(estado) ?? 0,
+        })),
+        negociosPorPlan: PLANES.map((p) => ({
+          plan: p.id,
+          nombre: p.nombre,
+          total: porPlan.get(p.id)?.total ?? 0,
+          activos: porPlan.get(p.id)?.activos ?? 0,
+        })),
+        citasPorDia: e.citasPorDia,
+        topDepartamentos: e.departamentos,
+        // Sobre los negocios que ya pagaron o cuya prueba ya terminó
+        conversionPruebaAPlan: {
+          pruebasTerminadas: e.conversion.base,
+          convertidos: e.conversion.convertidos,
+          tasaPorcentaje: e.conversion.base ? Math.round((e.conversion.convertidos / e.conversion.base) * 1000) / 10 : null,
+        },
+        vencenEn7Dias: {
+          total: e.porVencer[0]?.total ?? 0,
+          negocios: e.porVencer.map((n) => ({
+            id: n.id,
+            nombre: n.nombre,
+            codigoAcceso: n.codigo_acceso,
+            estado: n.estado,
+            diasRestantes: Math.max(0, n.dias),
+            fechaFin: n.fecha_fin,
+          })),
+        },
+        ingresoMensualEstimado: {
+          estimado: true,
+          moneda: 'COP',
+          total: detalleIngreso.reduce((suma, f) => suma + f.ingreso, 0),
+          detalle: detalleIngreso,
+          nota: 'Estimado con los precios de los planes de los negocios activos (el plan anual cuenta 1/12 por mes). No incluye pruebas ni suspendidos, y no son pagos reales.',
+        },
+      };
     },
 
     async resumen() {
