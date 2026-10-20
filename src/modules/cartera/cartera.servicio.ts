@@ -8,8 +8,24 @@ export type ConsultaPeriodo = { barberoId?: string } & (
   | { periodo: 'rango'; desde: string; hasta: string }
 );
 
+// Con qué se compara: el período anterior (por defecto), el mismo rango un mes o un año
+// antes, o un rango de fechas elegido
+export type Comparacion =
+  | { tipo: 'anterior' | 'mes_pasado' | 'anio_pasado' }
+  | { tipo: 'personalizado'; desde: string; hasta: string };
+
 const DIA_MS = 86_400_000;
 const SERVICIOS_TOP = 10;
+
+// Resta meses a una fecha AAAA-MM-DD; si el día no existe en ese mes, usa el último
+// (31 de marzo menos un mes = 28 de febrero)
+const restarMeses = (fecha: string, meses: number) => {
+  const [anio, mes, dia] = fecha.split('-').map(Number);
+  const destino = new Date(Date.UTC(anio, mes - 1 - meses, 1));
+  const ultimoDia = new Date(Date.UTC(destino.getUTCFullYear(), destino.getUTCMonth() + 1, 0)).getUTCDate();
+  destino.setUTCDate(Math.min(dia, ultimoDia));
+  return destino.toISOString().slice(0, 10);
+};
 
 const redondear1 = (n: number) => Math.round(n * 10) / 10;
 
@@ -38,9 +54,12 @@ export const crearServicioCartera = ({ pool }: { pool: pg.Pool }) => ({
   // reglas de acceso que resumen(). Los profesionales van de mayor a menor en ventas.
   // Un rango no puede empezar antes del registro del negocio ni terminar después de hoy
   // (fechas de Colombia). Las fechas AAAA-MM-DD se comparan bien como texto.
-  async resumenPeriodo(sesion: Sesion, consulta: ConsultaPeriodo) {
+  async resumenPeriodo(sesion: Sesion, consulta: ConsultaPeriodo, comparar: Comparacion = { tipo: 'anterior' }) {
+    const limites =
+      consulta.periodo === 'rango' || comparar.tipo !== 'anterior'
+        ? await repositorio.limitesDeRango(pool, sesion.empresaId)
+        : undefined;
     if (consulta.periodo === 'rango') {
-      const limites = await repositorio.limitesDeRango(pool, sesion.empresaId);
       if (limites?.fecha_registro && consulta.desde < limites.fecha_registro) {
         throw errores.solicitudInvalida(
           `La fecha "desde" no puede ser anterior a la fecha de registro del negocio (${limites.fecha_registro}).`,
@@ -56,9 +75,27 @@ export const crearServicioCartera = ({ pool }: { pool: pg.Pool }) => ({
 
     // Mismo filtro que el resumen: un empleado solo ve lo suyo, aunque envíe otro barberoId
     const filtro = { empresaId: sesion.empresaId, desde, hasta, barberoId: r.barberoId };
-    const anterior = periodoAnterior(consulta.periodo, desde, hasta);
+    const anterior =
+      comparar.tipo === 'personalizado'
+        ? { desde: comparar.desde, hasta: comparar.hasta }
+        : comparar.tipo === 'mes_pasado'
+          ? { desde: restarMeses(desde, 1), hasta: restarMeses(hasta, 1) }
+          : comparar.tipo === 'anio_pasado'
+            ? { desde: restarMeses(desde, 12), hasta: restarMeses(hasta, 12) }
+            : periodoAnterior(consulta.periodo, desde, hasta);
+
+    // Un rango elegido que empieza antes del registro del negocio no tiene datos: llega en ceros con un aviso
+    const antesDelRegistro =
+      comparar.tipo !== 'anterior' && !!limites?.fecha_registro && anterior.desde < limites.fecha_registro;
+    const aviso = antesDelRegistro
+      ? `El período de comparación (${anterior.desde} a ${anterior.hasta}) empieza antes del registro del negocio (${limites?.fecha_registro}); se muestra en ceros.`
+      : null;
+    const sinDatos = { totalVentas: 0, gananciaNegocio: 0, gananciaEquipo: 0, totalCitas: 0 };
+
     const [previo, dias, servicios, ocupacion, cancelaciones, clientes] = await Promise.all([
-      this.resumen(sesion, anterior.desde, anterior.hasta, consulta.barberoId),
+      antesDelRegistro
+        ? Promise.resolve(sinDatos)
+        : this.resumen(sesion, anterior.desde, anterior.hasta, consulta.barberoId),
       repositorio.ventasPorDia(pool, filtro),
       repositorio.serviciosMasVendidos(pool, filtro, SERVICIOS_TOP),
       repositorio.ocupacion(pool, filtro),
@@ -105,6 +142,8 @@ export const crearServicioCartera = ({ pool }: { pool: pg.Pool }) => ({
       })),
       ticketPromedio: r.totalCitas ? Math.round((r.totalVentas / r.totalCitas) * 100) / 100 : 0,
       comparacion: {
+        tipo: comparar.tipo,
+        aviso,
         periodoAnterior: {
           desde: anterior.desde,
           hasta: anterior.hasta,

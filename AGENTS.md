@@ -592,7 +592,9 @@ Errores: **400** `El campo "desde" es obligatorio`, `El campo "desde" debe ser u
   {
     "ticketPromedio": 20000,                // totalVentas / citasCompletadas (0 si no hubo citas)
     "comparacion": {
-      "periodoAnterior": { "desde": "2026-09-01", "hasta": "2026-09-30", "totalVentas": 50000, "gananciaNegocio": 25000, "gananciaEquipo": 25000, "citasCompletadas": 2 },
+      "tipo": "anterior",                     // con qué se comparó (ver "Con qué comparar")
+      "aviso": null,                          // texto si el rango de comparación quedó antes del registro; si no, null
+      "periodoAnterior": { "desde": "2026-09-01", "hasta": "2026-09-30", "totalVentas": 50000, "gananciaNegocio": 25000, "gananciaEquipo": 25000, "citasCompletadas": 2 },  // el período con el que se compara, sea cual sea el tipo
       "variacionPorcentaje": { "ventas": 20, "gananciaNegocio": 28, "gananciaEquipo": 12, "citas": 50 }  // % de subida (+) o bajada (−), un decimal
     },
     "ventasPorDia": [{ "fecha": "2026-10-01", "ventas": 0, "citas": 0 }, …],   // todos los días del período, con ceros
@@ -609,12 +611,14 @@ Errores: **400** `El campo "desde" es obligatorio`, `El campo "desde" debe ser u
   ```
 
   - **Período anterior**: completo y de la misma forma: `hoy` → ayer; `semana` → la semana pasada (lunes a domingo); `mes` → el mes anterior completo; `rango` → los mismos días justo antes de `desde`. Puede quedar antes del registro del negocio (llega en ceros). Si el período actual aún no termina (hoy, esta semana, este mes), se compara contra el anterior completo.
+  - **Con qué comparar** (`comparar`, opcional, por defecto `anterior`): `anterior` (lo de arriba, sin cambios); `mes_pasado` (el mismo rango un mes antes; si el día no existe, el último del mes: 31 de marzo → 28 de febrero); `anio_pasado` (el mismo rango un año antes); `personalizado` (con `compararDesde` y `compararHasta`, AAAA-MM-DD, máximo 366 días; el rango puede tener otra duración que el período actual). Ejemplo: `/cartera/resumen?periodo=mes&comparar=anio_pasado`. `compararDesde` y `compararHasta` se ignoran en los otros tipos. El resultado siempre va en `comparacion.periodoAnterior` (con sus fechas reales) y `comparacion.tipo` dice cuál se usó.
+  - **Antes del registro**: con `mes_pasado`, `anio_pasado` o `personalizado`, si el rango de comparación empieza antes del registro del negocio (`fechaRegistro`), `periodoAnterior` llega con sus fechas pero en ceros (`totalVentas`, `gananciaNegocio`, `gananciaEquipo` y `citasCompletadas` en 0) y `comparacion.aviso` trae el texto (`El período de comparación (2025-10-01 a 2025-10-31) empieza antes del registro del negocio (2026-10-05); se muestra en ceros.`). La variación contra cero sigue la regla de abajo. Con `anterior` no cambia nada: se calcula como siempre.
   - **Variación**: `(actual − anterior) / anterior × 100`, un decimal; negativa = bajó. Si el anterior es 0: `0` si ahora tampoco hay, y `null` si ahora sí hay (no se puede calcular un porcentaje).
   - `ventasPorDia`, `serviciosMasVendidos`, `ticketPromedio` y `pagoProfesionales` cuentan solo citas **completadas**. `aPagar` = lo que le corresponde al profesional con el porcentaje guardado en cada cita (igual que `ganancia`); `porcentajeGanancia` es el actual, informativo. `total` = lo que corresponde pagar a todo el equipo.
   - `ocupacion` cuenta las citas **no canceladas** del período (completadas y confirmadas, también las futuras) por día de la semana y por hora de inicio.
   - `cancelaciones` cuenta todas las citas del período, de cualquier estado; `tasaPorcentaje` = canceladas / totalCitas (las confirmadas que aún no llegan también cuentan en el total).
   - `clientes`: clientes con alguna cita no cancelada en el período. **Nuevos**: no tenían citas no canceladas antes de `desde`; **recurrentes**: sí. Con un profesional filtrado (o un empleado), se miran solo las citas de ese profesional.
-- Errores: **400** `Elige el período en "periodo": "hoy", "semana", "mes" o "rango" (con "desde" y "hasta")`, y con `rango` los mismos de `/cartera` (`El campo "desde" es obligatorio`, …), `La fecha "desde" no puede ser anterior a la fecha de registro del negocio (2026-10-05).` y `La fecha "hasta" no puede ser posterior a hoy (2026-10-20).`
+- Errores: **400** `Elige el período en "periodo": "hoy", "semana", "mes" o "rango" (con "desde" y "hasta")`, y con `rango` los mismos de `/cartera` (`El campo "desde" es obligatorio`, …), `La fecha "desde" no puede ser anterior a la fecha de registro del negocio (2026-10-05).` y `La fecha "hasta" no puede ser posterior a hoy (2026-10-20).` Por `comparar`: `Elige con qué comparar en "comparar": "anterior", "mes_pasado", "anio_pasado" o "personalizado" (con "compararDesde" y "compararHasta")`, `Envía "compararDesde" y "compararHasta" para comparar con un rango personalizado`, `El campo "compararDesde" debe ser una fecha real con el formato AAAA-MM-DD`, `La fecha "compararHasta" no puede ser anterior a "compararDesde"` y `El rango de comparación no puede ser mayor que 366 días`.
 
 ### Recuperar contraseña (administradoras y clientes con correo)
 
