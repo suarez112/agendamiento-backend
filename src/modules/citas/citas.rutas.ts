@@ -4,7 +4,7 @@ import { parsear } from '../../shared/http/validacion.js';
 import { type Guardias, sesionDe, tokenDe } from '../auth/guardias.js';
 import type { ServicioCuentas } from '../cuentas/cuentas.servicio.js';
 import type { GuardiaSuscripcion } from '../empresas/suscripcion.js';
-import { esquemaCrearCita, esquemaHorasOcupadas, esquemaIdCita } from './citas.esquemas.js';
+import { esquemaCrearCita, esquemaHorasDisponibles, esquemaHorasOcupadas, esquemaIdCita } from './citas.esquemas.js';
 import type { ServicioCitas } from './citas.servicio.js';
 
 export const crearRutasCitas = (
@@ -27,6 +27,11 @@ export const crearRutasCitas = (
   rutas.get('/ocupadas', async (req, res) => {
     const { empresaId } = parsear(esquemaHorasOcupadas, req.query);
     res.json(await citas.horasOcupadas(empresaId));
+  });
+
+  // Horas libres de un profesional para un servicio ese día (reemplaza la cuadrícula fija de la app)
+  rutas.get('/disponibilidad', async (req, res) => {
+    res.json(await citas.horasDisponibles(parsear(esquemaHorasDisponibles, req.query)));
   });
 
   rutas.get('/bloqueos', async (req, res) => {

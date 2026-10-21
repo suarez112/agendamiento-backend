@@ -22,6 +22,7 @@ src/
   modules/<modulo>/  auth, cuentas, empresas, citas, clientes, equipo, servicios, productos, bloqueos, cartera: <m>.rutas.ts (HTTP + zod) → <m>.servicio.ts (reglas) → <m>.repositorio.ts (SQL)
   modules/auth/acceso.ts          login único (correo o usuario)
   modules/empresas/horario.ts     horario por día (tabla horarios_empresa)
+  modules/citas/disponibilidad.ts  cálculo de las horas libres de un profesional según la duración del servicio (funciones puras)
   modules/planes/planes.ts        GET /api/v1/planes (planes y precios, público)
   modules/ubicaciones/            departamentos y municipios de Colombia (DIVIPOLA del DANE, divipola.ts generado)
   modules/empresas/suscripcion.ts estado de la suscripción y guardia 402
@@ -103,6 +104,7 @@ Puerto por defecto `4000` (`PORT`). Rutas bajo `/api/v1`.
 - Migración 018: notificaciones push. Tabla `dispositivos_push` (`token` único, de un integrante del equipo `barbero_id` o de una cuenta `usuario_id`, nunca los dos; se borra con su dueño) y `citas.recordatorio_enviado_en` (marca el recordatorio de 24 h ya enviado).
 - Migración 019: `superadmins.ultima_actividad` (momento de la última solicitud del superadmin; con más de 15 minutos de diferencia, o `NULL`, la sesión ya no sirve).
 - Migración 020: tabla `activaciones_plan` (historial de activaciones de plan: negocio, `plan_equipo`, `periodo`, `precio` de ese momento, `fecha` en hora de Colombia, `origen` `panel` | `comando` | `historico`). Sin llave foránea (copia el código y el nombre del negocio, como `actividad_superadmin`). La llena `activarPlanEmpresa` en cada activación; al aplicarla se copió la **última** activación de cada negocio que ya había pagado (`origen = 'historico'`, con los precios de `src/config/planes.ts` de ese día). Las activaciones anteriores a esta migración no se guardaron, así que no se pueden recuperar.
+- Migración 021: la duración de los servicios pasa a múltiplos de 10 de 10 a 150 (`servicios_duracion_valida`); los servicios que ya existían se redondearon hacia arriba al múltiplo de 10 más cercano dentro de ese rango (45 → 50; más de 150 → 150), las citas ya agendadas no cambian. `empresas.intervalo_minutos` (10, 20, 30, 40, 50 o 60; por defecto 30): cada cuántos minutos pueden agendar los clientes.
 - **Publicar una versión nueva de la política, los términos o el aviso**: una migración nueva que inserte filas en `documentos_legales` con otra `version` (nunca edites las filas publicadas). La más reciente de cada tipo es la vigente; los clientes con cuenta aceptan la política y los términos nuevos en su próxima reserva. Conviene publicar los tres tipos juntos con el mismo número.
 
 ## Endpoints
@@ -128,6 +130,7 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | GET | `/api/v1/empresas/actual` | sesión del personal |
 | POST | `/api/v1/citas` | público, limitado. Invitado o cliente con sesión. Exige aceptar la política y los términos (ver "Reservas"). Solo de hoy a 14 días después (hora de Colombia) y dentro del horario de ese día. 403 si el teléfono está en la lista negra o el negocio está vencido; 409 si choca con un bloqueo |
 | GET | `/api/v1/citas/ocupadas?empresaId=` | público (sin datos de clientes) |
+| GET | `/api/v1/citas/disponibilidad?empresaId=&barberoId=&servicioId=&fecha=` | público. Horas libres de un profesional para un servicio ese día (ver "Horas disponibles") |
 | GET | `/api/v1/citas/bloqueos?empresaId=` | público. Horarios bloqueados del equipo, semanales y de una fecha (sin el motivo) |
 | GET | `/api/v1/citas/agenda` | sesión del personal (admin: todo el negocio; empleado: sus citas), suscripción vigente |
 | PATCH | `/api/v1/citas/:id/completar` | sesión del personal: el barbero de la cita, o la cuenta admin (cualquier cita del negocio), suscripción vigente |
@@ -156,6 +159,8 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | PATCH | `/api/v1/superadmin/pqrs/:radicado` | superadmin. Cambia el estado y responde |
 | GET | `/api/v1/superadmin/actividad` | superadmin. Registro de actividad del superadmin |
 | GET | `/api/v1/admin/empresa/suscripcion` | personal admin (los dos tipos), **aunque esté vencida**. Estado, plan, fechas, días restantes y recordatorio |
+| GET | `/api/v1/admin/empresa/intervalo` | personal admin, aunque esté vencida. Cada cuántos minutos pueden agendar los clientes |
+| PUT | `/api/v1/admin/empresa/intervalo` | personal admin, aunque esté vencida. Cambia ese intervalo |
 | GET | `/api/v1/admin/empresa/prueba` | personal admin, aunque esté vencida (se mantiene; usa `/suscripcion`) |
 | GET | `/api/v1/admin/empresa` | personal admin, aunque esté vencida ("Mi negocio") |
 | PATCH | `/api/v1/admin/empresa` | personal admin, aunque esté vencida |
@@ -345,6 +350,11 @@ Ambos se envían como `Authorization: Bearer <token>`.
 - Los **empleados** no pueden entrar: el login, la agenda, completar citas y la cartera responden **402** `Este negocio está inactivo por ahora. Comunícate con el administrador del negocio.` (`/empresas/actual` sigue respondiendo: es la misma información pública de `/empresas/validar/:codigo`).
 - Los **clientes no pueden reservar**: `POST /citas` responde **403** `Este negocio no está recibiendo reservas por ahora`. `/empresas/validar/:codigo` (`empresa.recibiendoReservas`), `/empresas/perfil/:codigo` y `/mi-cuenta/negocios` traen `recibiendoReservas: false` para avisar antes.
 
+**GET `/api/v1/admin/empresa/intervalo`** y **PUT `/api/v1/admin/empresa/intervalo`** (solo administradores; funcionan aunque la suscripción esté vencida): el intervalo de horarios del negocio, o sea cada cuántos minutos pueden agendar los clientes. Con 10 las horas son 10:00, 10:10, 10:20…; con 30, 10:00, 10:30…
+- GET responde **200** `{ "intervaloMinutos": 30, "opciones": [10, 20, 30, 40, 50, 60] }`. Por defecto 30.
+- PUT recibe `{ "intervaloMinutos": 20 }` y responde **200** `{ "mensaje": "Intervalo de horarios actualizado", "intervaloMinutos": 20, "opciones": […] }`. **400** `El intervalo debe ser 10, 20, 30, 40, 50, 60 minutos` si no es una de las opciones. Aplica de inmediato a las horas disponibles; las citas ya agendadas no cambian.
+- También viene como `intervaloMinutos` en `GET`/`PATCH /admin/empresa` y en `GET /empresas/perfil/:codigo`.
+
 **GET `/api/v1/admin/empresa/prueba`** (se mantiene para la app de antes; usa `/suscripcion`): días de prueba que le quedan a la empresa.
 
 - Responde **200** `{ "estadoSuscripcion": "trial", "trialEndsAt": "<fecha ISO>", "diasRestantes": 12, "pruebaVencida": false }`.
@@ -482,7 +492,7 @@ Forma: `{ "id", "nombre", "duracionMin": 30, "duracion": "30 min", "precio": 250
 
 **GET `/api/v1/servicios`** (admin): **200** servicios activos.
 
-**POST `/api/v1/servicios`** (admin): recibe `{ "nombre": "Corte", "duracionMin": 30, "precio": 25000 }`, todos obligatorios: `nombre` máx. 100; `duracionMin` entero de 1 a 1440; `precio` 0 o más, máximo 2 decimales. **201** con el servicio.
+**POST `/api/v1/servicios`** (admin): recibe `{ "nombre": "Corte", "duracionMin": 30, "precio": 25000 }`, todos obligatorios: `nombre` máx. 100; `duracionMin` múltiplo de 10 de 10 a 150 (2 h 30; **400** `La duración debe ser un múltiplo de 10 minutos, de 10 a 150 (2 h 30)`); `precio` 0 o más, máximo 2 decimales. **201** con el servicio.
 
 **PATCH `/api/v1/servicios/:id`** (admin): uno o más de esos campos. **200** con el servicio. Las citas ya agendadas conservan su precio y duración. **404** `Servicio no encontrado`.
 
@@ -535,6 +545,21 @@ Un bloqueo solo se puede crear en un día que el negocio abre (según el `horari
 
 **GET `/api/v1/citas/bloqueos?empresaId=`** (público, para la pantalla de reservar): **200** los dos tipos, **sin el motivo**: `[{ "barberoId", "tipo": "semanal", "diaSemana": 1, "fecha": null, "todoElDia": false, "horaInicio": "12:00", "horaFin": "13:00" }, { "barberoId", "tipo": "fecha", "diaSemana": null, "fecha": "2026-10-22", "todoElDia": true, "horaInicio": "00:00", "horaFin": "24:00" }]`. Los de fecha solo de hoy en adelante (hora de Colombia). Una reserva que cae en cualquier bloqueo responde **409** `El profesional no atiende en ese horario. Por favor elige otra hora.`
 
+#### Horas disponibles (`GET /api/v1/citas/disponibilidad`)
+
+Público. Parámetros: `empresaId`, `barberoId`, `servicioId` y `fecha` (AAAA-MM-DD). Reemplaza la cuadrícula fija de la app: calcula las horas **de ese profesional, ese día y ese servicio**, con el horario del negocio ese día, sus citas (no canceladas), sus bloqueos (semanales y de esa fecha) y la **duración del servicio elegido**. Responde **200**:
+
+```json
+{ "empresaId": "…", "barberoId": "…", "servicioId": "…", "fecha": "2026-10-22", "duracionMin": 30, "intervaloMinutos": 30,
+  "horas": [ { "inicio": "08:00", "hora": "08:00 AM", "pegada": true }, { "inicio": "08:30", "hora": "08:30 AM", "pegada": false } ] }
+```
+
+- `inicio` es HH:MM de 24 h; `hora` es el mismo momento en el formato de `POST /citas` (`"08:30 AM"`). `pegada: true` = recomendada: queda pegada a la apertura, al fin de una cita o bloqueo, o termina justo cuando empieza la siguiente cita, el siguiente bloqueo o el cierre (no deja huecos). Ordenadas de menor a mayor; `[]` si el negocio no atiende ese día o no queda espacio.
+- **Qué se ofrece** (solo si el servicio cabe completo en el espacio libre): (1) siempre las horas pegadas; (2) en el resto del espacio libre, las horas del intervalo del negocio (`intervalo_minutos`, alineadas al reloj: con 30, 10:00 y 10:30), **salvo** las que dejarían antes o después del servicio un hueco más corto que el servicio activo más corto del negocio (ese hueco no se podría vender; los servicios no están ligados a un profesional, así que "el más corto" es el del negocio). Ejemplo: 08:00 a 12:00 con una cita de 09:10 a 09:50, servicio de 30 min, intervalo 30 y servicio más corto 20 → `08:00* 08:40* 09:50* 10:30 11:00 11:30*` (`*` = pegada; 08:30 y 10:00 se descartan porque dejarían un hueco de 10 min).
+- Hoy no se ofrecen las horas que ya pasaron (hora de Colombia). Cálculo en `src/modules/citas/disponibilidad.ts` (funciones puras).
+- Errores: **400** `No se pueden agendar citas en fechas pasadas` o `Solo puedes reservar desde hoy hasta 14 días después (…)`, `La fecha debe tener el formato AAAA-MM-DD`, `Falta el identificador …`; **403** negocio sin suscripción vigente; **404** `Servicio o profesional no encontrado`.
+- `POST /citas` **no** exige que la hora venga de esta lista: solo que no choque (ver "Reservas").
+
 #### Reservas (`POST /api/v1/citas`)
 
 Cuerpo: `{ "empresaId", "barberoId", "servicioId", "fecha": "2026-10-21", "hora": "10:00 AM", "nombre", "telefono", "indicativo"?, "aceptaPoliticaDatos": true, "aceptaTerminos": true }`.
@@ -546,6 +571,8 @@ El teléfono se valida y se guarda en E.164 (ver "Teléfonos"); la respuesta tra
 - Cualquier otro token (personal, admin o vencido) se ignora: la reserva es de invitado.
 - Negocio con la suscripción vencida: **403** `Este negocio no está recibiendo reservas por ahora`.
 - Solo con profesionales que atienden clientes (`atiendeClientes`); si no, **404** `Servicio o profesional no encontrado`.
+
+**La revisión de la hora y el guardado son una sola transacción**: se bloquea la fila del profesional (`SELECT … FOR UPDATE` sobre `barberos`, que también espera a un bloqueo que se esté creando), y dentro se comprueba que la hora no choque con **un bloqueo** (**409** `El profesional no atiende en ese horario. Por favor elige otra hora.`) ni con **otra cita** no cancelada (**409** `Esa hora ya está ocupada. Por favor elige otra.`), y recién entonces se guardan el cliente y la cita. Así no se puede reservar sobre un bloqueo ni dos clientes pueden tomar la misma hora aunque lleguen a la vez. `citas_sin_solapamiento` sigue como última defensa (mismo 409). *Por qué antes se podía:* la revisión del bloqueo se hacía fuera de la transacción, así que un bloqueo creado entre la revisión y el guardado no se veía.
 
 Además de las reglas de siempre (lista negra, bloqueos, choque con otra cita), una reserva debe cumplir:
 

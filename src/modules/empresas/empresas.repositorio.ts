@@ -74,14 +74,29 @@ export type FilaPerfilEmpresa = {
   estado_suscripcion: string;
   trial_ends_at: Date | null;
   created_at: Date | null;
+  intervalo_minutos: number;
 };
 
 const COLUMNAS_PERFIL = `id, nombre, codigo_acceso, categoria, direccion, departamento, ciudad,
                          nombre_administradora, numero_empleados, logo_url, foto_url, color_primario, color_secundario,
-                         latitud, longitud, precision_ubicacion, estado_suscripcion, trial_ends_at, created_at`;
+                         latitud, longitud, precision_ubicacion, estado_suscripcion, trial_ends_at, created_at,
+                         intervalo_minutos`;
 
 export const buscarPerfilEmpresa = async (db: Consultable, id: string) =>
   (await db.query<FilaPerfilEmpresa>(`SELECT ${COLUMNAS_PERFIL} FROM empresas WHERE id = $1`, [id])).rows[0];
+
+// Cada cuántos minutos pueden agendar los clientes (10, 20, 30, 40, 50 o 60)
+export const buscarIntervalo = async (db: Consultable, empresaId: string) =>
+  (await db.query<{ intervalo_minutos: number }>('SELECT intervalo_minutos FROM empresas WHERE id = $1', [empresaId]))
+    .rows[0]?.intervalo_minutos;
+
+export const cambiarIntervalo = async (db: Consultable, empresaId: string, minutos: number) =>
+  (
+    await db.query<{ intervalo_minutos: number }>(
+      'UPDATE empresas SET intervalo_minutos = $2 WHERE id = $1 RETURNING intervalo_minutos',
+      [empresaId, minutos],
+    )
+  ).rows[0]?.intervalo_minutos;
 
 // Vista pública del negocio: los clientes la buscan con el código de acceso
 export const buscarPerfilEmpresaPorCodigo = async (db: Consultable, codigo: string) =>

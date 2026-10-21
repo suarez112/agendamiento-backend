@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { INTERVALOS_MINUTOS } from '../citas/disponibilidad.js';
 import { departamentoOficial, municipioOficial } from '../ubicaciones/ubicaciones.js';
 import { esquemaHorario } from './horario.js';
 
@@ -154,3 +155,15 @@ export const esquemaActualizarEmpresa = conUbicacionValida(
 
 export type PerfilEmpresa = z.output<typeof esquemaPerfilEmpresa>;
 export type CambiosEmpresa = z.output<typeof esquemaActualizarEmpresa>;
+
+const MENSAJE_INTERVALO = `El intervalo debe ser ${INTERVALOS_MINUTOS.join(', ')} minutos`;
+
+// Cada cuántos minutos pueden agendar los clientes
+export const esquemaIntervalo = z.object(
+  {
+    intervaloMinutos: z
+      .number({ error: MENSAJE_INTERVALO })
+      .refine((m) => INTERVALOS_MINUTOS.includes(m), MENSAJE_INTERVALO),
+  },
+  { error: 'Envía el intervalo en "intervaloMinutos"' },
+);

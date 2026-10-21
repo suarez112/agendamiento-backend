@@ -7,6 +7,7 @@ import { armarHorario, guardarHorario, listarHorarios } from './horario.js';
 import { type AlmacenFotos, urlFoto } from './fotos.js';
 import type { FilaEmpresa, FilaPerfilEmpresa } from './empresas.repositorio.js';
 import { buscarPlan, PLANES, planParaPersonas } from '../../config/planes.js';
+import { INTERVALOS_MINUTOS } from '../citas/disponibilidad.js';
 import { DIAS_RECORDATORIO, estadoEfectivo, mensajeBloqueo, planInsuficiente } from './suscripcion.js';
 
 // Mismo formato que la restricción empresas_codigo_acceso_valido (migración 007)
@@ -134,6 +135,19 @@ export const crearServicioEmpresas = ({ pool, fotos }: { pool: pg.Pool; fotos: A
       return armarPerfil(await conHorario(perfil), urlBase);
     },
 
+    // Cada cuántos minutos pueden agendar los clientes
+    async intervalo(empresaId: string) {
+      const minutos = await repositorio.buscarIntervalo(pool, empresaId);
+      if (minutos === undefined) throw errores.noEncontrado('Establecimiento no encontrado');
+      return { intervaloMinutos: minutos, opciones: INTERVALOS_MINUTOS };
+    },
+
+    async cambiarIntervalo(empresaId: string, minutos: number) {
+      const nuevo = await repositorio.cambiarIntervalo(pool, empresaId, minutos);
+      if (nuevo === undefined) throw errores.noEncontrado('Establecimiento no encontrado');
+      return { mensaje: 'Intervalo de horarios actualizado', intervaloMinutos: nuevo, opciones: INTERVALOS_MINUTOS };
+    },
+
     // Para el registro y "Mi negocio": el código ya viene validado y en mayúsculas
     async codigoDisponible(codigo: string) {
       return { codigo, disponible: await repositorio.codigoDisponible(pool, codigo) };
@@ -245,6 +259,7 @@ const armarPerfilPublico = ({ perfil: p, horario: h }: PerfilConHorario, urlBase
   colorPrimario: p.color_primario,
   colorSecundario: p.color_secundario,
   googleMapsUrl: enlaceGoogleMaps(p),
+  intervaloMinutos: p.intervalo_minutos,
 });
 
 const armarPerfil = ({ perfil: p, horario: h }: PerfilConHorario, urlBase: string) => ({
@@ -269,6 +284,7 @@ const armarPerfil = ({ perfil: p, horario: h }: PerfilConHorario, urlBase: strin
   longitud: numeroONulo(p.longitud),
   precisionUbicacion: numeroONulo(p.precision_ubicacion),
   googleMapsUrl: enlaceGoogleMaps(p),
+  intervaloMinutos: p.intervalo_minutos,
   estadoSuscripcion: p.estado_suscripcion,
   trialEndsAt: p.trial_ends_at,
   creadaEn: p.created_at,

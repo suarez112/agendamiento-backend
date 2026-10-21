@@ -4,7 +4,7 @@ import type { Limitadores } from '../../shared/http/limitadores.js';
 import { parsear } from '../../shared/http/validacion.js';
 import { type Guardias, sesionDe } from '../auth/guardias.js';
 import { SOLO_ADMIN } from '../auth/permisos.js';
-import { esquemaActualizarEmpresa, esquemaCodigoNegocio } from './empresas.esquemas.js';
+import { esquemaActualizarEmpresa, esquemaCodigoNegocio, esquemaIntervalo } from './empresas.esquemas.js';
 import type { ServicioEmpresas } from './empresas.servicio.js';
 import { recibirFoto, type UrlBase } from './fotos.js';
 
@@ -53,6 +53,16 @@ export const crearRutasAdminEmpresa = (empresas: ServicioEmpresas, guardias: Gua
 
   rutas.get('/suscripcion', ...soloAdmin, async (_req, res) => {
     res.json(await empresas.suscripcion(sesionDe(res).empresaId));
+  });
+
+  // Cada cuántos minutos pueden agendar los clientes (10, 20, 30, 40, 50 o 60)
+  rutas.get('/intervalo', ...soloAdmin, async (_req, res) => {
+    res.json(await empresas.intervalo(sesionDe(res).empresaId));
+  });
+
+  rutas.put('/intervalo', ...soloAdmin, async (req, res) => {
+    const { intervaloMinutos } = parsear(esquemaIntervalo, req.body);
+    res.json(await empresas.cambiarIntervalo(sesionDe(res).empresaId, intervaloMinutos));
   });
 
   rutas.get('/', ...soloAdmin, async (req, res) => {

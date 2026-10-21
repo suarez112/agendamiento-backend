@@ -13,10 +13,22 @@ import type { DatosNuevaCita } from './citas.esquemas.js';
 import * as repositorio from './citas.repositorio.js';
 import { DIAS_RESERVA } from './citas.repositorio.js';
 import { esDiaCompleto } from '../bloqueos/bloqueos.servicio.js';
-import { hora12AMinutos, hora24AMinutos, minutosAHHMM } from './horas.js';
+import { calcularHoras } from './disponibilidad.js';
+import { hora12AMinutos, hora24AMinutos, minutosAHHMM, minutosAHora12 } from './horas.js';
 
 const HORA_OCUPADA = 'Esa hora ya está ocupada. Por favor elige otra.';
+const HORA_BLOQUEADA = 'El profesional no atiende en ese horario. Por favor elige otra hora.';
 const FALTAN_DATOS = 'Faltan datos para agendar la cita';
+
+// Solo desde hoy hasta 14 días después, en hora de Colombia ("AAAA-MM-DD" se compara bien como texto)
+const validarFecha = (fecha: string, { hoy, ultimo_dia }: { hoy: string; ultimo_dia: string }) => {
+  if (fecha < hoy) throw errores.solicitudInvalida('No se pueden agendar citas en fechas pasadas');
+  if (fecha > ultimo_dia) {
+    throw errores.solicitudInvalida(
+      `Solo puedes reservar desde hoy hasta ${DIAS_RESERVA} días después (hasta el ${ultimo_dia}).`,
+    );
+  }
+};
 
 // notificaciones: avisos push opcionales (nunca hacen fallar la reserva ni la cancelación)
 export const crearServicioCitas = ({ pool, notificaciones }: { pool: pg.Pool; notificaciones?: Avisos }) => ({
@@ -44,13 +56,8 @@ export const crearServicioCitas = ({ pool, notificaciones }: { pool: pg.Pool; no
     const reserva = await repositorio.buscarDatosReserva(pool, { empresaId, barberoId, servicioId, fecha });
     if (!reserva) throw errores.noEncontrado('Servicio o profesional no encontrado');
 
-    // 2. Solo desde hoy hasta 14 días después, en hora de Colombia ("AAAA-MM-DD" se compara bien como texto)
-    if (fecha < reserva.hoy) throw errores.solicitudInvalida('No se pueden agendar citas en fechas pasadas');
-    if (fecha > reserva.ultimo_dia) {
-      throw errores.solicitudInvalida(
-        `Solo puedes reservar desde hoy hasta ${DIAS_RESERVA} días después (hasta el ${reserva.ultimo_dia}).`,
-      );
-    }
+    // 2. Solo desde hoy hasta 14 días después, en hora de Colombia
+    validarFecha(fecha, reserva);
 
     // 3. El negocio debe atender ese día, y la cita caber dentro de su horario de ese día
     if (!reserva.horario_apertura || !reserva.horario_cierre) {
@@ -62,20 +69,28 @@ export const crearServicioCitas = ({ pool, notificaciones }: { pool: pg.Pool; no
       throw errores.solicitudInvalida('La hora elegida está fuera del horario del negocio');
     }
 
-    // 4. Ni números de la lista negra del negocio, ni horas que el profesional bloqueó
+    // 4. Ningún número de la lista negra del negocio
     if (await repositorio.telefonoEnListaNegra(pool, empresaId, telefono)) {
       throw errores.prohibido('No es posible agendar con este número. Comunícate con el negocio.');
     }
     const horario = { horaInicio: minutosAHHMM(inicio), horaFin: minutosAHHMM(fin) };
-    if (await repositorio.chocaConBloqueo(pool, { barberoId, fecha, ...horario })) {
-      throw errores.conflicto('El profesional no atiende en ese horario. Por favor elige otra hora.');
-    }
 
-    // 5. Cliente y cita juntos: o se guardan los dos, o ninguno. La restricción
-    //    citas_sin_solapamiento rechaza la segunda de dos reservas simultáneas.
+    // 5. Revisión de la hora, cliente y cita juntos, en una sola transacción: o se guarda
+    //    todo, o nada. Las reservas de un mismo profesional se hacen de una en una, así que
+    //    la hora no puede quedar tomada ni bloqueada entre la revisión y el guardado. La
+    //    restricción citas_sin_solapamiento queda como última defensa.
     const citaId = randomUUID();
     try {
       await enTransaccion(pool, async (tx) => {
+        if (!(await repositorio.bloquearProfesional(tx, empresaId, barberoId))) {
+          throw errores.noEncontrado('Servicio o profesional no encontrado');
+        }
+        if (await repositorio.chocaConBloqueo(tx, { barberoId, fecha, ...horario })) {
+          throw errores.conflicto(HORA_BLOQUEADA);
+        }
+        if (await repositorio.chocaConCita(tx, { barberoId, fecha, ...horario })) {
+          throw errores.conflicto(HORA_OCUPADA);
+        }
         const clienteId = await repositorio.registrarCliente(tx, {
           id: randomUUID(),
           empresaId,
@@ -136,6 +151,41 @@ export const crearServicioCitas = ({ pool, notificaciones }: { pool: pg.Pool; no
         duracionMin: reserva.duracion_min,
         estado: 'CONFIRMADA',
       },
+    };
+  },
+
+  // Horas en que el profesional puede recibir el servicio elegido ese día, según el horario
+  // del negocio, sus citas y bloqueos y la duración del servicio. Pública.
+  async horasDisponibles(p: { empresaId: string; barberoId: string; servicioId: string; fecha: string }) {
+    const suscripcion = await buscarSuscripcion(pool, p.empresaId);
+    if (suscripcion && !suscripcion.habilitada) throw errores.prohibido(SIN_RESERVAS);
+
+    const datos = await repositorio.buscarDatosReserva(pool, p);
+    if (!datos) throw errores.noEncontrado('Servicio o profesional no encontrado');
+    validarFecha(p.fecha, datos);
+
+    const abierto = datos.horario_apertura !== null && datos.horario_cierre !== null;
+    const horas = abierto
+      ? calcularHoras({
+          apertura: hora24AMinutos(datos.horario_apertura!),
+          cierre: hora24AMinutos(datos.horario_cierre!),
+          ocupados: await repositorio.listarTramosOcupados(pool, p),
+          duracion: datos.duracion_min,
+          intervalo: datos.intervalo_minutos,
+          servicioMasCorto: Math.min(datos.servicio_mas_corto, datos.duracion_min),
+          // Hoy no se ofrecen las horas que ya pasaron (la hora actual, al siguiente múltiplo de 10)
+          desde: p.fecha === datos.hoy ? Math.ceil(datos.minutos_ahora / 10) * 10 : undefined,
+        })
+      : [];
+
+    return {
+      empresaId: p.empresaId,
+      barberoId: p.barberoId,
+      servicioId: p.servicioId,
+      fecha: p.fecha,
+      duracionMin: datos.duracion_min,
+      intervaloMinutos: datos.intervalo_minutos,
+      horas: horas.map((h) => ({ inicio: minutosAHHMM(h.inicio), hora: minutosAHora12(h.inicio), pegada: h.pegada })),
     };
   },
 

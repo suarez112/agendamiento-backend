@@ -25,6 +25,10 @@ export type DatosReserva = {
   // Hoy y el último día que se puede reservar, en hora de Colombia (AAAA-MM-DD)
   hoy: string;
   ultimo_dia: string;
+  // Intervalo de horarios del negocio, servicio activo más corto y hora actual de Colombia
+  intervalo_minutos: number;
+  servicio_mas_corto: number;
+  minutos_ahora: number;
 };
 
 // Las reservas van desde hoy hasta 14 días después (15 días contando hoy)
@@ -43,11 +47,16 @@ export const buscarDatosReserva = async (
               to_char(h.hora_apertura, 'HH24:MI') AS horario_apertura,
               to_char(h.hora_cierre, 'HH24:MI') AS horario_cierre,
               to_char(hoy.fecha, 'YYYY-MM-DD') AS hoy,
-              to_char(hoy.fecha + $5::int, 'YYYY-MM-DD') AS ultimo_dia
+              to_char(hoy.fecha + $5::int, 'YYYY-MM-DD') AS ultimo_dia,
+              e.intervalo_minutos,
+              (SELECT min(duracion_min) FROM servicios WHERE empresa_id = e.id AND activo)::int AS servicio_mas_corto,
+              (EXTRACT(HOUR FROM hoy.ahora) * 60 + EXTRACT(MINUTE FROM hoy.ahora))::int AS minutos_ahora
        FROM empresas e
        JOIN servicios s ON s.empresa_id = e.id AND s.id = $2 AND s.activo
        JOIN barberos b ON b.empresa_id = e.id AND b.id = $3 AND b.activo AND b.atiende_clientes
-       CROSS JOIN (SELECT (now() AT TIME ZONE 'America/Bogota')::date AS fecha) hoy
+       CROSS JOIN (
+         SELECT (now() AT TIME ZONE 'America/Bogota')::date AS fecha, (now() AT TIME ZONE 'America/Bogota')::time AS ahora
+       ) hoy
        LEFT JOIN horarios_empresa h ON h.empresa_id = e.id AND h.dia_semana = EXTRACT(DOW FROM $4::date)
        WHERE e.id = $1`,
       [p.empresaId, p.servicioId, p.barberoId, p.fecha, DIAS_RESERVA],
@@ -95,6 +104,49 @@ export const insertarCita = (
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'CONFIRMADA', $10)`,
     [c.id, c.empresaId, c.barberoId, c.servicioId, c.clienteId, c.fecha, c.horaInicio, c.horaFin, c.precio, c.usuarioId],
   );
+
+// Bloquea la fila del profesional hasta que termine la transacción: así las reservas de un
+// mismo profesional se hacen de una en una (y también esperan a un bloqueo que se esté
+// creando, que toma un bloqueo compartido sobre esa fila). false si ya no atiende clientes.
+export const bloquearProfesional = async (db: Consultable, empresaId: string, barberoId: string) =>
+  (
+    await db.query(
+      `SELECT 1 FROM barberos WHERE id = $1 AND empresa_id = $2 AND activo AND atiende_clientes FOR UPDATE`,
+      [barberoId, empresaId],
+    )
+  ).rowCount! > 0;
+
+// true si ya hay una cita (no cancelada) del profesional que se cruza con esas horas
+export const chocaConCita = async (
+  db: Consultable,
+  p: { barberoId: string; fecha: string; horaInicio: string; horaFin: string },
+) =>
+  (
+    await db.query(
+      `SELECT 1 FROM citas
+       WHERE barbero_id = $1 AND fecha = $2::date AND estado <> 'CANCELADA'
+         AND hora_inicio < $4::time AND hora_fin > $3::time
+       LIMIT 1`,
+      [p.barberoId, p.fecha, p.horaInicio, p.horaFin],
+    )
+  ).rowCount! > 0;
+
+// Lo que ocupa un profesional un día, en minutos desde la medianoche: sus citas no
+// canceladas y sus bloqueos (semanales de ese día de la semana, o de esa fecha)
+export const listarTramosOcupados = async (db: Consultable, p: { barberoId: string; fecha: string }) =>
+  (
+    await db.query<{ inicio: number; fin: number }>(
+      `SELECT (EXTRACT(EPOCH FROM hora_inicio) / 60)::int AS inicio, (EXTRACT(EPOCH FROM hora_fin) / 60)::int AS fin
+       FROM citas
+       WHERE barbero_id = $1 AND fecha = $2::date AND estado <> 'CANCELADA'
+       UNION ALL
+       SELECT (EXTRACT(EPOCH FROM hora_inicio) / 60)::int, (EXTRACT(EPOCH FROM hora_fin) / 60)::int
+       FROM bloqueos
+       WHERE barbero_id = $1
+         AND ((es_repetitivo AND dia_semana = EXTRACT(DOW FROM $2::date)) OR fecha_especifica = $2::date)`,
+      [p.barberoId, p.fecha],
+    )
+  ).rows;
 
 // true si el teléfono está en la lista negra del negocio. Compara solo los
 // dígitos: "300 123-4567" y "3001234567" son el mismo número.

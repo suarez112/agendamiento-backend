@@ -6,12 +6,17 @@ import { sesionDe } from '../auth/guardias.js';
 import type { Permisos } from '../auth/permisos.js';
 import type { ServicioServicios } from './servicios.servicio.js';
 
-const MENSAJE_DURACION = 'La duración debe ser un número entero de minutos entre 1 y 1440';
+const MENSAJE_DURACION = 'La duración debe ser un múltiplo de 10 minutos, de 10 a 150 (2 h 30)';
 
 const esquemaServicio = z.object(
   {
     nombre: texto('nombre', 100),
-    duracionMin: z.number({ error: MENSAJE_DURACION }).int(MENSAJE_DURACION).min(1, MENSAJE_DURACION).max(1440, MENSAJE_DURACION),
+    duracionMin: z
+      .number({ error: MENSAJE_DURACION })
+      .int(MENSAJE_DURACION)
+      .min(10, MENSAJE_DURACION)
+      .max(150, MENSAJE_DURACION)
+      .refine((m) => m % 10 === 0, MENSAJE_DURACION),
     precio: precio('precio'),
   },
   { error: 'Envía los datos del servicio' },

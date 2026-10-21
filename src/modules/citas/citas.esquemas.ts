@@ -40,6 +40,14 @@ export const esquemaHorasOcupadas = z.object({
   empresaId: identificador('Falta el identificador del negocio'),
 });
 
+// Horas disponibles de un profesional para un servicio en una fecha
+export const esquemaHorasDisponibles = z.object({
+  empresaId: identificador('Falta el identificador del negocio'),
+  barberoId: identificador('Falta el identificador del profesional'),
+  servicioId: identificador('Falta el identificador del servicio'),
+  fecha: texto('Falta la fecha').refine(esFechaReal, 'La fecha debe tener el formato AAAA-MM-DD'),
+});
+
 export const esquemaIdCita = z.object({
   id: identificador('Identificador de cita inválido'),
 });
