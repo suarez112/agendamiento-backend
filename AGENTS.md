@@ -28,7 +28,8 @@ src/
   modules/empresas/suscripcion.ts estado de la suscripción y guardia 402
   modules/legal/legal.ts          política y términos vigentes, prueba de las autorizaciones (Ley 1581)
   modules/pqrs/                   PQRS: peticiones, quejas, reclamos y sugerencias con radicado y estado
-  modules/notificaciones/         notificaciones push: dispositivos, avisos de citas y tarea de recordatorios (recordatorios.ts)
+  modules/notificaciones/         centro de notificaciones de la app, push (dispositivos), avisos de citas y tarea de recordatorios (recordatorios.ts)
+  modules/categorias/             categorías de negocio (Barbería, Peluquería, Salón de belleza): públicas las activas, las administra el superadmin
   modules/superadmin/             panel del dueño de la plataforma: login con TOTP, negocios, PQRS y registro de actividad (totp.ts: segundo paso)
   modules/empresas/activacion.ts  activar un plan a una empresa (lo usan dev:activar-plan y el panel) y anotarlo en el historial de ingresos (activaciones_plan)
   modules/cuentas/eliminacion.servicio.ts  eliminar la cuenta y los datos personales (Ley 1581)
@@ -90,7 +91,7 @@ Puerto por defecto `4000` (`PORT`). Rutas bajo `/api/v1`.
 ## Base de datos y entorno
 
 - PostgreSQL vía `pg` (`src/db/pool.ts`), con las extensiones `btree_gist` (migración 002) y `gen_random_uuid()` (PostgreSQL 13 o superior).
-- Variables en `.env` en la raíz (ignorado por git; nunca lo subas). Se validan al arrancar en `src/config/entorno.ts`: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_POOL_MAX`, `JWT_SECRET`, `JWT_EXPIRA_EN`, `CORS_ORIGINS`, `TRUST_PROXY`, `NODE_ENV`, `PORT`, `CARPETA_SUBIDAS` (opcional, por defecto `uploads`: carpeta de las fotos subidas, ignorada por git) `URL_PUBLICA` (opcional: dirección pública del servidor, ej. `https://api.mibarberia.co`, para armar las URL de las fotos; si falta se usa la dirección de cada solicitud, así que configúrala en producción) y `EXPO_ACCESS_TOKEN` (opcional: token de acceso de Expo para las notificaciones push; sin él también se envían).
+- Variables en `.env` en la raíz (ignorado por git; nunca lo subas). Se validan al arrancar en `src/config/entorno.ts`: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_POOL_MAX`, `JWT_SECRET`, `JWT_EXPIRA_EN`, `CORS_ORIGINS`, `TRUST_PROXY`, `NODE_ENV`, `PORT`, `CARPETA_SUBIDAS` (opcional, por defecto `uploads`: carpeta de las fotos subidas, ignorada por git) `ENLACE_PUBLICO_BASE` (opcional, por defecto `agendaya.app`: dirección base de los enlaces públicos de los negocios; sin `http(s)://` se asume `https://`; ver "Enlace público del negocio"), `URL_PUBLICA` (opcional: dirección pública del servidor, ej. `https://api.mibarberia.co`, para armar las URL de las fotos; si falta se usa la dirección de cada solicitud, así que configúrala en producción) y `EXPO_ACCESS_TOKEN` (opcional: token de acceso de Expo para las notificaciones push; sin él también se envían).
 - El esquema solo cambia con un archivo nuevo en `db/migraciones/` (siguiente número). Nunca edites una migración ya aplicada. Casi siempre es `.sql`; si hace falta código (ej. una librería), puede ser `.ts` y exportar por defecto `async (db: pg.PoolClient) => {…}`, que corre en la misma transacción (ver la 011). Una migración `.ts` no importa nada de `src/`, para que siga haciendo lo mismo aunque el código cambie.
 - Migración 007: horario por día en `horarios_empresa` (un día sin fila = cerrado; reemplaza `dias_atencion`, `horario_apertura` y `horario_cierre`, que se copiaron ahí), quita `nit`, `telefono` y `correo` de `empresas`, agrega `empresas.departamento`, empleados de 1 a 10, código del negocio `^[A-Z0-9]{1,10}$`, `usuarios.usuario` y bloqueos semanales o de una fecha (`bloqueos_tipo_valido`). La 008 corrige el trigger de usuario único.
 - Migración 009: `barberos.atiende_clientes`; plan de la suscripción (`empresas.plan_suscripcion` `mensual`|`anual`, `fecha_pago`, `suscripcion_fin`); cuentas de cliente (`usuarios.nombre`, `telefono`, `indicativo`; `correo` pasa a opcional: correo o usuario); `negocios_guardados`; `citas.usuario_id` (cliente que reservó con su sesión); `documentos_legales` y `autorizaciones_datos`. La 010 publica el borrador `0.1-borrador` de la política y los términos.
@@ -105,6 +106,7 @@ Puerto por defecto `4000` (`PORT`). Rutas bajo `/api/v1`.
 - Migración 019: `superadmins.ultima_actividad` (momento de la última solicitud del superadmin; con más de 15 minutos de diferencia, o `NULL`, la sesión ya no sirve).
 - Migración 020: tabla `activaciones_plan` (historial de activaciones de plan: negocio, `plan_equipo`, `periodo`, `precio` de ese momento, `fecha` en hora de Colombia, `origen` `panel` | `comando` | `historico`). Sin llave foránea (copia el código y el nombre del negocio, como `actividad_superadmin`). La llena `activarPlanEmpresa` en cada activación; al aplicarla se copió la **última** activación de cada negocio que ya había pagado (`origen = 'historico'`, con los precios de `src/config/planes.ts` de ese día). Las activaciones anteriores a esta migración no se guardaron, así que no se pueden recuperar.
 - Migración 021: la duración de los servicios pasa a múltiplos de 10 de 10 a 150 (`servicios_duracion_valida`); los servicios que ya existían se redondearon hacia arriba al múltiplo de 10 más cercano dentro de ese rango (45 → 50; más de 150 → 150), las citas ya agendadas no cambian. `empresas.intervalo_minutos` (10, 20, 30, 40, 50 o 60; por defecto 30): cada cuántos minutos pueden agendar los clientes.
+- Migración 022: tabla `categorias_negocio` (`nombre` único sin distinguir mayúsculas, `activa`; se cargan Barbería, Peluquería y Salón de belleza; `empresas.categoria` sigue guardando el nombre, así que los negocios que ya existían no cambian) y tabla `notificaciones` (centro de notificaciones: de una cuenta `usuario_id` o de un integrante `barbero_id`, nunca los dos; `tipo`, `titulo`, `texto`, `cita_id` que se desvincula si la cita se borra, `leida_en`).
 - **Publicar una versión nueva de la política, los términos o el aviso**: una migración nueva que inserte filas en `documentos_legales` con otra `version` (nunca edites las filas publicadas). La más reciente de cada tipo es la vigente; los clientes con cuenta aceptan la política y los términos nuevos en su próxima reserva. Conviene publicar los tres tipos juntos con el mismo número.
 
 ## Endpoints
@@ -118,11 +120,16 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | POST | `/api/v1/auth/login` | público, limitado. Personal (barberos). Cuerpo `{ usuario, clave }` (se mantiene) |
 | GET | `/api/v1/ubicaciones` | público. Departamentos de Colombia con sus municipios |
 | GET | `/api/v1/planes` | público. Planes por tamaño de equipo con sus precios (ver "Planes") |
+| GET | `/api/v1/categorias` | público. Categorías de negocio activas (ver "Categorías de negocio") |
 | GET | `/api/v1/legal/politica-datos` | público. Texto vigente de la Política de Tratamiento de Datos, con su versión |
 | GET | `/api/v1/legal/terminos` | público. Texto vigente de los Términos y Condiciones, con su versión |
 | GET | `/api/v1/legal/aviso-privacidad` | público. Texto corto vigente del Aviso de privacidad (va junto a la casilla de autorización), con su versión |
 | PUT | `/api/v1/dispositivos` | cualquier sesión (personal, administradora o cliente con cuenta). Guarda el token de notificaciones push del celular (ver "Notificaciones push") |
 | DELETE | `/api/v1/dispositivos` | cualquier sesión. Borra ese token al cerrar sesión |
+| GET | `/api/v1/notificaciones` | cualquier sesión. Centro de notificaciones: las suyas, paginadas (ver "Centro de notificaciones") |
+| GET | `/api/v1/notificaciones/no-leidas` | cualquier sesión. Cuántas tiene sin leer |
+| PATCH | `/api/v1/notificaciones/:id/leida` | cualquier sesión. Marca una como leída |
+| PATCH | `/api/v1/notificaciones/leidas` | cualquier sesión. Marca todas como leídas |
 | PATCH | `/api/v1/mi-cuenta/citas/:id/cancelar` | cuenta de cliente. Cancela una cita suya que aún no empezó |
 | GET | `/api/v1/empresas/codigo-disponible/:codigo` | público, limitado. ¿Algún negocio usa ya ese código? |
 | GET | `/api/v1/empresas/validar/:codigo` | público, limitado |
@@ -157,6 +164,9 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | GET | `/api/v1/superadmin/pqrs` | superadmin. Todas las PQRS, con filtros y paginación |
 | GET | `/api/v1/superadmin/pqrs/:radicado` | superadmin. Detalle de una PQRS |
 | PATCH | `/api/v1/superadmin/pqrs/:radicado` | superadmin. Cambia el estado y responde |
+| GET | `/api/v1/superadmin/categorias` | superadmin. Todas las categorías, con su estado |
+| POST | `/api/v1/superadmin/categorias` | superadmin. Crea una categoría |
+| PATCH | `/api/v1/superadmin/categorias/:id` | superadmin. Edita el nombre o la desactiva o reactiva |
 | GET | `/api/v1/superadmin/actividad` | superadmin. Registro de actividad del superadmin |
 | GET | `/api/v1/admin/empresa/suscripcion` | personal admin (los dos tipos), **aunque esté vencida**. Estado, plan, fechas, días restantes y recordatorio |
 | GET | `/api/v1/admin/empresa/intervalo` | personal admin, aunque esté vencida. Cada cuántos minutos pueden agendar los clientes |
@@ -191,6 +201,7 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | PUT | `/api/v1/productos/:id/foto` | personal admin, suscripción vigente |
 | DELETE | `/api/v1/productos/:id/foto` | personal admin, suscripción vigente |
 | GET | `/api/v1/bloqueos` | personal admin, suscripción vigente (los empleados no ven ni usan bloqueos) |
+| GET | `/api/v1/bloqueos/calendario?desde=&hasta=&barberoId=` | personal admin, suscripción vigente. Bloqueos y citas de un rango, con el inicio y fin reales de cada cita |
 | POST | `/api/v1/bloqueos` | personal admin, suscripción vigente |
 | DELETE | `/api/v1/bloqueos/:id` | personal admin, suscripción vigente |
 | GET | `/api/v1/cartera?desde=&hasta=&barberoId=` | personal (admin: todo el negocio o un integrante; empleado: lo suyo), suscripción vigente |
@@ -198,6 +209,20 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | GET | `/uploads/empresas/<archivo>`, `/uploads/barberos/<archivo>`, `/uploads/productos/<archivo>` | público. La imagen guardada (se usa la dirección que devuelve la API) |
 
 "Sesión del personal" acepta **dos tokens**: el del barbero (`/api/v1/auth/login`) y el de la **cuenta del administrador de la empresa** (`/api/v1/cuentas/login`, `rol = admin`). La cuenta admin cuenta como administrador del negocio (`esAdmin`), siempre de su propia empresa. "Personal admin" = integrante del equipo con rol Administrador (`esAdmin`) o cuenta admin: **los dos tienen los mismos permisos** sobre su empresa (Mi negocio, suscripción, equipo, servicios, productos, bloqueos, clientes y la cartera completa). Un **empleado** (integrante con rol Empleado) solo usa su agenda y su propia cartera. Detalle en "Gestión del negocio".
+
+### Contraseñas nuevas
+
+Toda contraseña **nueva o cambiada** (registro de empresa, registro de cliente, restablecer con código, y crear o editar un integrante del equipo con `clave`) debe tener de 8 a 64 caracteres con al menos una **mayúscula**, una **minúscula**, un **número** y un **carácter especial** (algo que no sea letra, número ni espacio). Si no, **400** `La contraseña debe tener entre 8 y 64 caracteres e incluir una mayúscula, una minúscula, un número y un carácter especial`. La regla está en `claveNueva` (`src/shared/http/esquemas.ts`). Las contraseñas que ya existen **siguen funcionando** en los logins (que solo piden que la clave no esté vacía). Las del superadmin las genera el comando de desarrollador y ya cumplen la regla.
+
+### Enlace público del negocio
+
+Cada negocio tiene un enlace para compartir: `<ENLACE_PUBLICO_BASE>/<CÓDIGO>` (ej. `https://agendaya.app/CENTRAL10`). Llega como `enlacePublico` en la respuesta de `POST /cuentas/registro/empresa` (dentro de `empresa`) y en `GET`/`PATCH /admin/empresa` (Mi negocio). Si cambia el código del negocio, el enlace cambia con él.
+
+### Categorías de negocio
+
+- **GET `/api/v1/categorias`** (público): **200** `[{ "id", "nombre" }]` con las categorías **activas**, por orden alfabético (al inicio: Barbería, Peluquería y Salón de belleza).
+- El registro de empresa (`POST /cuentas/registro/empresa`) solo acepta una categoría activa (no distingue mayúsculas y se guarda con el nombre oficial); si no, **400** `La categoría no es válida. Elige una de la lista.` `PATCH /admin/empresa` no cambia su validación de `categoria`. Desactivar una categoría no cambia a los negocios que ya la tienen.
+- Solo el superadmin las administra (y queda en su registro de actividad como `crear_categoria` o `editar_categoria`): **GET `/superadmin/categorias`** (todas: `{ "id", "nombre", "activa" }`), **POST `/superadmin/categorias`** `{ "nombre" }` (máx. 60; **201** `{ "mensaje": "Categoría creada", "categoria" }`) y **PATCH `/superadmin/categorias/:id`** `{ "nombre"?, "activa"? }` (**200** `{ "mensaje": "Categoría actualizada", "categoria" }`). **409** `Ya existe una categoría con ese nombre`; **404** `Categoría no encontrada`. No se borran: se desactivan con `"activa": false`.
 
 ### Contrato de cuentas, prueba gratuita y administración
 
@@ -224,7 +249,7 @@ Ambos se envían como `Authorization: Bearer <token>`.
   ```jsonc
   {
     "nombre": "Barbería Central",          // obligatorio, máx. 100
-    "categoria": "Barbería",               // obligatorio, máx. 60
+    "categoria": "Barbería",               // obligatorio: una categoría activa de GET /categorias
     "codigoAcceso": "central10",           // obligatorio: el código que usan los clientes (ver abajo)
     "direccion": "Calle 10 # 20-30",       // obligatorio, máx. 200
     "departamento": "Santander",           // obligatorio, departamento de Colombia
@@ -263,7 +288,7 @@ Ambos se envían como `Authorization: Bearer <token>`.
     "token": "<jwt>",
     "usuario": { "id": "…", "correo": "ana@central.co", "usuario": "ana.perez", "rol": "admin", "empresaId": "…" },
     "empresa": {
-      "id": "…", "nombre": "Barbería Central", "codigoAcceso": "CENTRAL10",
+      "id": "…", "nombre": "Barbería Central", "codigoAcceso": "CENTRAL10", "enlacePublico": "https://agendaya.app/CENTRAL10",
       "estadoSuscripcion": "trial", "trialEndsAt": "2026-11-02T18:00:00.000Z", "diasPruebaRestantes": 15
     }
   }
@@ -271,7 +296,7 @@ Ambos se envían como `Authorization: Bearer <token>`.
 
   `trialEndsAt` = momento del registro + 15 días.
 - Errores: **400** dato faltante o inválido, por ejemplo:
-  - `El campo "ciudad" es obligatorio`, `El correo no es válido`, `La contraseña debe tener entre 8 y 64 caracteres`
+  - `El campo "ciudad" es obligatorio`, `El correo no es válido`, `La contraseña debe tener entre 8 y 64 caracteres e incluir una mayúscula, una minúscula, un número y un carácter especial`
   - `El número de empleados debe ser un número entero entre 1 y 10`
   - `El usuario debe tener entre 4 y 20 caracteres: solo letras, números, punto y guion bajo`
   - `El código del negocio solo puede tener letras (sin tildes ni ñ) y números, sin espacios, máximo 10 caracteres`
@@ -307,7 +332,7 @@ Ambos se envían como `Authorization: Bearer <token>`.
   ```
 
 - Responde **201** `{ "mensaje": "Cuenta creada", "token": "<jwt>", "usuario": { "id", "correo" | null, "usuario" | null, "rol": "cliente", "empresaId": null, "nombre", "telefono": "+573001234567", "indicativo": "57" } }`. Inicia sesión después con `/api/v1/login` (correo o usuario).
-- Errores: **400** (`Envía tus datos para crear la cuenta` si no hay cuerpo, `El campo "nombre" es obligatorio`, `El campo "teléfono" es obligatorio`, el mensaje de teléfono inválido (ver "Teléfonos"), `Envía tu correo o un nombre de usuario para iniciar sesión`, `El correo no es válido`, el mensaje de usuario inválido, `La contraseña debe tener entre 8 y 64 caracteres`, `Debes aceptar la Política de Tratamiento de Datos y los Términos y Condiciones`); **409** `Ya existe una cuenta con ese correo`, `Ese usuario ya está en uso. Elige otro.` o `Ya existe una cuenta con ese número de teléfono`; **429**.
+- Errores: **400** (`Envía tus datos para crear la cuenta` si no hay cuerpo, `El campo "nombre" es obligatorio`, `El campo "teléfono" es obligatorio`, el mensaje de teléfono inválido (ver "Teléfonos"), `Envía tu correo o un nombre de usuario para iniciar sesión`, `El correo no es válido`, el mensaje de usuario inválido, `La contraseña debe tener entre 8 y 64 caracteres e incluir una mayúscula, una minúscula, un número y un carácter especial`, `Debes aceptar la Política de Tratamiento de Datos y los Términos y Condiciones`); **409** `Ya existe una cuenta con ese correo`, `Ese usuario ya está en uso. Elige otro.` o `Ya existe una cuenta con ese número de teléfono`; **429**.
 
 **POST `/api/v1/cuentas/login`**: login de administradoras y clientes con correo (se mantiene; para la administradora también sirve `/api/v1/login`).
 
@@ -362,7 +387,7 @@ Ambos se envían como `Authorization: Bearer <token>`.
 
 **GET `/api/v1/admin/empresa`** ("Mi negocio"): perfil de la empresa del administrador (siempre la suya; no recibe id). Lo usan la cuenta admin y los integrantes con rol Administrador. `estadoSuscripcion` es el estado guardado; el estado real (con la fecha de fin) está en `/admin/empresa/suscripcion`.
 
-- Responde **200** `{ "id", "nombre", "codigoAcceso", "categoria", "direccion", "departamento", "ciudad", "horario", "diasAtencion", "horarioApertura", "horarioCierre", "nombreAdministradora", "numeroEmpleados", "logoUrl", "fotoUrl", "colorPrimario", "colorSecundario", "latitud", "longitud", "precisionUbicacion", "googleMapsUrl", "estadoSuscripcion", "trialEndsAt", "creadaEn" }`.
+- Responde **200** `{ "id", "nombre", "codigoAcceso", "enlacePublico", "categoria", "direccion", "departamento", "ciudad", "horario", "diasAtencion", "horarioApertura", "horarioCierre", "nombreAdministradora", "numeroEmpleados", "logoUrl", "fotoUrl", "colorPrimario", "colorSecundario", "latitud", "longitud", "precisionUbicacion", "googleMapsUrl", "estadoSuscripcion", "trialEndsAt", "creadaEn" }`.
 - `latitud` y `longitud`: números con hasta 6 decimales (≈ 11 cm) o `null` (ubicación en el mapa, opcional). `precisionUbicacion`: precisión del GPS en metros (un decimal) o `null`. `googleMapsUrl`: enlace de Google Maps (ver "Ubicación en Google Maps").
 - `horario` siempre trae los 7 días, de domingo (0) a sábado (6): `{ "dia": 0, "abierto": false, "apertura": null, "cierre": null }` o `{ "dia": 1, "abierto": true, "apertura": "08:00", "cierre": "19:00" }`.
 - `diasAtencion` (días abiertos), `horarioApertura` (la apertura más temprana de la semana) y `horarioCierre` (el cierre más tardío) se calculan a partir de `horario` y se mantienen para que la app actual siga funcionando; para el horario real de cada día usa `horario`.
@@ -478,7 +503,7 @@ Forma de un profesional: `{ "id", "nombre", "usuario", "rol": "admin" | "emplead
 }
 ```
 
-**201** con el profesional. Errores: **400** validación (ej. `La contraseña debe tener entre 8 y 64 caracteres`, `El rol debe ser "admin" (Administrador) o "empleado" (Empleado)`); **409** `Ese usuario ya está en uso. Elige otro.` (también si es el usuario de una administradora o de un cliente) o, con el cupo lleno, `Tu equipo ya tiene 3 integrante(s) activo(s) y tu plan Básico permite hasta 3. Para agregar a alguien más, sube al plan Equipo (hasta 5 personas).` (en Pro: `… tu plan Pro permite hasta 10. Es el plan más grande: para agregar a alguien, elimina primero del equipo a quien ya no trabaje en el negocio.`)
+**201** con el profesional. Errores: **400** validación (ej. `La contraseña debe tener entre 8 y 64 caracteres e incluir una mayúscula, una minúscula, un número y un carácter especial`, `El rol debe ser "admin" (Administrador) o "empleado" (Empleado)`); **409** `Ese usuario ya está en uso. Elige otro.` (también si es el usuario de una administradora o de un cliente) o, con el cupo lleno, `Tu equipo ya tiene 3 integrante(s) activo(s) y tu plan Básico permite hasta 3. Para agregar a alguien más, sube al plan Equipo (hasta 5 personas).` (en Pro: `… tu plan Pro permite hasta 10. Es el plan más grande: para agregar a alguien, elimina primero del equipo a quien ya no trabaje en el negocio.`)
 
 **PATCH `/api/v1/equipo/:id`**: uno o más campos del POST (`rol` cambia el rol, `atiendeClientes` activa o quita las reservas, `clave` cambia la contraseña; `especialidad: null` la quita). **200** con el profesional. Errores: **400** `No puedes quitarte a ti mismo el rol de administrador.`; **404** `Profesional no encontrado`; **409** usuario repetido.
 
@@ -537,9 +562,22 @@ Forma: `{ "id", "barberoId", "barberoNombre", "tipo": "semanal" | "fecha", "diaS
 { "barberoId": "…", "fecha": "2026-10-22", "todoElDia": true, "motivo": "Vacaciones" }          // ese día completo
 ```
 
-Horas HH:MM de 24 h, fin posterior al inicio; con `todoElDia: true` las horas se ignoran. **201** con el bloqueo. Errores: **400** `Elige el profesional en "barberoId"`, `Envía "diaSemana" para un bloqueo que se repite cada semana, o "fecha" para un bloqueo de solo ese día (solo uno de los dos)`, `Envía "horaInicio" y "horaFin", o "todoElDia": true para bloquear el día completo`, `La hora de fin debe ser posterior a la hora de inicio`, `El campo "fecha" debe ser una fecha real con el formato AAAA-MM-DD`, `El día debe ser un número del 0 (domingo) al 6 (sábado)`, `El negocio está cerrado los domingos. Elige un día en que esté abierto.` (semanal) o `El negocio está cerrado el domingo 2026-10-25. Elige un día en que esté abierto.` (de una fecha), `El bloqueo debe estar dentro del horario del negocio: los lunes abre de 08:00 a 18:00.` (o `el martes 2026-10-20 abre de …`); **403** `Solo el administrador del negocio puede usar esta función.` (barbero sin `esAdmin`); **404** `Profesional no encontrado`.
+Horas HH:MM de 24 h, fin posterior al inicio; con `todoElDia: true` las horas se ignoran. **201** con el bloqueo. Errores: **400** `Elige el profesional en "barberoId"`, `Envía "diaSemana" para un bloqueo que se repite cada semana, o "fecha" para un bloqueo de solo ese día (solo uno de los dos)`, `Envía "horaInicio" y "horaFin", o "todoElDia": true para bloquear el día completo`, `La hora de fin debe ser posterior a la hora de inicio`, `El campo "fecha" debe ser una fecha real con el formato AAAA-MM-DD`, `El día debe ser un número del 0 (domingo) al 6 (sábado)`, `El negocio está cerrado los domingos. Elige un día en que esté abierto.` (semanal) o `El negocio está cerrado el domingo 2026-10-25. Elige un día en que esté abierto.` (de una fecha), `El bloqueo debe estar dentro del horario del negocio: los lunes abre de 08:00 a 18:00.` (o `el martes 2026-10-20 abre de …`); **403** `Solo el administrador del negocio puede usar esta función.` (barbero sin `esAdmin`); **404** `Profesional no encontrado`; **409** `Hay una cita en ese horario` (ver abajo); **400** `Las horas del bloqueo deben seguir el intervalo de horarios del negocio: de 30 en 30 minutos.`
 
 Un bloqueo solo se puede crear en un día que el negocio abre (según el `horario` de ese día de la semana; en uno de una fecha, el día de la semana de esa fecha) y, si es de unas horas, dentro de la apertura y el cierre de ese día (los bordes cuentan: de 08:00 a 18:00 es válido si abre de 08:00 a 18:00). Uno de día completo solo exige que ese día abra. Los bloqueos que ya existían no se tocan, aunque hayan quedado fuera del horario.
+
+- **No se puede bloquear una hora con cita**: si el profesional tiene una cita pendiente (`CONFIRMADA`) o completada que se cruza con el bloqueo, responde **409** `Hay una cita en ese horario`. Un bloqueo de fecha mira las citas de ese día; uno semanal, las de hoy en adelante que caen en ese día de la semana (las canceladas no cuentan). La revisión y el guardado son una sola transacción con el profesional bloqueado (`FOR UPDATE`), igual que las reservas: una reserva y un bloqueo a la vez no pueden quedar encima.
+- **Las franjas siguen el intervalo del negocio** (`intervalo_minutos`, alineado al reloj: con 30, `10:00` y `10:30`): `horaInicio` y `horaFin` deben ser múltiplos del intervalo; también valen la apertura (como inicio) y el cierre (como fin) de ese día. Un día completo no se revisa. Los bloqueos que ya existían no se tocan.
+
+**GET `/api/v1/bloqueos/calendario?desde=AAAA-MM-DD&hasta=AAAA-MM-DD&barberoId=`** (solo admin): los bloqueos y las citas de un rango (máximo 62 días; `barberoId` opcional) para mostrarlos juntos. **200**:
+
+```json
+{ "desde": "2026-10-21", "hasta": "2026-10-27", "intervaloMinutos": 30,
+  "bloqueos": [ { …misma forma que GET /bloqueos: los semanales y los de fecha dentro del rango… } ],
+  "citas": [ { "id", "barberoId", "barberoNombre", "fecha": "2026-10-21", "horaInicio": "10:00", "horaFin": "10:50", "servicio", "cliente", "estado": "CONFIRMADA" } ] }
+```
+
+`horaInicio` y `horaFin` son el inicio y el fin reales de la cita (según la duración de su servicio); no incluye las canceladas. `intervaloMinutos` es el de las franjas. Errores **400**: `La fecha "hasta" no puede ser anterior a "desde"`, `El rango no puede ser mayor que 62 días`. `GET /bloqueos` no cambia.
 
 **DELETE `/api/v1/bloqueos/:id`** (solo admin): **200** `{ "mensaje": "Bloqueo eliminado" }`. **403** `Solo el administrador del negocio puede usar esta función.`; **404** `Bloqueo no encontrado`.
 
@@ -661,7 +699,7 @@ Para cuentas de la tabla `usuarios` con correo (administradoras y clientes). El 
 
 - Responde **200** `{ "mensaje": "Tu contraseña se cambió. Inicia sesión con tu nueva contraseña." }` y **cierra todas las sesiones abiertas** de esa cuenta (los tokens anteriores responden 401). La app debe pedir iniciar sesión de nuevo.
 - Tras **5 intentos fallidos** el código queda bloqueado y hay que pedir otro.
-- Errores: **400** `El código debe tener 6 dígitos`, `La contraseña debe tener entre 8 y 64 caracteres`, `El correo no es válido` y, para cualquier otro fallo (cuenta inexistente, código errado, vencido, ya usado o bloqueado), siempre el mismo: `El código no es válido, ya venció o se bloqueó por demasiados intentos. Solicita uno nuevo.`; **429** (mismo límite por conexión).
+- Errores: **400** `El código debe tener 6 dígitos`, `La contraseña debe tener entre 8 y 64 caracteres e incluir una mayúscula, una minúscula, un número y un carácter especial`, `El correo no es válido` y, para cualquier otro fallo (cuenta inexistente, código errado, vencido, ya usado o bloqueado), siempre el mismo: `El código no es válido, ya venció o se bloqueó por demasiados intentos. Solicita uno nuevo.`; **429** (mismo límite por conexión).
 
 **Envío del correo** (`src/shared/correo.ts`): interfaz `EnviadorCorreo` con un solo método, `enviar({ para, asunto, texto })`. `crearApp` puede recibir otro enviador en sus dependencias.
 
@@ -788,6 +826,17 @@ Los avisos salen por **Expo Push** (`src/shared/push.ts`, interfaz `EnviadorPush
 
 **DELETE `/api/v1/dispositivos`**: recibe `{ "token": "…" }` y borra ese token **solo si es de quien lo pide**. Se llama al cerrar sesión, antes de descartar el token de la sesión. **200** `{ "mensaje": "Dispositivo eliminado" }` (igual si no existía). Al eliminar una cuenta se borran sus tokens; un integrante eliminado del equipo deja de recibir avisos.
 
+### Centro de notificaciones (dentro de la app)
+
+Cada aviso de abajo, además de la push, se **guarda** en `notificaciones` para quien lo recibe (administradoras, integrantes del equipo y clientes con cuenta). Los endpoints sirven a cualquier sesión y cada quien ve solo las suyas (el dueño sale de la sesión; **401** sin sesión válida):
+
+- **GET `/api/v1/notificaciones?soloNoLeidas=false&pagina=1&limite=25`** (límite máximo 100): **200** `{ "total", "noLeidas", "pagina", "limite", "datos": [{ "id", "tipo", "titulo", "texto", "citaId", "leida", "leidaEn", "creadaEn" }] }`, de la más reciente a la más antigua. `total` cuenta solo las no leídas si `soloNoLeidas=true`; `noLeidas` siempre es el total sin leer. `tipo` es el mismo `data.tipo` de la push; `citaId` es `null` si la cita se borró.
+- **GET `/api/v1/notificaciones/no-leidas`**: **200** `{ "noLeidas": 3 }`.
+- **PATCH `/api/v1/notificaciones/:id/leida`**: **200** con la notificación (si ya estaba leída conserva su fecha). **404** `Notificación no encontrada` (no existe o es de otra persona).
+- **PATCH `/api/v1/notificaciones/leidas`**: marca todas como leídas. **200** `{ "mensaje": "Notificaciones marcadas como leídas", "marcadas": 2 }`.
+
+Guardar la notificación y enviar la push son pasos independientes: sin token de dispositivo solo queda la notificación interna, y si cualquiera de los dos falla (`push_fallo` en el log) la reserva o la cancelación no se afectan.
+
 **Qué se avisa y a quién** (`data.tipo` y `data.citaId` permiten a la app abrir la cita):
 
 | Evento | Quién lo recibe | `data.tipo` |
@@ -797,7 +846,7 @@ Los avisos salen por **Expo Push** (`src/shared/push.ts`, interfaz `EnviadorPush
 | El negocio cancela (`PATCH /citas/:id/cancelar`) | El cliente, solo si reservó con su cuenta | `cita_cancelada` |
 | Recordatorio de 24 h | El cliente con cuenta | `recordatorio` |
 
-- **Un fallo de envío nunca afecta la reserva ni la cancelación**: el aviso se dispara después de guardar y sin esperarlo, y cualquier error solo queda en el log (`push_fallo`, `push_expo_fallo`). Quien no tenga tokens registrados simplemente no recibe nada.
+- **Un fallo de envío nunca afecta la reserva ni la cancelación**: el aviso se dispara después de guardar y sin esperarlo, y cualquier error solo queda en el log (`push_fallo`, `push_expo_fallo`). Quien no tenga tokens registrados no recibe la push (la notificación interna sí queda).
 - **Tokens inválidos**: si Expo responde `DeviceNotRegistered`, el token se borra de `dispositivos_push`. No se consultan los recibos de Expo (solo la respuesta inmediata).
 - **Recordatorios** (`modules/notificaciones/recordatorios.ts`): una tarea que arranca `server.ts` (no `crearApp`, así las pruebas no la inician) y corre al arrancar y luego **cada 15 minutos**. Recuerda las citas `CONFIRMADA` de clientes con cuenta que empiezan dentro de **23 a 24 horas** (hora de Colombia). Una cita reservada con menos de 24 h de anticipación no recibe recordatorio. Cada cita se marca en `citas.recordatorio_enviado_en` en el mismo paso en que se elige (con bloqueo de filas), así que **no se envía dos veces** aunque haya varias instancias o dos vueltas se crucen; si el envío falla, ese recordatorio no se reintenta. Los invitados no reciben recordatorio (no tienen dispositivo).
 

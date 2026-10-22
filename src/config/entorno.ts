@@ -37,6 +37,15 @@ const esquemaEntorno = esquemaBaseDeDatos
       .url({ protocol: /^https?$/, error: 'debe ser una dirección http:// o https://' })
       .transform((url) => url.replace(/\/+$/, ''))
       .optional(),
+    // Dirección base de los enlaces públicos de los negocios (ej. agendaya.app). El enlace de
+    // cada negocio es <base>/<CÓDIGO>. Sin protocolo se asume https://.
+    ENLACE_PUBLICO_BASE: z
+      .string()
+      .trim()
+      .min(1)
+      .regex(/^(https?:\/\/)?[A-Za-z0-9.-]+(:\d+)?(\/[^\s?#]*)?$/, 'debe ser una dirección como agendaya.app')
+      .default('agendaya.app')
+      .transform((base) => (/^https?:\/\//.test(base) ? base : `https://${base}`).replace(/\/+$/, '')),
     // Token de acceso de Expo para enviar notificaciones push (opcional: sin él también funciona)
     EXPO_ACCESS_TOKEN: z.string().min(1).optional(),
   })

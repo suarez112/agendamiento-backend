@@ -9,8 +9,19 @@ export const CARPETA_SECRETOS = 'secretos-superadmin';
 
 // Sin letras que se confunden entre sí (0/O, 1/l/I)
 const CARACTERES = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
-export const generarContrasena = (largo = 20) =>
-  Array.from({ length: largo }, () => CARACTERES[randomInt(CARACTERES.length)]).join('');
+const ESPECIALES = '!#$%&*+-=?@_';
+// Siempre cumple la regla de contraseñas: mayúscula, minúscula, número y carácter especial
+export const generarContrasena = (largo = 20) => {
+  const elegir = (conjunto: string) => conjunto[randomInt(conjunto.length)];
+  const letras = Array.from({ length: largo - 4 }, () => elegir(CARACTERES));
+  const obligatorios = [elegir('ABCDEFGHJKLMNPQRSTUVWXYZ'), elegir('abcdefghijkmnopqrstuvwxyz'), elegir('23456789'), elegir(ESPECIALES)];
+  const todos = [...letras, ...obligatorios];
+  for (let i = todos.length - 1; i > 0; i--) {
+    const j = randomInt(i + 1);
+    [todos[i], todos[j]] = [todos[j], todos[i]];
+  }
+  return todos.join('');
+};
 
 // Muestra la clave del segundo paso (QR en la terminal y también escrita) y guarda el QR como PNG.
 // Devuelve la ruta del archivo.

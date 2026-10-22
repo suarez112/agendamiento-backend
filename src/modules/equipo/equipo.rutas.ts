@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { conAlMenosUnDato, esquemaId, texto, textoOpcional } from '../../shared/http/esquemas.js';
+import { claveNueva, conAlMenosUnDato, esquemaId, texto, textoOpcional } from '../../shared/http/esquemas.js';
 import { parsear } from '../../shared/http/validacion.js';
 import { sesionDe } from '../auth/guardias.js';
 import type { Permisos } from '../auth/permisos.js';
@@ -8,7 +8,6 @@ import { recibirFoto, type UrlBase } from '../empresas/fotos.js';
 import type { ServicioEquipo } from './equipo.servicio.js';
 
 const MENSAJE_USUARIO = 'El usuario debe tener entre 3 y 60 caracteres: letras, números, punto, guion o guion bajo';
-const MENSAJE_CLAVE = 'La contraseña debe tener entre 8 y 64 caracteres';
 const MENSAJE_PORCENTAJE = 'El porcentaje de ganancia debe ser un número entre 0 y 100';
 
 const MENSAJE_ROL = 'El rol debe ser "admin" (Administrador) o "empleado" (Empleado)';
@@ -19,8 +18,7 @@ const campos = {
     .string({ error: 'El campo "usuario" es obligatorio' })
     .trim()
     .regex(/^[A-Za-z0-9._-]{3,60}$/, MENSAJE_USUARIO),
-  // bcrypt solo usa los primeros 72 bytes; 64 caracteres deja margen
-  clave: z.string({ error: MENSAJE_CLAVE }).min(8, MENSAJE_CLAVE).max(64, MENSAJE_CLAVE),
+  clave: claveNueva,
   // "admin" = Administrador, "empleado" = Empleado. esAdmin se mantiene para la app
   // de antes; si llegan los dos, manda rol.
   rol: z.enum(['admin', 'empleado'], { error: MENSAJE_ROL }).optional(),

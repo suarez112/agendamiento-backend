@@ -8,7 +8,7 @@ import {
   esquemaPerfilEmpresa,
   esquemaUsuarioAdmin,
 } from '../empresas/empresas.esquemas.js';
-import { texto } from '../../shared/http/esquemas.js';
+import { claveNueva, texto } from '../../shared/http/esquemas.js';
 import { esquemaIndicativo } from '../citas/citas.esquemas.js';
 import { conTelefonoNormalizado } from '../../shared/telefonos.js';
 import { aceptacionObligatoria } from '../legal/legal.js';
@@ -17,10 +17,7 @@ import type { ServicioCuentas } from './cuentas.servicio.js';
 import type { ServicioEliminacion } from './eliminacion.servicio.js';
 import type { ServicioRecuperacion } from './recuperacion.servicio.js';
 
-const MENSAJE_CLAVE = 'La contraseña debe tener entre 8 y 64 caracteres';
-
-// bcrypt solo usa los primeros 72 bytes; 64 caracteres deja margen
-const esquemaClave = z.string({ error: MENSAJE_CLAVE }).min(8, MENSAJE_CLAVE).max(64, MENSAJE_CLAVE);
+const esquemaClave = claveNueva;
 
 // La administradora entra con su correo o su usuario, y su contraseña
 // Debe aceptar la Política de Tratamiento de Datos y los Términos y Condiciones

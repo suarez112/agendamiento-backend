@@ -1,6 +1,8 @@
 import type pg from 'pg';
+import { enTransaccion } from '../../db/pool.js';
 import { errores } from '../../shared/errores.js';
 import type { Sesion } from '../auth/auth.servicio.js';
+import { hora24AMinutos } from '../citas/horas.js';
 import { listarHorarios, NOMBRES_DIAS } from '../empresas/horario.js';
 import * as repositorio from './bloqueos.repositorio.js';
 import type { FilaBloqueo } from './bloqueos.repositorio.js';
@@ -41,7 +43,7 @@ const diaDeFecha = (fecha: string) => new Date(`${fecha}T12:00:00Z`).getUTCDay()
 
 // Un bloqueo solo puede caer en un día abierto y dentro del horario de ese día.
 // Un bloqueo de día completo cubre todo el horario, así que solo exige que abra.
-const validarContraHorario = async (pool: pg.Pool, empresaId: string, datos: DatosBloqueo) => {
+const validarContraHorario = async (pool: pg.Pool, empresaId: string, datos: DatosBloqueo, intervalo: number) => {
   const dia = datos.diaSemana ?? diaDeFecha(datos.fecha!);
   const horario = (await listarHorarios(pool, [empresaId])).find((h) => h.dia_semana === dia);
   const cuando = datos.fecha ? `el ${NOMBRES_DIAS[dia]} ${datos.fecha}` : `los ${PLURAL_DIAS[dia]}`;
@@ -55,6 +57,16 @@ const validarContraHorario = async (pool: pg.Pool, empresaId: string, datos: Dat
       `El bloqueo debe estar dentro del horario del negocio: ${cuando} abre de ${horario.hora_apertura} a ${horario.hora_cierre}.`,
     );
   }
+  // Las franjas siguen el intervalo de horarios del negocio (alineadas al reloj: con 30, 10:00 y 10:30).
+  // También valen la apertura (para el inicio) y el cierre (para el fin) de ese día.
+  if (!todoElDia) {
+    const sigue = (hhmm: string, borde: string) => hora24AMinutos(hhmm) % intervalo === 0 || hhmm === borde;
+    if (!sigue(datos.horaInicio, horario.hora_apertura) || !sigue(datos.horaFin, horario.hora_cierre)) {
+      throw errores.solicitudInvalida(
+        `Las horas del bloqueo deben seguir el intervalo de horarios del negocio: de ${intervalo} en ${intervalo} minutos.`,
+      );
+    }
+  }
 };
 
 // Solo el administrador ve, crea y borra bloqueos (la ruta lo exige).
@@ -64,10 +76,47 @@ export const crearServicioBloqueos = ({ pool }: { pool: pg.Pool }) => ({
   },
 
   async crear(sesion: Sesion, datos: DatosBloqueo) {
-    await validarContraHorario(pool, sesion.empresaId, datos);
-    const bloqueo = await repositorio.crearBloqueo(pool, { ...datos, empresaId: sesion.empresaId });
+    const intervalo = await repositorio.intervaloDelNegocio(pool, sesion.empresaId);
+    await validarContraHorario(pool, sesion.empresaId, datos, intervalo);
+    // La revisión de las citas y el guardado van juntos, con el profesional bloqueado: una
+    // reserva que llegue a la vez espera, así no puede quedar una cita bajo un bloqueo
+    const bloqueo = await enTransaccion(pool, async (tx) => {
+      if (!(await repositorio.bloquearProfesional(tx, sesion.empresaId, datos.barberoId))) {
+        throw errores.noEncontrado('Profesional no encontrado');
+      }
+      if (await repositorio.hayCitaEnHorario(tx, datos)) throw errores.conflicto('Hay una cita en ese horario');
+      return repositorio.crearBloqueo(tx, { ...datos, empresaId: sesion.empresaId });
+    });
     if (!bloqueo) throw errores.noEncontrado('Profesional no encontrado');
     return armarBloqueo(bloqueo);
+  },
+
+  // Bloqueos y citas (no canceladas) de un rango de fechas, para mostrarlos juntos.
+  // Las citas llevan su inicio y fin reales; intervaloMinutos es el de las franjas del negocio.
+  async calendario(sesion: Sesion, p: { desde: string; hasta: string; barberoId?: string }) {
+    const filtro = { empresaId: sesion.empresaId, desde: p.desde, hasta: p.hasta, barberoId: p.barberoId ?? null };
+    const [intervaloMinutos, bloqueos, citas] = await Promise.all([
+      repositorio.intervaloDelNegocio(pool, sesion.empresaId),
+      repositorio.listarBloqueosEnRango(pool, filtro),
+      repositorio.listarCitasEnRango(pool, filtro),
+    ]);
+    return {
+      desde: p.desde,
+      hasta: p.hasta,
+      intervaloMinutos,
+      bloqueos: bloqueos.map(armarBloqueo),
+      citas: citas.map((c) => ({
+        id: c.id,
+        barberoId: c.barbero_id,
+        barberoNombre: c.barbero_nombre,
+        fecha: c.fecha,
+        horaInicio: c.hora_inicio,
+        horaFin: c.hora_fin,
+        servicio: c.servicio,
+        cliente: c.cliente,
+        estado: c.estado,
+      })),
+    };
   },
 
   async borrar(sesion: Sesion, id: string) {

@@ -5,8 +5,10 @@ import { cifrarContrasena, verificarContrasena } from '../auth/contrasenas.js';
 import type { ServicioTokens } from '../auth/tokens.js';
 import type { PerfilEmpresa } from '../empresas/empresas.esquemas.js';
 import { CODIGO_REPETIDO } from '../empresas/empresas.servicio.js';
+import { enlacePublico } from '../empresas/enlace.js';
 import { guardarHorario } from '../empresas/horario.js';
 import { DIAS_PRUEBA } from '../empresas/suscripcion.js';
+import type { ServicioCategorias } from '../categorias/categorias.servicio.js';
 import { registrarAutorizacion, tieneAutorizacionVigente } from '../legal/legal.js';
 import * as repositorio from './cuentas.repositorio.js';
 import type { FilaUsuario, Rol } from './cuentas.repositorio.js';
@@ -14,7 +16,13 @@ import type { FilaUsuario, Rol } from './cuentas.repositorio.js';
 // Sesión de una cuenta (tabla usuarios). Rol y empresa salen de la base.
 export type SesionCuenta = { usuarioId: string; rol: Rol; empresaId: string | null };
 
-type Dependencias = { pool: pg.Pool; tokens: ServicioTokens };
+type Dependencias = {
+  pool: pg.Pool;
+  tokens: ServicioTokens;
+  categorias: Pick<ServicioCategorias, 'validarActiva'>;
+  // Dirección base de los enlaces públicos (ej. https://agendaya.app)
+  enlaceBase: string;
+};
 type Credenciales = { correo: string; clave: string };
 export type DatosRegistroEmpresa = PerfilEmpresa & { correo: string; usuario: string; clave: string };
 export type DatosRegistroCliente = {
@@ -46,7 +54,7 @@ const traducirDuplicado = (error: unknown): never => {
   throw error;
 };
 
-export const crearServicioCuentas = ({ pool, tokens }: Dependencias) => {
+export const crearServicioCuentas = ({ pool, tokens, categorias, enlaceBase }: Dependencias) => {
   const tokenDe = (usuario: FilaUsuario) =>
     tokens.firmarCuenta({ usuarioId: usuario.id, version: usuario.version_sesion });
 
@@ -76,7 +84,9 @@ export const crearServicioCuentas = ({ pool, tokens }: Dependencias) => {
   return {
     // Crea la empresa (en prueba), su horario y su administradora en una sola
     // transacción: si algo falla, no queda nada guardado.
-    async registrarEmpresa({ clave, correo, usuario: nombreUsuario, horario, ...perfil }: DatosRegistroEmpresa) {
+    async registrarEmpresa({ clave, correo, usuario: nombreUsuario, horario, ...datosPerfil }: DatosRegistroEmpresa) {
+      // Solo categorías activas; se guarda el nombre oficial
+      const perfil = { ...datosPerfil, categoria: await categorias.validarActiva(datosPerfil.categoria) };
       const passwordHash = await cifrarContrasena(clave);
       const { empresa, usuario } = await enTransaccion(pool, async (cliente) => {
         const empresa = await repositorio.insertarEmpresaEnPrueba(cliente, perfil, DIAS_PRUEBA);
@@ -103,6 +113,7 @@ export const crearServicioCuentas = ({ pool, tokens }: Dependencias) => {
           id: empresa.id,
           nombre: empresa.nombre,
           codigoAcceso: empresa.codigo_acceso,
+          enlacePublico: enlacePublico(enlaceBase, empresa.codigo_acceso),
           estadoSuscripcion: empresa.estado_suscripcion,
           trialEndsAt: empresa.trial_ends_at,
           diasPruebaRestantes: DIAS_PRUEBA,

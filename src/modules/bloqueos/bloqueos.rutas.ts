@@ -57,7 +57,17 @@ const esquemaBloqueo = z
   );
 
 const esquemaFiltro = z.object({ barberoId: idBarbero.optional() });
-const esquemaIdBloqueo = esquemaId('Identificador de bloqueo inválido');
+const MAX_DIAS_CALENDARIO = 62;
+const esquemaCalendario = z
+  .object({ desde: fecha('desde'), hasta: fecha('hasta'), barberoId: idBarbero.optional() })
+  .superRefine((d, ctx) => {
+    const dias = (Date.parse(`${d.hasta}T00:00:00Z`) - Date.parse(`${d.desde}T00:00:00Z`)) / 86_400_000;
+    if (dias < 0) ctx.addIssue({ code: 'custom', message: 'La fecha "hasta" no puede ser anterior a "desde"' });
+    else if (dias + 1 > MAX_DIAS_CALENDARIO) {
+      ctx.addIssue({ code: 'custom', message: `El rango no puede ser mayor que ${MAX_DIAS_CALENDARIO} días` });
+    }
+  });
+const esquemaIdBloqueo =esquemaId('Identificador de bloqueo inválido');
 
 // Bloqueos de horario del negocio de la sesión: semanales o de solo ese día
 export const crearRutasBloqueos = (bloqueos: ServicioBloqueos, permisos: Permisos) => {
@@ -68,6 +78,11 @@ export const crearRutasBloqueos = (bloqueos: ServicioBloqueos, permisos: Permiso
   rutas.get('/', ...permisos.admin, async (req, res) => {
     const { barberoId } = parsear(esquemaFiltro, req.query);
     res.json(await bloqueos.listar(sesionDe(res), barberoId));
+  });
+
+  // Bloqueos y citas de un rango de fechas, para mostrarlos juntos
+  rutas.get('/calendario', ...permisos.admin, async (req, res) => {
+    res.json(await bloqueos.calendario(sesionDe(res), parsear(esquemaCalendario, req.query)));
   });
 
   rutas.post('/', ...permisos.admin, async (req, res) => {

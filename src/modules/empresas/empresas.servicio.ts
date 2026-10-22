@@ -3,6 +3,7 @@ import { CODIGO_PG, enTransaccion, esErrorPg } from '../../db/pool.js';
 import { errores } from '../../shared/errores.js';
 import type { CambiosEmpresa } from './empresas.esquemas.js';
 import * as repositorio from './empresas.repositorio.js';
+import { enlacePublico } from './enlace.js';
 import { armarHorario, guardarHorario, listarHorarios } from './horario.js';
 import { type AlmacenFotos, urlFoto } from './fotos.js';
 import type { FilaEmpresa, FilaPerfilEmpresa } from './empresas.repositorio.js';
@@ -22,7 +23,16 @@ type Visibilidad = {
   esPublica: boolean;
 };
 
-export const crearServicioEmpresas = ({ pool, fotos }: { pool: pg.Pool; fotos: AlmacenFotos }) => {
+export const crearServicioEmpresas = ({
+  pool,
+  fotos,
+  enlaceBase,
+}: {
+  pool: pg.Pool;
+  fotos: AlmacenFotos;
+  // Dirección base de los enlaces públicos (ej. https://agendaya.app)
+  enlaceBase: string;
+}) => {
   const armarNegocio = async (empresa: FilaEmpresa, { esPublica }: Visibilidad, urlBase: string) => {
     const [equipo, servicios, horario, suscripcion] = await Promise.all([
       repositorio.listarBarberos(pool, empresa.id),
@@ -111,7 +121,7 @@ export const crearServicioEmpresas = ({ pool, fotos }: { pool: pg.Pool; fotos: A
     async perfilDeAdmin(empresaId: string, urlBase: string) {
       const perfil = await repositorio.buscarPerfilEmpresa(pool, empresaId);
       if (!perfil) throw errores.noEncontrado('Establecimiento no encontrado');
-      return armarPerfil(await conHorario(perfil), urlBase);
+      return armarPerfil(await conHorario(perfil), urlBase, enlaceBase);
     },
 
     // Datos y horario se guardan juntos: si algo falla, no cambia nada.
@@ -132,7 +142,7 @@ export const crearServicioEmpresas = ({ pool, fotos }: { pool: pg.Pool; fotos: A
         return actualizado;
       }).catch(traducirErrorPerfil);
       if (!perfil) throw errores.noEncontrado('Establecimiento no encontrado');
-      return armarPerfil(await conHorario(perfil), urlBase);
+      return armarPerfil(await conHorario(perfil), urlBase, enlaceBase);
     },
 
     // Cada cuántos minutos pueden agendar los clientes
@@ -262,10 +272,11 @@ const armarPerfilPublico = ({ perfil: p, horario: h }: PerfilConHorario, urlBase
   intervaloMinutos: p.intervalo_minutos,
 });
 
-const armarPerfil = ({ perfil: p, horario: h }: PerfilConHorario, urlBase: string) => ({
+const armarPerfil = ({ perfil: p, horario: h }: PerfilConHorario, urlBase: string, enlaceBase: string) => ({
   id: p.id,
   nombre: p.nombre,
   codigoAcceso: p.codigo_acceso,
+  enlacePublico: enlacePublico(enlaceBase, p.codigo_acceso),
   categoria: p.categoria,
   direccion: p.direccion,
   departamento: p.departamento,

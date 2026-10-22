@@ -23,6 +23,21 @@ export const textoOpcional = (campo: string, max: number) => {
     .transform((valor) => (valor === '' ? null : valor));
 };
 
+export const MENSAJE_CLAVE_NUEVA =
+  'La contraseña debe tener entre 8 y 64 caracteres e incluir una mayúscula, una minúscula, un número y un carácter especial';
+
+// Contraseña nueva o cambiada (cualquier tipo de cuenta). Las contraseñas que ya existen
+// siguen sirviendo para iniciar sesión: esta regla solo se aplica al crearlas o cambiarlas.
+// bcrypt solo usa los primeros 72 bytes; 64 caracteres deja margen.
+export const claveNueva = z
+  .string({ error: MENSAJE_CLAVE_NUEVA })
+  .min(8, MENSAJE_CLAVE_NUEVA)
+  .max(64, MENSAJE_CLAVE_NUEVA)
+  .regex(/\p{Lu}/u, MENSAJE_CLAVE_NUEVA)
+  .regex(/\p{Ll}/u, MENSAJE_CLAVE_NUEVA)
+  .regex(/\d/, MENSAJE_CLAVE_NUEVA)
+  .regex(/[^\p{L}\p{N}\s]/u, MENSAJE_CLAVE_NUEVA);
+
 // Identificador recibido en la URL (ej. /servicios/:id)
 export const esquemaId = (mensaje: string) =>
   z.object({ id: z.string({ error: mensaje }).trim().min(1, mensaje).max(64, mensaje) });

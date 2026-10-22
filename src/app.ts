@@ -10,6 +10,8 @@ import { crearPermisos } from './modules/auth/permisos.js';
 import { crearServicioTokens } from './modules/auth/tokens.js';
 import { crearRutasBloqueos } from './modules/bloqueos/bloqueos.rutas.js';
 import { crearServicioBloqueos } from './modules/bloqueos/bloqueos.servicio.js';
+import { crearRutasCategorias } from './modules/categorias/categorias.rutas.js';
+import { crearServicioCategorias } from './modules/categorias/categorias.servicio.js';
 import { crearRutasCartera } from './modules/cartera/cartera.rutas.js';
 import { crearServicioCartera } from './modules/cartera/cartera.servicio.js';
 import { crearRutasCitas } from './modules/citas/citas.rutas.js';
@@ -28,7 +30,8 @@ import { crearGuardiaSuscripcion } from './modules/empresas/suscripcion.js';
 import { crearRutasEquipo } from './modules/equipo/equipo.rutas.js';
 import { crearServicioEquipo } from './modules/equipo/equipo.servicio.js';
 import { crearRutasLegal } from './modules/legal/legal.js';
-import { crearRutasDispositivos } from './modules/notificaciones/dispositivos.rutas.js';
+import { crearResolverTitular, crearRutasDispositivos } from './modules/notificaciones/dispositivos.rutas.js';
+import { crearRutasNotificaciones } from './modules/notificaciones/notificaciones.rutas.js';
 import { crearServicioNotificaciones } from './modules/notificaciones/notificaciones.servicio.js';
 import { crearRutasMiCuenta, crearServicioMiCuenta } from './modules/micuenta/micuenta.rutas.js';
 import { crearRutasPqrs } from './modules/pqrs/pqrs.rutas.js';
@@ -70,14 +73,15 @@ export const crearApp = ({
   const tokens = crearServicioTokens(entorno.JWT_SECRET, entorno.JWT_EXPIRA_EN);
   const auth = crearServicioAuth({ pool, tokens });
   const guardias = crearGuardias(auth);
-  const cuentas = crearServicioCuentas({ pool, tokens });
+  const categorias = crearServicioCategorias({ pool });
+  const cuentas = crearServicioCuentas({ pool, tokens, categorias, enlaceBase: entorno.ENLACE_PUBLICO_BASE });
   const guardiasCuenta = crearGuardiasCuenta(cuentas);
   const recuperacion = crearServicioRecuperacion({ pool, secreto: entorno.JWT_SECRET, correo });
   const suscripcion = crearGuardiaSuscripcion({ pool });
   const permisos = crearPermisos(guardias, suscripcion);
   const fotos = crearAlmacenesFotos(entorno.CARPETA_SUBIDAS);
   const urlBase = crearUrlBase(entorno.URL_PUBLICA);
-  const empresas = crearServicioEmpresas({ pool, fotos: fotos.empresas });
+  const empresas = crearServicioEmpresas({ pool, fotos: fotos.empresas, enlaceBase: entorno.ENLACE_PUBLICO_BASE });
   const limitadores = crearLimitadores(limites);
   const notificaciones = crearServicioNotificaciones({ pool, push });
 
@@ -122,15 +126,19 @@ export const crearApp = ({
   app.use('/api/v1/cuentas', crearRutasCuentas(cuentas, recuperacion, crearServicioEliminacion({ pool }), guardiasCuenta, limitadores));
   app.use('/api/v1/ubicaciones', crearRutasUbicaciones());
   app.use('/api/v1/planes', crearRutasPlanes());
+  app.use('/api/v1/categorias', crearRutasCategorias(categorias));
   app.use('/api/v1/pqrs', crearRutasPqrs(crearServicioPqrs({ pool }), cuentas, guardiasCuenta, limitadores));
   // Panel del dueño de la plataforma: sesión propia, con verificación en dos pasos
   app.use(
     '/api/v1/superadmin',
-    crearRutasSuperadmin(crearServicioSuperadmin({ pool, tokens, secreto: entorno.JWT_SECRET }), limitadores),
+    crearRutasSuperadmin(crearServicioSuperadmin({ pool, tokens, secreto: entorno.JWT_SECRET }), categorias, limitadores),
   );
   app.use('/api/v1/legal', crearRutasLegal({ pool }));
   // Celulares con sesión para recibir notificaciones push
-  app.use('/api/v1/dispositivos', crearRutasDispositivos(notificaciones, auth, cuentas, tokens));
+  const titularDe = crearResolverTitular(auth, cuentas, tokens);
+  app.use('/api/v1/dispositivos', crearRutasDispositivos(notificaciones, titularDe));
+  // Centro de notificaciones dentro de la app (cualquier sesión)
+  app.use('/api/v1/notificaciones', crearRutasNotificaciones(notificaciones, titularDe));
   // Cuenta del cliente registrado: negocios guardados y sus citas
   app.use('/api/v1/mi-cuenta', crearRutasMiCuenta(crearServicioMiCuenta({ pool, notificaciones }), guardiasCuenta, limitadores, urlBase));
   app.use('/api/v1/empresas', crearRutasEmpresas(empresas, guardias, limitadores, urlBase));

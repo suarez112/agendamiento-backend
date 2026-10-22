@@ -25,20 +25,20 @@ const esquemaRegistrar = z.object({
 });
 const esquemaQuitar = z.object({ token });
 
-export const crearRutasDispositivos = (
-  notificaciones: ServicioNotificaciones,
-  auth: ServicioAuth,
-  cuentas: ServicioCuentas,
-  tokens: ServicioTokens,
-) => {
-  const rutas = Router();
-
-  // Barbero → su id; cuenta (administradora o cliente) → su usuario. Un token inválido responde 401.
-  const titularDe = async (jwt: string | undefined): Promise<Titular> => {
+// Barbero → su id; cuenta (administradora o cliente) → su usuario. Un token inválido responde 401.
+export const crearResolverTitular =
+  (auth: ServicioAuth, cuentas: ServicioCuentas, tokens: ServicioTokens) =>
+  async (jwt: string | undefined): Promise<Titular> => {
     if (!jwt) throw errores.noAutenticado('Sesión no válida. Inicia sesión de nuevo.');
     if (tokens.verificar(jwt)) return { usuarioId: null, barberoId: (await auth.validarSesion(jwt)).barberoId };
     return { usuarioId: (await cuentas.validarSesion(jwt)).usuarioId, barberoId: null };
   };
+
+export const crearRutasDispositivos = (
+  notificaciones: ServicioNotificaciones,
+  titularDe: ReturnType<typeof crearResolverTitular>,
+) => {
+  const rutas = Router();
 
   // Guarda (o actualiza) el token del celular. Llamar al iniciar sesión y cuando Expo cambie el token.
   rutas.put('/', async (req, res) => {

@@ -26,27 +26,99 @@ export const borrarDispositivo = (db: Consultable, d: Titular & { token: string 
 export const borrarTokens = (db: Consultable, tokens: string[]) =>
   db.query('DELETE FROM dispositivos_push WHERE token = ANY($1::varchar[])', [tokens]);
 
-export const tokensDeUsuarios = async (db: Consultable, usuarioIds: string[]) =>
+// Celulares de estos dueños (cuentas o integrantes del equipo)
+export const tokensDe = async (db: Consultable, titulares: Titular[]) =>
   (
-    await db.query<{ usuario_id: string; token: string }>(
-      'SELECT usuario_id, token FROM dispositivos_push WHERE usuario_id = ANY($1::varchar[])',
-      [usuarioIds],
+    await db.query<{ token: string }>(
+      `SELECT token FROM dispositivos_push
+       WHERE usuario_id = ANY($1::varchar[]) OR barbero_id = ANY($2::varchar[])`,
+      [
+        titulares.flatMap((t) => (t.usuarioId ? [t.usuarioId] : [])),
+        titulares.flatMap((t) => (t.barberoId ? [t.barberoId] : [])),
+      ],
+    )
+  ).rows.map((f) => f.token);
+
+// El profesional de la cita y quienes administran el negocio: integrantes activos con rol
+// Administrador y cuentas admin de la empresa
+export const destinatariosDelNegocio = async (db: Consultable, p: { empresaId: string; barberoId: string }) =>
+  (
+    await db.query<{ usuario_id: string | null; barbero_id: string | null }>(
+      `SELECT NULL::varchar AS usuario_id, b.id AS barbero_id FROM barberos b
+       WHERE b.empresa_id = $1 AND b.activo AND (b.id = $2 OR b.es_admin)
+       UNION ALL
+       SELECT u.id, NULL FROM usuarios u WHERE u.empresa_id = $1 AND u.rol = 'admin'`,
+      [p.empresaId, p.barberoId],
+    )
+  ).rows.map((f): Titular => ({ usuarioId: f.usuario_id, barberoId: f.barbero_id }));
+
+export type ContenidoNotificacion = { tipo: string; titulo: string; texto: string; citaId: string | null };
+
+// Guarda la notificación interna de cada destinatario
+export const crearNotificaciones = async (db: Consultable, titulares: Titular[], c: ContenidoNotificacion) => {
+  if (!titulares.length) return;
+  await db.query(
+    `INSERT INTO notificaciones (usuario_id, barbero_id, tipo, titulo, texto, cita_id)
+     SELECT t.usuario_id, t.barbero_id, $3, $4, $5, $6
+     FROM unnest($1::varchar[], $2::varchar[]) AS t(usuario_id, barbero_id)`,
+    [titulares.map((t) => t.usuarioId), titulares.map((t) => t.barberoId), c.tipo, c.titulo, c.texto, c.citaId],
+  );
+};
+
+export type FilaNotificacion = {
+  id: string;
+  tipo: string;
+  titulo: string;
+  texto: string;
+  cita_id: string | null;
+  leida: boolean;
+  leida_en: string | null;
+  creada_en: string;
+};
+
+const COLUMNAS_NOTIFICACION = 'id, tipo, titulo, texto, cita_id, leida_en IS NOT NULL AS leida, leida_en, creada_en';
+const DE_TITULAR = 'usuario_id IS NOT DISTINCT FROM $1::varchar AND barbero_id IS NOT DISTINCT FROM $2::varchar';
+
+export const listarNotificaciones = async (
+  db: Consultable,
+  t: Titular,
+  p: { soloNoLeidas: boolean; limite: number; desplazamiento: number },
+) =>
+  (
+    await db.query<FilaNotificacion>(
+      `SELECT ${COLUMNAS_NOTIFICACION} FROM notificaciones
+       WHERE ${DE_TITULAR} AND (NOT $3::boolean OR leida_en IS NULL)
+       ORDER BY creada_en DESC, id LIMIT $4 OFFSET $5`,
+      [t.usuarioId, t.barberoId, p.soloNoLeidas, p.limite, p.desplazamiento],
     )
   ).rows;
 
-// Celulares del profesional de la cita y de quienes administran el negocio: integrantes
-// activos con rol Administrador y cuentas admin de la empresa
-export const tokensDelNegocio = async (db: Consultable, p: { empresaId: string; barberoId: string }) =>
+export const contarNotificaciones = async (db: Consultable, t: Titular) =>
   (
-    await db.query<{ token: string }>(
-      `SELECT d.token FROM dispositivos_push d
-       WHERE d.barbero_id IN (
-               SELECT b.id FROM barberos b
-               WHERE b.empresa_id = $1 AND b.activo AND (b.id = $2 OR b.es_admin))
-          OR d.usuario_id IN (SELECT u.id FROM usuarios u WHERE u.empresa_id = $1 AND u.rol = 'admin')`,
-      [p.empresaId, p.barberoId],
+    await db.query<{ total: number; no_leidas: number }>(
+      `SELECT count(*)::int AS total, (count(*) FILTER (WHERE leida_en IS NULL))::int AS no_leidas
+       FROM notificaciones WHERE ${DE_TITULAR}`,
+      [t.usuarioId, t.barberoId],
     )
-  ).rows.map((f) => f.token);
+  ).rows[0];
+
+// undefined si no existe o no es de quien la pide; si ya estaba leída conserva su fecha
+export const marcarLeida = async (db: Consultable, t: Titular, id: string) =>
+  (
+    await db.query<FilaNotificacion>(
+      `UPDATE notificaciones SET leida_en = COALESCE(leida_en, now())
+       WHERE id = $3 AND ${DE_TITULAR} RETURNING ${COLUMNAS_NOTIFICACION}`,
+      [t.usuarioId, t.barberoId, id],
+    )
+  ).rows[0];
+
+export const marcarTodasLeidas = async (db: Consultable, t: Titular) =>
+  (
+    await db.query(`UPDATE notificaciones SET leida_en = now() WHERE ${DE_TITULAR} AND leida_en IS NULL`, [
+      t.usuarioId,
+      t.barberoId,
+    ])
+  ).rowCount ?? 0;
 
 export type DatosAviso = {
   id: string;

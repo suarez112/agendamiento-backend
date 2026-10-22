@@ -6,6 +6,7 @@ import { esquemaId, fecha, obligatorio, texto } from '../../shared/http/esquemas
 import type { Limitadores } from '../../shared/http/limitadores.js';
 import { parsear } from '../../shared/http/validacion.js';
 import { tokenDe } from '../auth/guardias.js';
+import type { ServicioCategorias } from '../categorias/categorias.servicio.js';
 import { ESTADOS_PQRS, TIPOS_PQRS } from '../pqrs/pqrs.repositorio.js';
 import { ESTADOS_NEGOCIO } from './superadmin.repositorio.js';
 import type { ServicioSuperadmin, SesionSuperadmin } from './superadmin.servicio.js';
@@ -118,6 +119,15 @@ const esquemaResponder = z.object(
   { error: 'Envía el nuevo estado de la PQRS en "estado"' },
 );
 
+const MENSAJE_ACTIVA = 'El campo "activa" debe ser true o false';
+const esquemaCrearCategoria = z.object({ nombre: texto('nombre', 60) }, { error: 'Envía el nombre de la categoría en "nombre"' });
+const esquemaEditarCategoria = z
+  .object(
+    { nombre: texto('nombre', 60).optional(), activa: z.boolean({ error: MENSAJE_ACTIVA }).optional() },
+    { error: 'Envía el nombre o el estado de la categoría' },
+  )
+  .refine((d) => d.nombre !== undefined || d.activa !== undefined, { error: 'Envía al menos un dato para actualizar' });
+
 const sesionDe = (res: { locals: Record<string, unknown> }): SesionSuperadmin => {
   const sesion = res.locals.superadmin as SesionSuperadmin | undefined;
   if (!sesion) throw errores.noAutenticado('Sesión no válida. Inicia sesión de nuevo.');
@@ -125,7 +135,11 @@ const sesionDe = (res: { locals: Record<string, unknown> }): SesionSuperadmin =>
 };
 
 // Panel del dueño de la plataforma. Solo el token del superadmin (login con segundo paso) sirve aquí.
-export const crearRutasSuperadmin = (servicio: ServicioSuperadmin, limitadores: Limitadores) => {
+export const crearRutasSuperadmin = (
+  servicio: ServicioSuperadmin,
+  categorias: ServicioCategorias,
+  limitadores: Limitadores,
+) => {
   const rutas = Router();
 
   // Estas respuestas traen datos de toda la plataforma: que nadie las guarde en caché
@@ -203,6 +217,20 @@ export const crearRutasSuperadmin = (servicio: ServicioSuperadmin, limitadores: 
   rutas.patch('/pqrs/:radicado', async (req, res) => {
     const { radicado } = parsear(esquemaRadicado, req.params);
     res.json(await servicio.responderPqrs(sesionDe(res), radicado, parsear(esquemaResponder, req.body)));
+  });
+
+  // Categorías de negocio: solo el superadmin las crea, edita o desactiva (nunca se borran)
+  rutas.get('/categorias', async (_req, res) => {
+    res.json(await categorias.listarTodas());
+  });
+
+  rutas.post('/categorias', async (req, res) => {
+    res.status(201).json(await categorias.crear(sesionDe(res), parsear(esquemaCrearCategoria, req.body).nombre));
+  });
+
+  rutas.patch('/categorias/:id', async (req, res) => {
+    const { id } = parsear(esquemaId('Identificador de categoría inválido'), req.params);
+    res.json(await categorias.actualizar(sesionDe(res), id, parsear(esquemaEditarCategoria, req.body)));
   });
 
   rutas.get('/actividad', async (req, res) => {
