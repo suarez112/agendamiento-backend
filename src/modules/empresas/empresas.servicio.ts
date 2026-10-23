@@ -9,9 +9,10 @@ import { marcarPaso } from './guia.js';
 import { armarHorario, guardarHorario, listarHorarios } from './horario.js';
 import { type AlmacenFotos, urlFoto } from './fotos.js';
 import type { FilaEmpresa, FilaPerfilEmpresa } from './empresas.repositorio.js';
-import { buscarPlan, PLANES, planParaPersonas } from '../../config/planes.js';
+import { buscarPlan, COBRO, PLANES, precioPara } from '../../config/planes.js';
 import { INTERVALOS_MINUTOS } from '../citas/disponibilidad.js';
-import { DIAS_RECORDATORIO, estadoEfectivo, mensajeBloqueo, planInsuficiente } from './suscripcion.js';
+import { reajustarCobro } from './cobro.js';
+import { DIAS_RECORDATORIO, estadoEfectivo, mensajeBloqueo } from './suscripcion.js';
 
 // Mismo formato que la restricción empresas_codigo_acceso_valido (migración 007)
 const CODIGO_VALIDO = /^[A-Z0-9]{1,10}$/;
@@ -157,10 +158,8 @@ export const crearServicioEmpresas = ({
         }
         const actualizado = await repositorio.actualizarPerfilEmpresa(tx, empresaId, cambios);
         if (actualizado && cambios.numeroEmpleados !== undefined && actualizado.estado_suscripcion === 'trial') {
-          const plan = planParaPersonas(cambios.numeroEmpleados);
-          const activos = await repositorio.contarEquipoActivo(tx, empresaId);
-          if (activos > plan.cupo) throw errores.conflicto(planInsuficiente(plan, activos));
-          await repositorio.cambiarPlanEquipo(tx, empresaId, plan.id);
+          // En la prueba el nivel sale del mayor entre los profesionales cobrados y los empleados del registro
+          await reajustarCobro(tx, empresaId);
         }
         if (actualizado && horario) await guardarHorario(tx, empresaId, horario);
         // Guía inicial: guardar "Mi negocio" cuenta como haber revisado el horario
@@ -246,10 +245,13 @@ export const crearServicioEmpresas = ({
         // true si soporte suspendió el negocio: se ve como vencida, con su propio mensaje
         suspendida: s.suspendida,
         mensaje: estado === 'vencida' ? mensajeBloqueo(s) : recordatorio(estado, s.plan, dias, mostrarRecordatorio),
-        // Plan por tamaño de equipo y cuántos integrantes activos usan su cupo
+        // Nivel (automático según los profesionales cobrados) y cuántos profesionales se cobran hoy
         planEquipo: { id: plan.id, nombre: plan.nombre, cupo: plan.cupo },
-        cupoUsado: s.equipo_activo,
-        cupoDisponible: Math.max(0, plan.cupo - s.equipo_activo),
+        cupoUsado: s.profesionales_cobrados,
+        cupoDisponible: Math.max(0, COBRO.maxProfesionales - s.profesionales_cobrados),
+        profesionalesCobrados: s.profesionales_cobrados,
+        profesionalesPagados: s.profesionales_pagados,
+        precioPeriodo: s.plan ? precioPara(s.profesionales_cobrados, s.plan) : null,
         // Día del registro (zona del negocio): la cartera no acepta rangos que empiecen antes
         fechaRegistro: s.fecha_registro,
         zonaHoraria: s.zona_horaria,

@@ -2,6 +2,7 @@ import type pg from 'pg';
 import { enTransaccion } from '../../db/pool.js';
 import { errores } from '../../shared/errores.js';
 import { verificarContrasena } from '../auth/contrasenas.js';
+import { reajustarCobro } from '../empresas/cobro.js';
 import type { SesionCuenta } from './cuentas.servicio.js';
 
 // Eliminar la cuenta (Ley 1581: derecho a suprimir los datos personales).
@@ -62,6 +63,8 @@ export const crearServicioEliminacion = ({ pool }: Dependencias) => ({
 
       // Si la administradora también atendía clientes, su perfil de profesional se desactiva (sus citas se conservan)
       await tx.query('UPDATE barberos SET activo = false, atiende_clientes = false WHERE usuario_id = $1', [sesion.usuarioId]);
+      // Un profesional menos: recalcula el nivel (no devuelve dinero)
+      if (sesion.empresaId) await reajustarCobro(tx, sesion.empresaId);
       await tx.query(
         `UPDATE pqrs SET nombre = 'Cuenta eliminada', contacto = 'Cuenta eliminada' WHERE usuario_id = $1`,
         [sesion.usuarioId],

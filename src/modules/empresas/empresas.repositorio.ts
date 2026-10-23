@@ -185,20 +185,6 @@ export const actualizarPerfilEmpresa = async (db: Consultable, id: string, cambi
   ).rows[0];
 };
 
-// Integrantes activos del equipo (el límite es el número de empleados de la empresa)
-export const contarEquipoActivo = async (db: Consultable, empresaId: string) =>
-  (
-    await db.query<{ total: number }>(
-      'SELECT count(*)::int AS total FROM barberos WHERE empresa_id = $1 AND activo',
-      [empresaId],
-    )
-  ).rows[0].total;
-
-// Cambia el plan por tamaño de equipo (lo usa "Mi negocio" durante la prueba)
-export const cambiarPlanEquipo = async (db: Consultable, empresaId: string, plan: string) => {
-  await db.query('UPDATE empresas SET plan_equipo = $2 WHERE id = $1', [empresaId, plan]);
-};
-
 // true si ningún negocio usa ese código (los códigos se guardan en mayúsculas)
 export const codigoDisponible = async (db: Consultable, codigo: string) =>
   (await db.query('SELECT 1 FROM empresas WHERE codigo_acceso = $1', [codigo])).rowCount === 0;
@@ -217,9 +203,10 @@ export type FilaSuscripcion = {
   // Un negocio suspendido por soporte no está habilitado, aunque su plan siga vigente
   suspendida: boolean;
   habilitada: boolean;
-  // Plan por tamaño de equipo (emprendedor | equipo | pro) e integrantes activos
+  // Nivel (emprendedor | equipo | pro) y profesionales que atienden clientes (cobrados / ya pagados en el periodo)
   plan_equipo: string;
-  equipo_activo: number;
+  profesionales_cobrados: number;
+  profesionales_pagados: number;
   // Día del registro de la empresa (AAAA-MM-DD, zona del negocio); null en empresas muy antiguas
   fecha_registro: string | null;
   zona_horaria: string;
@@ -239,11 +226,12 @@ export const buscarSuscripcion = async (db: Consultable, empresaId: string) =>
               fin - hoy AS dias_restantes, dias_prueba_sumados,
               suspendida,
               NOT suspendida AND estado_suscripcion IN ('trial', 'activa') AND (fin IS NULL OR fin > hoy) AS habilitada,
-              plan_equipo, equipo_activo, to_char(registro, 'YYYY-MM-DD') AS fecha_registro, zona_horaria
+              plan_equipo, profesionales_cobrados, profesionales_pagados, to_char(registro, 'YYYY-MM-DD') AS fecha_registro, zona_horaria
        FROM (
          SELECT estado_suscripcion, trial_ends_at, plan_suscripcion, fecha_pago, dias_prueba_sumados, plan_equipo, zona_horaria,
+                profesionales_pagados,
                 suspendida_en IS NOT NULL AS suspendida,
-                (SELECT count(*)::int FROM barberos b WHERE b.empresa_id = empresas.id AND b.activo) AS equipo_activo,
+                (SELECT count(*)::int FROM barberos b WHERE b.empresa_id = empresas.id AND b.activo AND b.atiende_clientes) AS profesionales_cobrados,
                 (created_at AT TIME ZONE zona_horaria)::date AS registro,
                 CASE estado_suscripcion
                   WHEN 'trial' THEN (trial_ends_at AT TIME ZONE zona_horaria)::date

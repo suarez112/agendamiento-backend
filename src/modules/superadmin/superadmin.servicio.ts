@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { buscarPlan, PLANES } from '../../config/planes.js';
+import { buscarPlan, COBRO, comisionPasarela, PLANES, precioMensualPara, precioPara } from '../../config/planes.js';
 import { enTransaccion } from '../../db/pool.js';
 import { ZONA_PLATAFORMA } from '../../config/plataforma.js';
 import { errores } from '../../shared/errores.js';
@@ -33,6 +33,32 @@ const envolver = <T>(items: { total: number }[], datos: T[], { pagina, limite }:
   datos,
 });
 
+type GrupoActivos = { profesionales: number; periodo: 'mensual' | 'anual' | null; negocios: number };
+
+// Ingreso mensual estimado de los negocios activos: precio de sus profesionales (el anual cuenta 1/12) y la
+// comisión de la pasarela de una transacción mensual por negocio. Los activos de antes de los planes (sin periodo) no cuentan.
+const ingresoMensualDe = (grupos: GrupoActivos[]) => {
+  const detalle = grupos.flatMap((g) => {
+    if (!g.periodo) return [];
+    const porNegocio = g.periodo === 'mensual' ? precioMensualPara(g.profesionales) : precioPara(g.profesionales, 'anual') / 12;
+    return [
+      {
+        profesionales: g.profesionales,
+        periodo: g.periodo,
+        negocios: g.negocios,
+        ingreso: Math.round(porNegocio * g.negocios),
+        comisionPasarela: comisionPasarela(porNegocio * g.negocios, g.negocios),
+      },
+    ];
+  });
+  return {
+    detalle,
+    bruto: detalle.reduce((suma, f) => suma + f.ingreso, 0),
+    comision: detalle.reduce((suma, f) => suma + f.comisionPasarela, 0),
+    negocios: detalle.reduce((suma, f) => suma + f.negocios, 0),
+  };
+};
+
 const armarNegocio = (n: FilaNegocio) => {
   const plan = buscarPlan(n.plan_equipo) ?? PLANES[PLANES.length - 1];
   return {
@@ -44,7 +70,9 @@ const armarNegocio = (n: FilaNegocio) => {
     plan: n.periodo,
     estado: n.estado,
     diasRestantes: n.dias === null ? null : Math.max(0, n.dias),
-    cupoUsado: n.equipo_activo,
+    cupoUsado: n.cobrados,
+    profesionales: n.cobrados,
+    precioMensual: precioMensualPara(n.cobrados),
     municipio: n.ciudad,
     departamento: n.departamento,
     fechaRegistro: n.registro,
@@ -160,13 +188,7 @@ export const crearServicioSuperadmin = ({ pool, tokens, secreto }: Dependencias)
       const e = await repositorio.estadisticasPlataforma(pool);
       const porEstado = new Map(e.porEstado.map((f) => [f.estado, f.total]));
       const porPlan = new Map(e.porPlan.map((f) => [f.plan_equipo, f]));
-      const detalleIngreso = e.activosPorPlan.flatMap((f) => {
-        const plan = buscarPlan(f.plan_equipo);
-        // Un negocio activo de antes de los planes no tiene periodo: no hay precio con qué estimarlo
-        if (!plan || !f.periodo) return [];
-        const porNegocio = f.periodo === 'mensual' ? plan.precioMensual : plan.precioAnual / 12;
-        return [{ plan: plan.id, periodo: f.periodo, negocios: f.negocios, ingreso: Math.round(porNegocio * f.negocios) }];
-      });
+      const ingreso = ingresoMensualDe(e.activosPorProfesionales);
       return {
         negociosNuevosPorMes: e.nuevosPorMes,
         negociosPorEstado: ['prueba', 'activo', 'vencido', 'suspendido'].map((estado) => ({
@@ -201,55 +223,112 @@ export const crearServicioSuperadmin = ({ pool, tokens, secreto }: Dependencias)
         ingresoMensualEstimado: {
           estimado: true,
           moneda: 'COP',
-          total: detalleIngreso.reduce((suma, f) => suma + f.ingreso, 0),
-          detalle: detalleIngreso,
-          nota: 'Estimado con los precios de los planes de los negocios activos (el plan anual cuenta 1/12 por mes). No incluye pruebas ni suspendidos, y no son pagos reales.',
+          total: ingreso.bruto,
+          comisionPasarela: ingreso.comision,
+          neto: ingreso.bruto - ingreso.comision,
+          detalle: ingreso.detalle,
+          nota: 'Estimado con el precio por profesional de los negocios activos (el plan anual cuenta 1/12 por mes) y la comisión de la pasarela. No incluye pruebas ni suspendidos, y no son pagos reales.',
         },
       };
     },
 
-    // Ingresos estimados: suman el precio del plan en cada activación del historial. No son pagos
-    // reales (todavía no hay pasarela), por eso todo va marcado como estimado.
+    // Ingresos estimados: cada activación de plan y cada cargo proporcional pagado, menos la comisión estimada de
+    // la pasarela (cada una es una transacción). No son pagos reales (todavía no hay pasarela): todo va marcado como estimado.
     async ingresos() {
-      const { meses, mesActual } = await repositorio.ingresosPorMes(pool);
-      const porMes = new Map(meses.map((m) => [m.mes, { total: Number(m.total), activaciones: m.activaciones }]));
+      const [{ meses, mesActual }, activos, niveles, cargos] = await Promise.all([
+        repositorio.ingresosPorMes(pool),
+        repositorio.activosPorProfesionales(pool),
+        repositorio.negociosPorNivel(pool),
+        repositorio.cargosDelMes(pool),
+      ]);
+      type Cifras = { bruto: number; comisionPasarela: number; neto: number; activaciones: number; cargosPagados: number };
+      const cifras = (bruto: number, activaciones: number, cargosPagados: number): Cifras => {
+        const comision = comisionPasarela(bruto, activaciones + cargosPagados);
+        return { bruto, comisionPasarela: comision, neto: bruto - comision, activaciones, cargosPagados };
+      };
+      const porMes = new Map(meses.map((m) => [m.mes, cifras(Number(m.total), m.activaciones, m.cargos)]));
+      const vacio = cifras(0, 0, 0);
+      // `total` repite el bruto (así lo leía la app antes de la comisión)
+      const conTotal = <T extends Cifras>(c: T) => ({ ...c, total: c.bruto });
 
-      // Los últimos 12 meses, el actual al final, con ceros donde no hubo activaciones
+      // Los últimos 12 meses, el actual al final, con ceros donde no hubo movimiento
       const [anio, mes] = mesActual.split('-').map(Number);
       const ultimos12 = Array.from({ length: 12 }, (_, i) => {
         const d = new Date(Date.UTC(anio, mes - 1 - (11 - i), 1));
         const clave = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
-        return { mes: clave, total: porMes.get(clave)?.total ?? 0, activaciones: porMes.get(clave)?.activaciones ?? 0 };
+        return { mes: clave, ...conTotal(porMes.get(clave) ?? vacio) };
       });
 
-      // Por año: desde el primero con activaciones hasta el actual, sin huecos
-      const porAnioMapa = new Map<number, { total: number; activaciones: number }>();
-      for (const m of meses) {
-        const a = Number(m.mes.slice(0, 4));
-        const previo = porAnioMapa.get(a) ?? { total: 0, activaciones: 0 };
-        porAnioMapa.set(a, { total: previo.total + Number(m.total), activaciones: previo.activaciones + m.activaciones });
-      }
+      // Por año: desde el primero con movimiento hasta el actual, sin huecos (la comisión es la suma de la de sus meses)
+      const sumar = (filas: Cifras[]) =>
+        filas.reduce<Cifras>(
+          (t, f) => ({
+            bruto: t.bruto + f.bruto,
+            comisionPasarela: t.comisionPasarela + f.comisionPasarela,
+            neto: t.neto + f.neto,
+            activaciones: t.activaciones + f.activaciones,
+            cargosPagados: t.cargosPagados + f.cargosPagados,
+          }),
+          vacio,
+        );
       const primero = meses.length ? Number(meses[0].mes.slice(0, 4)) : anio;
       const porAnio = Array.from({ length: anio - primero + 1 }, (_, i) => {
         const a = primero + i;
-        return { anio: a, total: porAnioMapa.get(a)?.total ?? 0, activaciones: porAnioMapa.get(a)?.activaciones ?? 0 };
+        const delAnio = [...porMes].filter(([clave]) => clave.startsWith(`${a}-`)).map(([, c]) => c);
+        return { anio: a, ...conTotal(sumar(delAnio)) };
       });
 
       // El mejor mes y el mejor año de todo el historial (si hay empate, el más reciente); null si no hay ingresos
-      const mejor = <T extends { total: number }>(filas: T[]) =>
-        filas.reduce<T | null>((m, f) => (f.total > 0 && (!m || f.total >= m.total) ? f : m), null);
-      const todosLosMeses = meses.map((m) => ({ mes: m.mes, total: Number(m.total), activaciones: m.activaciones }));
+      const mejor = <T extends { bruto: number }>(filas: T[]) =>
+        filas.reduce<T | null>((m, f) => (f.bruto > 0 && (!m || f.bruto >= m.bruto) ? f : m), null);
+      const todosLosMeses = [...porMes].map(([clave, c]) => ({ mes: clave, ...conTotal(c) }));
+      const totales = sumar([...porMes.values()]);
+
+      // Negocios activos: profesionales cobrados, ingreso promedio, nivel y periodo
+      const mensual = ingresoMensualDe(activos);
+      const conPeriodo = activos.filter((g) => g.periodo);
+      const negociosActivos = conPeriodo.reduce((suma, g) => suma + g.negocios, 0);
+      const profesionalesCobrados = activos.reduce((suma, g) => suma + g.cobrados_reales, 0);
+      const totalActivos = activos.reduce((suma, g) => suma + g.negocios, 0);
+      const porNivel = new Map(niveles.map((f) => [f.plan_equipo, f]));
+      const delMes = new Map(cargos.map((c) => [c.estado, { cantidad: c.cantidad, total: Number(c.total) }]));
 
       return {
         estimado: true,
         moneda: 'COP',
-        total: porAnio.reduce((suma, a) => suma + a.total, 0),
-        activaciones: porAnio.reduce((suma, a) => suma + a.activaciones, 0),
+        total: totales.bruto,
+        ...totales,
         porMes: ultimos12,
         porAnio,
         mejorMes: mejor(todosLosMeses),
         mejorAnio: mejor(porAnio),
-        nota: 'Estimado: suma el precio del plan en el momento de cada activación (el plan anual cuenta completo el mes en que se activa). No son pagos reales. Las activaciones anteriores a este historial solo incluyen la última de cada negocio.',
+        // Negocios activos hoy (ingreso mensual estimado: el plan anual cuenta 1/12)
+        profesionales: {
+          cobradosEnTotal: profesionalesCobrados,
+          promedioPorNegocio: totalActivos ? Math.round((profesionalesCobrados / totalActivos) * 10) / 10 : null,
+        },
+        ingresoPromedioPorNegocio: {
+          bruto: negociosActivos ? Math.round(mensual.bruto / negociosActivos) : null,
+          neto: negociosActivos ? Math.round((mensual.bruto - mensual.comision) / negociosActivos) : null,
+        },
+        negociosPorNivel: PLANES.map((p) => ({
+          nivel: p.id,
+          nombre: p.nombre,
+          profesionalesDesde: p.personasDesde,
+          profesionalesHasta: p.cupo,
+          total: porNivel.get(p.id)?.total ?? 0,
+          activos: porNivel.get(p.id)?.activos ?? 0,
+        })),
+        mensualVsAnual: {
+          mensual: activos.filter((g) => g.periodo === 'mensual').reduce((suma, g) => suma + g.negocios, 0),
+          anual: activos.filter((g) => g.periodo === 'anual').reduce((suma, g) => suma + g.negocios, 0),
+        },
+        cargosProporcionalesDelMes: {
+          mes: mesActual,
+          pendientes: delMes.get('pendiente') ?? { cantidad: 0, total: 0 },
+          pagados: delMes.get('pagado') ?? { cantidad: 0, total: 0 },
+        },
+        nota: 'Estimado: suma el precio de cada activación de plan (el anual cuenta completo el mes en que se activa) y cada cargo proporcional pagado, menos la comisión estimada de la pasarela (2,65 % + $700 por transacción, más 19 % de IVA sobre la comisión). No son pagos reales. Las activaciones anteriores al historial solo incluyen la última de cada negocio.',
       };
     },
 
@@ -291,7 +370,8 @@ export const crearServicioSuperadmin = ({ pool, tokens, secreto }: Dependencias)
         suspension: n.suspendida_en ? { desde: aIsoEnZona(n.suspendida_en, n.zona_horaria), motivo: n.suspension_motivo } : null,
         equipo: {
           activos: n.equipo_activo,
-          cupo: base.planEquipo.cupo,
+          cobrados: n.cobrados,
+          cupo: COBRO.maxProfesionales,
           administradores: c.equipo_admins,
           empleados: c.equipo_empleados,
         },
@@ -313,11 +393,11 @@ export const crearServicioSuperadmin = ({ pool, tokens, secreto }: Dependencias)
       };
     },
 
-    // Activa o cambia el plan (misma regla que el comando dev:activar-plan). Sin planEquipo conserva el actual.
+    // Activa o renueva el plan (misma regla que el comando dev:activar-plan): el precio y el nivel salen de los profesionales activos.
     async activarPlan(
       admin: SesionSuperadmin,
       id: string,
-      d: { periodo: Periodo; planEquipo?: string; motivo?: string },
+      d: { periodo: Periodo; motivo?: string },
     ) {
       await enTransaccion(pool, async (tx) => {
         const empresa = await empresaBloqueada(tx, id);
@@ -325,7 +405,7 @@ export const crearServicioSuperadmin = ({ pool, tokens, secreto }: Dependencias)
           throw errores.conflicto('Este negocio está cancelado (su cuenta fue eliminada) y no se puede activar.');
         }
         const antes = (await repositorio.buscarNegocio(tx, id))!;
-        await activarPlanEmpresa(tx, id, d.periodo, d.planEquipo ?? null, 'panel');
+        await activarPlanEmpresa(tx, id, d.periodo, 'panel');
         const despues = (await repositorio.buscarNegocio(tx, id))!;
         await repositorio.registrarActividad(tx, {
           superadminId: admin.id,

@@ -1,6 +1,5 @@
 import type { RequestHandler, Response } from 'express';
 import type pg from 'pg';
-import type { Plan } from '../../config/planes.js';
 import { errores } from '../../shared/errores.js';
 import { buscarSuscripcion, type FilaSuscripcion } from './empresas.repositorio.js';
 
@@ -15,10 +14,6 @@ export const NEGOCIO_INACTIVO = 'Este negocio está inactivo por ahora. Comuníc
 
 // Aviso para los clientes que intentan reservar en un negocio con la suscripción vencida
 export const SIN_RESERVAS = 'Este negocio no está recibiendo reservas por ahora';
-
-// Cambiar a un plan cuyo cupo no alcanza para el equipo activo se rechaza
-export const planInsuficiente = (plan: Plan, activos: number) =>
-  `Tu equipo tiene ${activos} integrante(s) activo(s) y el plan ${plan.nombre} permite hasta ${plan.cupo}. Elimina primero del equipo a quien ya no trabaje en el negocio, o elige un plan más grande.`;
 
 // Aviso cuando el superadmin suspendió el negocio (se comporta como vencido)
 export const NEGOCIO_SUSPENDIDO = 'Negocio suspendido; contacta a soporte';

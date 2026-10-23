@@ -1,6 +1,5 @@
 import { type RequestHandler, Router } from 'express';
 import { z } from 'zod';
-import { ID_PLANES } from '../../config/planes.js';
 import { errores } from '../../shared/errores.js';
 import { esquemaId, fecha, obligatorio, texto } from '../../shared/http/esquemas.js';
 import type { Limitadores } from '../../shared/http/limitadores.js';
@@ -85,7 +84,6 @@ const motivoOpcional = z
 const esquemaPlan = z.object(
   {
     periodo: z.enum(['mensual', 'anual'], { error: 'El periodo debe ser "mensual" o "anual"' }),
-    planEquipo: z.enum(ID_PLANES, { error: `El plan debe ser uno de: ${ID_PLANES.join(', ')}` }).optional(),
     motivo: motivoOpcional,
   },
   { error: 'Envía el periodo del plan ("mensual" o "anual")' },

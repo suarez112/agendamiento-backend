@@ -215,7 +215,8 @@ const NEGOCIOS = `(
               WHEN e.estado_suscripcion IN ('trial', 'activa') AND (f.fin IS NULL OR f.fin > f.hoy)
                 THEN CASE e.estado_suscripcion WHEN 'trial' THEN 'prueba' ELSE 'activo' END
               ELSE 'vencido' END AS estado,
-         (SELECT count(*)::int FROM barberos b WHERE b.empresa_id = e.id AND b.activo) AS equipo_activo
+         (SELECT count(*)::int FROM barberos b WHERE b.empresa_id = e.id AND b.activo) AS equipo_activo,
+         (SELECT count(*)::int FROM barberos b WHERE b.empresa_id = e.id AND b.activo AND b.atiende_clientes) AS cobrados
   FROM empresas e
   CROSS JOIN LATERAL (
     SELECT CASE e.estado_suscripcion
@@ -238,6 +239,8 @@ export type FilaNegocio = {
   dias: number | null;
   registro: string;
   equipo_activo: number;
+  // Profesionales que atienden clientes (los que se cobran)
+  cobrados: number;
   zona_horaria: string;
 };
 
@@ -247,7 +250,7 @@ export const listarNegocios = async (db: Consultable, f: FiltrosNegocios) =>
   (
     await db.query<FilaNegocio & { total: number }>(
       `SELECT id, nombre, codigo_acceso, ciudad, departamento, plan_equipo, periodo, estado, dias,
-              to_char(registro, 'YYYY-MM-DD') AS registro, equipo_activo, zona_horaria, count(*) OVER ()::int AS total
+              to_char(registro, 'YYYY-MM-DD') AS registro, equipo_activo, cobrados, zona_horaria, count(*) OVER ()::int AS total
        FROM ${NEGOCIOS}
        WHERE ($1::varchar IS NULL OR position(lower($1) in lower(nombre)) > 0 OR position(lower($1) in lower(codigo_acceso)) > 0)
          AND ($2::varchar IS NULL
@@ -302,7 +305,7 @@ export const buscarNegocio = async (db: Consultable, id: string) =>
   (
     await db.query<FilaDetalleNegocio>(
       `SELECT id, nombre, codigo_acceso, ciudad, departamento, plan_equipo, periodo, estado, dias,
-              to_char(registro, 'YYYY-MM-DD') AS registro, equipo_activo, zona_horaria, estado_suscripcion, categoria, direccion,
+              to_char(registro, 'YYYY-MM-DD') AS registro, equipo_activo, cobrados, zona_horaria, estado_suscripcion, categoria, direccion,
               nombre_administradora, trial_ends_at, to_char(fecha_pago, 'YYYY-MM-DD') AS fecha_pago,
               to_char(fin, 'YYYY-MM-DD') AS fecha_fin, dias_prueba_sumados, suspendida_en, suspension_motivo
        FROM ${NEGOCIOS} WHERE n.id = $1`,
@@ -441,10 +444,7 @@ export const estadisticasPlataforma = async (db: Consultable) => {
          ORDER BY dias, nombre LIMIT 50`,
         [DIAS_POR_VENCER],
       ),
-      db.query<{ plan_equipo: string; periodo: 'mensual' | 'anual' | null; negocios: number }>(
-        `SELECT plan_equipo, periodo, count(*)::int AS negocios FROM ${NEGOCIOS}
-         WHERE estado = 'activo' GROUP BY plan_equipo, periodo`,
-      ),
+      activosPorProfesionales(db),
     ]);
   return {
     nuevosPorMes: nuevosPorMes.rows,
@@ -454,17 +454,54 @@ export const estadisticasPlataforma = async (db: Consultable) => {
     departamentos: departamentos.rows,
     conversion: conversion.rows[0],
     porVencer: porVencer.rows,
-    activosPorPlan: activosPorPlan.rows,
+    activosPorProfesionales: activosPorPlan,
   };
 };
 
-// Ingresos estimados por mes de todo el historial de activaciones (activaciones_plan), más el
-// mes actual en la zona de la plataforma. Solo los meses con activaciones; el servicio rellena los demás con ceros.
+// Negocios activos agrupados por profesionales cobrados (mínimo 1, como el precio) y periodo. Un activo de antes
+// de los planes no tiene periodo: no hay precio con qué estimarlo.
+export const activosPorProfesionales = async (db: Consultable) =>
+  (
+    await db.query<{ profesionales: number; periodo: 'mensual' | 'anual' | null; negocios: number; cobrados_reales: number }>(
+      `SELECT GREATEST(cobrados, 1) AS profesionales, periodo, count(*)::int AS negocios, sum(cobrados)::int AS cobrados_reales
+       FROM ${NEGOCIOS} WHERE estado = 'activo' GROUP BY GREATEST(cobrados, 1), periodo`,
+    )
+  ).rows;
+
+// Negocios por nivel (según sus profesionales cobrados) y cuántos están activos
+export const negociosPorNivel = async (db: Consultable) =>
+  (
+    await db.query<{ plan_equipo: string; total: number; activos: number }>(
+      `SELECT plan_equipo, count(*)::int AS total, count(*) FILTER (WHERE estado = 'activo')::int AS activos
+       FROM ${NEGOCIOS} GROUP BY plan_equipo`,
+    )
+  ).rows;
+
+// Cargos proporcionales creados en el mes actual (zona de la plataforma), por estado
+export const cargosDelMes = async (db: Consultable) =>
+  (
+    await db.query<{ estado: 'pendiente' | 'pagado'; cantidad: number; total: string }>(
+      `SELECT estado, count(*)::int AS cantidad, COALESCE(sum(monto), 0) AS total
+       FROM cargos WHERE date_trunc('month', fecha::timestamp) = date_trunc('month', ${HOY}::timestamp)
+       GROUP BY estado`,
+    )
+  ).rows;
+
+// Ingresos brutos estimados por mes: cada activación de plan (activaciones_plan, por su fecha) y cada cargo
+// proporcional pagado por separado (por su fecha de pago). Un cargo pagado junto con una activación no se
+// cuenta dos veces: ya va dentro del precio de esa activación. Cada fila es una transacción de la pasarela.
+// Solo los meses con movimiento; el servicio rellena los demás con ceros.
 export const ingresosPorMes = async (db: Consultable) => {
   const [meses, actual] = await Promise.all([
-    db.query<{ mes: string; total: string; activaciones: number }>(
-      `SELECT to_char(fecha, 'YYYY-MM') AS mes, sum(precio) AS total, count(*)::int AS activaciones
-       FROM activaciones_plan GROUP BY 1 ORDER BY 1`,
+    db.query<{ mes: string; total: string; activaciones: number; cargos: number }>(
+      `SELECT to_char(fecha, 'YYYY-MM') AS mes, sum(monto) AS total,
+              count(*) FILTER (WHERE tipo = 'activacion')::int AS activaciones,
+              count(*) FILTER (WHERE tipo = 'cargo')::int AS cargos
+       FROM (
+         SELECT fecha, precio AS monto, 'activacion' AS tipo FROM activaciones_plan
+         UNION ALL
+         SELECT fecha_pago, monto, 'cargo' FROM cargos WHERE estado = 'pagado' AND pagado_por <> 'activacion'
+       ) t GROUP BY 1 ORDER BY 1`,
     ),
     db.query<{ mes: string }>(`SELECT to_char(${HOY}, 'YYYY-MM') AS mes`),
   ]);

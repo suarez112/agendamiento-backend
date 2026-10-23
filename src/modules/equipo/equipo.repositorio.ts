@@ -98,19 +98,10 @@ export const actualizarMiembro = async (db: Consultable, id: string, empresaId: 
     )
   ).rows[0];
 
-// Límite del equipo: plan de la empresa (su cupo está en src/config/planes.ts) e
-// integrantes activos. FOR UPDATE bloquea la empresa: dos altas a la vez se esperan
-// y la segunda ve a la primera.
+// Bloquea la fila de la empresa: dos cambios al equipo a la vez se esperan y el segundo ve al primero.
+// Los topes (profesionales cobrados y administradores que no atienden) están en modules/empresas/cobro.ts.
 export const bloquearLimiteEquipo = async (db: Consultable, empresaId: string) =>
-  (
-    await db.query<{ plan: string; activos: number }>(
-      `SELECT e.plan_equipo AS plan,
-              (SELECT count(*)::int FROM barberos b WHERE b.empresa_id = e.id AND b.activo) AS activos
-       FROM empresas e WHERE e.id = $1
-       FOR UPDATE`,
-      [empresaId],
-    )
-  ).rows[0];
+  (await db.query<{ id: string }>('SELECT id FROM empresas WHERE id = $1 FOR UPDATE', [empresaId])).rows[0];
 
 // Citas confirmadas desde hoy: si tiene alguna, no se puede eliminar
 export const contarCitasPendientes = async (db: Consultable, id: string, empresaId: string) =>
@@ -171,7 +162,7 @@ export const crearPerfilDeCuenta = async (
     )
   ).rows[0];
 
-// Activa o desactiva el perfil (activo = ocupa cupo; atiende = recibe reservas nuevas)
+// Activa o desactiva el perfil (activo = sigue en el equipo; atiende = recibe reservas nuevas)
 export const cambiarPerfilDeCuenta = async (db: Consultable, id: string, activo: boolean, atiende: boolean) =>
   (
     await db.query<FilaMiembro>(

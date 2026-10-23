@@ -1,15 +1,16 @@
 import { type RequestHandler, Router } from 'express';
 import type pg from 'pg';
 import { FUNCIONES, type IdFuncion, incluyeFuncion, planDeFuncion } from '../../config/funciones.js';
-import { buscarPlan, PLANES } from '../../config/planes.js';
+import { buscarPlan, COBRO, PLANES, precioPara, precioPuesto } from '../../config/planes.js';
 import type { Consultable } from '../../db/pool.js';
 import { errores } from '../../shared/errores.js';
 import { sesionDe } from '../auth/guardias.js';
 import type { Guardias } from '../auth/guardias.js';
+import { contarEquipoCobrable } from '../empresas/cobro.js';
 import { empresaDeSesion } from '../empresas/suscripcion.js';
 
-// Plan por tamaño de equipo de la empresa. En la prueba gratuita ya es el que corresponde al
-// número de empleados del registro (se calcula al registrar y al cambiar numeroEmpleados).
+// Nivel de la empresa (automático según sus profesionales cobrados). En la prueba gratuita también cuenta
+// el número de empleados del registro (se calcula al registrar, al cambiar numeroEmpleados y al cambiar el equipo).
 const planDeEmpresa = async (db: Consultable, empresaId: string) => {
   const { rows } = await db.query<{ plan_equipo: string; estado_suscripcion: string }>(
     'SELECT plan_equipo, estado_suscripcion FROM empresas WHERE id = $1',
@@ -23,8 +24,8 @@ const planDeEmpresa = async (db: Consultable, empresaId: string) => {
 export const funcionNoIncluida = (funcion: IdFuncion) => {
   const plan = planDeFuncion(funcion);
   return errores.prohibido(
-    `La función «${FUNCIONES[funcion].nombre}» no está incluida en tu plan. Está disponible desde el plan ${plan.nombre}.`,
-    { codigo: 'funcion_no_incluida', funcion, planRequerido: { id: plan.id, nombre: plan.nombre } },
+    `La función «${FUNCIONES[funcion].nombre}» no está incluida en tu nivel. Está disponible desde el nivel ${plan.nombre}.`,
+    { codigo: 'funcion_no_incluida', funcion, planRequerido: { id: plan.id, nombre: plan.nombre }, nivelRequerido: { id: plan.id, nombre: plan.nombre } },
   );
 };
 
@@ -40,11 +41,29 @@ export const crearServicioFunciones = ({ pool }: { pool: pg.Pool }) => {
       if (!(await incluida(empresaId, funcion))) throw funcionNoIncluida(funcion);
     },
 
+    // Nivel, funciones y precio actual del negocio (según los profesionales que atienden clientes hoy)
     async deEmpresa(empresaId: string) {
       const { plan, enPrueba } = await planDeEmpresa(pool, empresaId);
+      const { cobrados, adminsSinAtender } = await contarEquipoCobrable(pool, empresaId);
       return {
         plan: { id: plan.id, nombre: plan.nombre, cupo: plan.cupo },
+        // Mismo dato que "plan": el nivel que se asigna solo según los profesionales cobrados
+        nivel: { id: plan.id, nombre: plan.nombre, profesionalesDesde: plan.personasDesde, profesionalesHasta: plan.cupo },
         enPrueba,
+        profesionales: {
+          cobrados,
+          maximo: COBRO.maxProfesionales,
+          adminsSinAtender,
+          maximoAdminsSinAtender: COBRO.maxAdminsSinAtender,
+        },
+        precio: {
+          moneda: 'COP',
+          mensual: precioPara(cobrados, 'mensual'),
+          anual: precioPara(cobrados, 'anual'),
+          // Lo que costaría el siguiente profesional (cargo completo del periodo, antes de prorratear)
+          siguienteProfesionalMensual: cobrados >= COBRO.maxProfesionales ? null : precioPuesto(cobrados + 1, 'mensual'),
+          siguienteProfesionalAnual: cobrados >= COBRO.maxProfesionales ? null : precioPuesto(cobrados + 1, 'anual'),
+        },
         funciones: (Object.keys(FUNCIONES) as IdFuncion[]).map((id) => {
           const minimo = planDeFuncion(id);
           return {
