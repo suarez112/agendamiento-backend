@@ -80,3 +80,56 @@ export const demanda = async (db: Consultable, p: Filtro) =>
       parametros(p),
     )
   ).rows;
+
+// Clientes con citas completadas en el rango: cuánto gastaron y cuántas veces vinieron
+export const clientesDelPeriodo = async (db: Consultable, p: Filtro) =>
+  (
+    await db.query<{ cliente_id: string; nombre: string; visitas: number; gasto: string; ultima_visita: string }>(
+      `SELECT c.cliente_id, cl.nombre, count(*)::int AS visitas, sum(c.precio) AS gasto,
+              to_char(max(c.fecha), 'YYYY-MM-DD') AS ultima_visita
+       FROM citas c JOIN clientes cl ON cl.id = c.cliente_id
+       WHERE c.empresa_id = $1 AND c.estado = 'COMPLETADA' AND c.fecha BETWEEN $2::date AND $3::date
+         AND ($4::varchar IS NULL OR c.barbero_id = $4)
+       GROUP BY c.cliente_id, cl.nombre`,
+      parametros(p),
+    )
+  ).rows;
+
+// Clientes que vinieron en el rango según cuántas citas completadas llevan en total hasta el fin del rango
+export const retencionDeClientes = async (db: Consultable, p: Filtro) =>
+  (
+    await db.query<{ volvieron: number; una_vez: number }>(
+      `WITH del_periodo AS (
+         SELECT DISTINCT c.cliente_id FROM citas c
+         WHERE c.empresa_id = $1 AND c.estado = 'COMPLETADA' AND c.fecha BETWEEN $2::date AND $3::date
+           AND ($4::varchar IS NULL OR c.barbero_id = $4)
+       ),
+       totales AS (
+         SELECT d.cliente_id, count(*) AS citas
+         FROM del_periodo d
+         JOIN citas c ON c.cliente_id = d.cliente_id AND c.empresa_id = $1 AND c.estado = 'COMPLETADA'
+                     AND c.fecha <= $3::date AND ($4::varchar IS NULL OR c.barbero_id = $4)
+         GROUP BY d.cliente_id
+       )
+       SELECT count(*) FILTER (WHERE citas >= 2)::int AS volvieron, count(*) FILTER (WHERE citas = 1)::int AS una_vez
+       FROM totales`,
+      parametros(p),
+    )
+  ).rows[0];
+
+// Ventas y citas de cada mes del rango (todos los meses, aunque no tengan citas)
+export const tendenciaMensual = async (db: Consultable, p: Filtro) =>
+  (
+    await db.query<{ mes: string; ventas: string; citas: number; completadas: number; canceladas: number }>(
+      `SELECT to_char(m.mes, 'YYYY-MM') AS mes,
+              coalesce(sum(c.precio) FILTER (WHERE c.estado = 'COMPLETADA'), 0) AS ventas,
+              count(c.id) FILTER (WHERE c.estado <> 'CANCELADA')::int AS citas,
+              count(c.id) FILTER (WHERE c.estado = 'COMPLETADA')::int AS completadas,
+              count(c.id) FILTER (WHERE c.estado = 'CANCELADA')::int AS canceladas
+       FROM generate_series(date_trunc('month', $2::date), date_trunc('month', $3::date), interval '1 month') AS m(mes)
+       LEFT JOIN citas c ON c.empresa_id = $1 AND date_trunc('month', c.fecha) = m.mes
+                        AND c.fecha BETWEEN $2::date AND $3::date AND ($4::varchar IS NULL OR c.barbero_id = $4)
+       GROUP BY m.mes ORDER BY m.mes`,
+      parametros(p),
+    )
+  ).rows;

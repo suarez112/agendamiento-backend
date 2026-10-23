@@ -150,22 +150,44 @@ export const crearServicioNotificaciones = ({ pool, push }: { pool: pg.Pool; pus
 
     borrarDispositivo: (titular: Titular, token: string) => repositorio.borrarDispositivo(pool, { ...titular, token }),
 
-    // Recordatorio de las citas que empiezan en ~24 h. Lo llama la tarea programada cada 15 minutos.
+    // Recordatorios de citas a los clientes con cuenta (notificación interna y push). Los llama la tarea
+    // programada cada 15 minutos. "24h" recuerda las que empiezan en ~24 h y "2h" las que empiezan en ~2 h.
     // Devuelve cuántas citas recordó.
-    async enviarRecordatorios() {
-      const citas = await repositorio.reclamarRecordatorios(pool);
+    async enviarRecordatorios(tipo: repositorio.TipoRecordatorio = '24h') {
+      const citas = await repositorio.reclamarRecordatorios(pool, tipo);
       if (!citas.length) return 0;
       await Promise.all(
         citas.map((c) =>
-          notificar('recordatorio', [{ usuarioId: c.usuario_id, barberoId: null }], {
-            tipo: 'recordatorio',
-            titulo: 'Recordatorio de tu cita',
+          notificar(tipo === '2h' ? 'recordatorio_2h' : 'recordatorio', [{ usuarioId: c.usuario_id, barberoId: null }], {
+            tipo: tipo === '2h' ? 'recordatorio_2h' : 'recordatorio',
+            titulo: tipo === '2h' ? 'Tu cita es en 2 horas' : 'Recordatorio de tu cita',
             texto: `Tienes ${c.servicio} en ${c.negocio} el ${c.fecha} a las ${c.hora}.`,
             citaId: c.id,
           }),
         ),
       );
       return citas.length;
+    },
+
+    // Aviso de la prueba gratuita (día 10 y día 14) a los administradores del negocio, con un resumen de
+    // lo logrado y la invitación a activar un plan. No va a quien ya tiene un plan activo y cada aviso
+    // se envía una sola vez. Devuelve cuántos avisos envió.
+    async enviarAvisosPrueba() {
+      const avisos = await repositorio.reclamarAvisosPrueba(pool);
+      for (const a of avisos) {
+        await seguro(`prueba_dia_${a.dia}`, async () => {
+          const administradores = await repositorio.administradoresDe(pool, a.empresa_id);
+          const ventas = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(Number(a.ventas));
+          const logro = `En tu prueba gratuita has gestionado ${a.citas} cita(s) y vendido ${ventas}.`;
+          await notificar(`prueba_dia_${a.dia}`, administradores, {
+            tipo: 'prueba_resumen',
+            titulo: a.dia === 10 ? 'Vas muy bien en tu prueba gratuita' : 'Tu prueba gratuita termina pronto',
+            texto: `${logro} Te ${a.dias_restantes === 1 ? 'queda 1 día' : `quedan ${a.dias_restantes} días`}: activa un plan para seguir usando AgendaYa sin interrupciones.`,
+            citaId: null,
+          });
+        });
+      }
+      return avisos.length;
     },
   };
 };

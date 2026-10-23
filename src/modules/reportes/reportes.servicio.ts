@@ -8,6 +8,8 @@ const redondear2 = (n: number) => Math.round(n * 100) / 100;
 const horas = (minutos: number) => redondear2(minutos / 60);
 const porcentaje = (parte: number, total: number) => (total > 0 ? Math.min(100, redondear1((parte / total) * 100)) : 0);
 
+const CLIENTES_TOP = 10;
+
 const hhmm = (hora: number) => `${String(hora).padStart(2, '0')}:00`;
 
 // Reportes para administradores. Usan los mismos filtros de período que la cartera (hoy, semana, mes
@@ -153,6 +155,72 @@ export const crearServicioReportes = ({ pool }: { pool: pg.Pool }) => {
         horaMasDemandada: masAlto(porHoraLista)?.hora ?? null,
         pico: masAlto(mapa),
       };
+    },
+
+    // Reportes avanzados (plan Pro). Los clientes que más gastan y los que más vienen (citas completadas)
+    async mejoresClientes(empresaId: string, consulta: ConsultaPeriodo) {
+      const { desde, hasta, zonaHoraria, filtro } = await preparar(empresaId, consulta);
+      const filas = (await repositorio.clientesDelPeriodo(pool, filtro)).map((f) => ({
+        clienteId: f.cliente_id,
+        nombre: f.nombre,
+        visitas: f.visitas,
+        gasto: Number(f.gasto),
+        ticketPromedio: redondear2(Number(f.gasto) / f.visitas),
+        ultimaVisita: f.ultima_visita,
+      }));
+      const top = (orden: (a: (typeof filas)[number], b: (typeof filas)[number]) => number) =>
+        [...filas].sort((a, b) => orden(a, b) || a.nombre.localeCompare(b.nombre)).slice(0, CLIENTES_TOP);
+      return {
+        desde,
+        hasta,
+        zonaHoraria,
+        barberoId: filtro.barberoId,
+        totalClientes: filas.length,
+        masGastan: top((a, b) => b.gasto - a.gasto || b.visitas - a.visitas),
+        masVienen: top((a, b) => b.visitas - a.visitas || b.gasto - a.gasto),
+      };
+    },
+
+    // Clientes que volvieron (2 o más citas completadas en total hasta el fin del período) frente a los que
+    // vinieron una sola vez, entre quienes tuvieron una cita completada en el período
+    async retencionClientes(empresaId: string, consulta: ConsultaPeriodo) {
+      const { desde, hasta, zonaHoraria, filtro } = await preparar(empresaId, consulta);
+      const r = await repositorio.retencionDeClientes(pool, filtro);
+      const total = r.volvieron + r.una_vez;
+      return {
+        desde,
+        hasta,
+        zonaHoraria,
+        barberoId: filtro.barberoId,
+        totalClientes: total,
+        volvieron: r.volvieron,
+        unaSolaVez: r.una_vez,
+        porcentajeVolvieron: porcentaje(r.volvieron, total),
+        porcentajeUnaSolaVez: total > 0 ? redondear1(100 - porcentaje(r.volvieron, total)) : 0,
+      };
+    },
+
+    // Ventas y citas mes a mes dentro del período (todos los meses, con ceros). La variación compara
+    // cada mes con el anterior de la lista.
+    async tendencia(empresaId: string, consulta: ConsultaPeriodo) {
+      const { desde, hasta, zonaHoraria, filtro } = await preparar(empresaId, consulta);
+      const filas = await repositorio.tendenciaMensual(pool, filtro);
+      const variacion = (actual: number, anterior: number | undefined) =>
+        anterior === undefined ? null : anterior === 0 ? (actual === 0 ? 0 : null) : redondear1(((actual - anterior) / anterior) * 100);
+      const meses = filas.map((f, i) => {
+        const ventas = Number(f.ventas);
+        const previo = i > 0 ? filas[i - 1] : undefined;
+        return {
+          mes: f.mes,
+          ventas,
+          citas: f.citas,
+          completadas: f.completadas,
+          canceladas: f.canceladas,
+          variacionVentas: variacion(ventas, previo ? Number(previo.ventas) : undefined),
+          variacionCitas: variacion(f.citas, previo?.citas),
+        };
+      });
+      return { desde, hasta, zonaHoraria, barberoId: filtro.barberoId, meses };
     },
   };
 };

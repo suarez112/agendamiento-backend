@@ -6,6 +6,7 @@ import { type Guardias, sesionDe } from '../auth/guardias.js';
 import { SOLO_ADMIN } from '../auth/permisos.js';
 import { esquemaActualizarEmpresa, esquemaCodigoNegocio, esquemaIntervalo } from './empresas.esquemas.js';
 import type { ServicioEmpresas } from './empresas.servicio.js';
+import type { ServicioGuia } from './guia.js';
 import { recibirFoto, type UrlBase } from './fotos.js';
 
 export const crearRutasEmpresas = (
@@ -43,7 +44,7 @@ export const crearRutasEmpresas = (
 // cuenta de la empresa y los integrantes del equipo marcados como administrador.
 // La empresa sale siempre de la sesión: no hay id en la URL ni en el cuerpo.
 // Funcionan aunque la suscripción haya vencido, para poder renovarla y corregir datos.
-export const crearRutasAdminEmpresa = (empresas: ServicioEmpresas, guardias: Guardias, urlBase: UrlBase) => {
+export const crearRutasAdminEmpresa = (empresas: ServicioEmpresas, guardias: Guardias, urlBase: UrlBase, guia: ServicioGuia) => {
   const rutas = Router();
   const soloAdmin = [guardias.requerirSesion, guardias.requerirAdmin(SOLO_ADMIN)];
 
@@ -63,6 +64,24 @@ export const crearRutasAdminEmpresa = (empresas: ServicioEmpresas, guardias: Gua
   rutas.put('/intervalo', ...soloAdmin, async (req, res) => {
     const { intervaloMinutos } = parsear(esquemaIntervalo, req.body);
     res.json(await empresas.cambiarIntervalo(sesionDe(res).empresaId, intervaloMinutos));
+  });
+
+  // Guía inicial: avance en 3 pasos (servicio, horario y enlace compartido)
+  rutas.get('/guia', ...soloAdmin, async (_req, res) => {
+    res.json(await guia.guia(sesionDe(res).empresaId));
+  });
+
+  // La app lo llama al tocar Compartir o Copiar el enlace del negocio
+  rutas.post('/guia/enlace-compartido', ...soloAdmin, async (_req, res) => {
+    res.json(await guia.marcarEnlaceCompartido(sesionDe(res).empresaId));
+  });
+
+  rutas.post('/guia/ocultar', ...soloAdmin, async (_req, res) => {
+    res.json(await guia.cambiarOculta(sesionDe(res).empresaId, true));
+  });
+
+  rutas.post('/guia/mostrar', ...soloAdmin, async (_req, res) => {
+    res.json(await guia.cambiarOculta(sesionDe(res).empresaId, false));
   });
 
   rutas.get('/', ...soloAdmin, async (req, res) => {

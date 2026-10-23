@@ -27,6 +27,8 @@ import { crearServicioRecuperacion } from './modules/cuentas/recuperacion.servic
 import { crearGuardiasCuenta } from './modules/cuentas/cuentas.guardias.js';
 import { crearRutasAdminEmpresa, crearRutasEmpresas } from './modules/empresas/empresas.rutas.js';
 import { crearServicioEmpresas } from './modules/empresas/empresas.servicio.js';
+import { crearServicioExportacion } from './modules/reportes/exportacion.js';
+import { crearServicioGuia } from './modules/empresas/guia.js';
 import { crearAlmacenesFotos, crearUrlBase, PREFIJO_SUBIDAS } from './modules/empresas/fotos.js';
 import { crearGuardiaSuscripcion } from './modules/empresas/suscripcion.js';
 import { crearRutasEquipo } from './modules/equipo/equipo.rutas.js';
@@ -88,6 +90,8 @@ export const crearApp = ({
   const limitadores = crearLimitadores(limites);
   const notificaciones = crearServicioNotificaciones({ pool, push });
   const funciones = crearServicioFunciones({ pool });
+  const servicioCartera = crearServicioCartera({ pool });
+  const servicioReportes = crearServicioReportes({ pool });
 
   const app = express();
   app.set('trust proxy', entorno.TRUST_PROXY);
@@ -152,7 +156,7 @@ export const crearApp = ({
     crearRutasMiCuenta(crearServicioMiCuenta({ pool, notificaciones, citas: servicioCitas }), guardiasCuenta, limitadores, urlBase),
   );
   app.use('/api/v1/empresas', crearRutasEmpresas(empresas, guardias, limitadores, urlBase));
-  app.use('/api/v1/admin/empresa', crearRutasAdminEmpresa(empresas, guardias, urlBase));
+  app.use('/api/v1/admin/empresa', crearRutasAdminEmpresa(empresas, guardias, urlBase, crearServicioGuia({ pool, enlaceBase: entorno.ENLACE_PUBLICO_BASE })));
   app.use('/api/v1/citas', crearRutasCitas(servicioCitas, guardias, suscripcion, limitadores, cuentas));
   // Gestión del negocio: personal (barberos) o la cuenta del administrador de la empresa
   app.use('/api/v1/clientes', crearRutasClientes(crearServicioClientes({ pool }), permisos));
@@ -163,9 +167,9 @@ export const crearApp = ({
     crearRutasProductos(crearServicioProductos({ pool, fotos: fotos.productos }), permisos, limitadores, urlBase),
   );
   app.use('/api/v1/bloqueos', crearRutasBloqueos(crearServicioBloqueos({ pool }), permisos));
-  app.use('/api/v1/cartera', crearRutasCartera(crearServicioCartera({ pool }), permisos, funciones));
+  app.use('/api/v1/cartera', crearRutasCartera(servicioCartera, permisos, funciones));
   // Reportes para administradores: ocupación, servicios más rentables y demanda
-  app.use('/api/v1/reportes', crearRutasReportes(crearServicioReportes({ pool }), permisos, funciones));
+  app.use('/api/v1/reportes', crearRutasReportes(servicioReportes, crearServicioExportacion({ pool, reportes: servicioReportes, cartera: servicioCartera }), permisos, funciones));
 
   app.use(rutaNoEncontrada);
   app.use(manejadorErrores);

@@ -5,6 +5,7 @@ import { aIsoEnZona } from '../../shared/zonaHoraria.js';
 import { type CambiosEmpresa, ubicacionOficial } from './empresas.esquemas.js';
 import * as repositorio from './empresas.repositorio.js';
 import { enlacePublico } from './enlace.js';
+import { marcarPaso } from './guia.js';
 import { armarHorario, guardarHorario, listarHorarios } from './horario.js';
 import { type AlmacenFotos, urlFoto } from './fotos.js';
 import type { FilaEmpresa, FilaPerfilEmpresa } from './empresas.repositorio.js';
@@ -162,6 +163,8 @@ export const crearServicioEmpresas = ({
           await repositorio.cambiarPlanEquipo(tx, empresaId, plan.id);
         }
         if (actualizado && horario) await guardarHorario(tx, empresaId, horario);
+        // Guía inicial: guardar "Mi negocio" cuenta como haber revisado el horario
+        if (actualizado) await marcarPaso(tx, empresaId, 'horario');
         return actualizado;
       }).catch(traducirErrorPerfil);
       if (!perfil) throw errores.noEncontrado('Establecimiento no encontrado');

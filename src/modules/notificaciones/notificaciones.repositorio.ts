@@ -155,22 +155,31 @@ export const datosAviso = async (db: Consultable, citaId: string) =>
     )
   ).rows[0];
 
-// Recordatorio de 24 h: citas confirmadas de clientes con cuenta que empiezan dentro de
-// 23 a 24 horas. Las marca y las devuelve en el mismo paso (con bloqueo de filas), así
-// ninguna se recuerda dos veces aunque la tarea se cruce con otra ejecución. Una cita
-// reservada con menos de 24 h de anticipación no entra: el cliente acaba de reservarla.
-export const reclamarRecordatorios = async (db: Consultable) =>
-  (
+// Recordatorios de citas confirmadas de clientes con cuenta. Cada uno tiene su columna de
+// marca y su ventana de horas antes de la cita: 24 h (23 a 24 h antes) y 2 h (1 a 2 h antes).
+// Marca y devuelve las citas en el mismo paso (con bloqueo de filas), así ninguna se recuerda
+// dos veces aunque la tarea se cruce con otra ejecución. Una cita reservada con menos
+// anticipación que la ventana no entra: el cliente acaba de reservarla. La hora de la cita
+// es de pared del negocio, por eso se convierte con su zona horaria.
+export const TIPOS_RECORDATORIO = {
+  '24h': { columna: 'recordatorio_enviado_en', desdeHoras: 23, hastaHoras: 24 },
+  '2h': { columna: 'recordatorio_2h_enviado_en', desdeHoras: 1, hastaHoras: 2 },
+} as const;
+export type TipoRecordatorio = keyof typeof TIPOS_RECORDATORIO;
+
+export const reclamarRecordatorios = async (db: Consultable, tipo: TipoRecordatorio) => {
+  const { columna, desdeHoras, hastaHoras } = TIPOS_RECORDATORIO[tipo];
+  return (
     await db.query<DatosAviso>(
       `WITH marcadas AS (
-         UPDATE citas SET recordatorio_enviado_en = now()
+         UPDATE citas SET ${columna} = now()
          WHERE id IN (
            SELECT c.id FROM citas c JOIN empresas ce ON ce.id = c.empresa_id
-           WHERE c.estado = 'CONFIRMADA' AND c.usuario_id IS NOT NULL AND c.recordatorio_enviado_en IS NULL
+           WHERE c.estado = 'CONFIRMADA' AND c.usuario_id IS NOT NULL AND c.${columna} IS NULL
              AND c.fecha BETWEEN (now() AT TIME ZONE ce.zona_horaria)::date
                              AND (now() AT TIME ZONE ce.zona_horaria)::date + 1
-             AND (c.fecha + c.hora_inicio) AT TIME ZONE ce.zona_horaria > now() + interval '23 hours'
-             AND (c.fecha + c.hora_inicio) AT TIME ZONE ce.zona_horaria <= now() + interval '24 hours'
+             AND (c.fecha + c.hora_inicio) AT TIME ZONE ce.zona_horaria > now() + make_interval(hours => $1)
+             AND (c.fecha + c.hora_inicio) AT TIME ZONE ce.zona_horaria <= now() + make_interval(hours => $2)
            FOR UPDATE OF c SKIP LOCKED
          )
          RETURNING id, empresa_id, barbero_id, usuario_id, cliente_id, servicio_id, fecha, hora_inicio
@@ -181,5 +190,56 @@ export const reclamarRecordatorios = async (db: Consultable) =>
        JOIN clientes cl ON cl.id = c.cliente_id
        JOIN servicios s ON s.id = c.servicio_id
        JOIN empresas e ON e.id = c.empresa_id`,
+      [desdeHoras, hastaHoras],
     )
   ).rows;
+};
+
+// ---- Avisos de la prueba gratuita (día 10 y día 14) ----
+
+export type AvisoPrueba = {
+  empresa_id: string;
+  nombre: string;
+  dia: 10 | 14;
+  citas: number;
+  ventas: string;
+  dias_restantes: number;
+};
+
+// Empresas en prueba a las que ya les toca el aviso del día 10 o del día 14 (días desde el registro, en
+// la zona del negocio). El del día 10 vale hasta el día 13 y el del 14 hasta que termine la prueba, así un
+// servidor apagado ese día no lo pierde. Cada aviso se reclama con INSERT ... ON CONFLICT DO NOTHING sobre
+// la clave (empresa, día): solo una ejecución lo obtiene, aunque haya varias instancias. Las que ya pagaron
+// un plan (estado distinto de 'trial') o están suspendidas no entran. Devuelve también lo logrado en la
+// prueba: citas gestionadas (no canceladas) y ventas (citas completadas).
+export const reclamarAvisosPrueba = async (db: Consultable) =>
+  (
+    await db.query<AvisoPrueba>(
+      `WITH candidatas AS (
+         SELECT e.id, e.nombre, e.trial_ends_at, e.zona_horaria,
+                ((now() AT TIME ZONE e.zona_horaria)::date - (e.created_at AT TIME ZONE e.zona_horaria)::date) AS dias
+         FROM empresas e
+         WHERE e.estado_suscripcion = 'trial' AND e.suspendida_en IS NULL AND e.trial_ends_at > now()
+       ),
+       toca AS (
+         SELECT id, nombre, trial_ends_at, zona_horaria,
+                CASE WHEN dias >= 14 THEN 14 WHEN dias >= 10 THEN 10 END AS dia
+         FROM candidatas
+       ),
+       reclamados AS (
+         INSERT INTO avisos_prueba (empresa_id, dia)
+         SELECT id, dia FROM toca WHERE dia IS NOT NULL
+         ON CONFLICT DO NOTHING
+         RETURNING empresa_id, dia
+       )
+       SELECT t.id AS empresa_id, t.nombre, r.dia::int AS dia,
+              (SELECT count(*)::int FROM citas c WHERE c.empresa_id = t.id AND c.estado <> 'CANCELADA') AS citas,
+              (SELECT coalesce(sum(c.precio), 0) FROM citas c WHERE c.empresa_id = t.id AND c.estado = 'COMPLETADA') AS ventas,
+              greatest(0, (t.trial_ends_at AT TIME ZONE t.zona_horaria)::date - (now() AT TIME ZONE t.zona_horaria)::date) AS dias_restantes
+       FROM reclamados r JOIN toca t ON t.id = r.empresa_id`,
+    )
+  ).rows;
+
+// Administradores de una empresa: integrantes activos con rol Administrador y cuentas admin
+export const administradoresDe = async (db: Consultable, empresaId: string) =>
+  destinatariosDelNegocio(db, { empresaId, barberoId: '' });

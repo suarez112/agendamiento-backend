@@ -177,7 +177,7 @@ export const buscarCitaDeCliente = async (db: Consultable, citaId: string, usuar
 
 // Cambia la fecha y la hora de la cita (conserva su duración y precio) y vuelve a habilitar su recordatorio
 export const moverCita = (db: Consultable, p: { id: string; fecha: string; horaInicio: string; horaFin: string }) =>
-  db.query(`UPDATE citas SET fecha = $2, hora_inicio = $3, hora_fin = $4, recordatorio_enviado_en = NULL WHERE id = $1`, [
+  db.query(`UPDATE citas SET fecha = $2, hora_inicio = $3, hora_fin = $4, recordatorio_enviado_en = NULL, recordatorio_2h_enviado_en = NULL WHERE id = $1`, [
     p.id,
     p.fecha,
     p.horaInicio,

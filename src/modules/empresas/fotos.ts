@@ -4,15 +4,21 @@ import { unlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { Request, RequestHandler } from 'express';
 import multer from 'multer';
+import sharp from 'sharp';
 import { ErrorApp, errores } from '../../shared/errores.js';
 import { registro } from '../../shared/registro.js';
 
 // Fotos subidas (empresas, equipo y productos): se guardan en
 // <CARPETA_SUBIDAS>/<tipo> con un nombre aleatorio y la base solo guarda su ruta
-// pública (/uploads/<tipo>/<archivo>).
+// pública (/uploads/<tipo>/<archivo>). Toda foto nueva se valida como imagen real, se reduce a 1080 px
+// de lado como máximo, se convierte a WebP y pierde sus metadatos (EXIF, incluida la ubicación GPS).
+// Las fotos que ya estaban guardadas no se tocan.
 
 export const PREFIJO_SUBIDAS = '/uploads';
 export const MAX_BYTES_FOTO = 5 * 1024 * 1024;
+export const MAX_LADO_FOTO = 1080;
+// Tope de píxeles al decodificar: una imagen pequeña en bytes puede ser enorme al abrirla
+const MAX_PIXELES = 40_000_000;
 
 export type TipoFoto = 'empresas' | 'barberos' | 'productos';
 
@@ -52,12 +58,25 @@ export const crearAlmacenFotos = (carpetaSubidas: string, tipo: TipoFoto) => {
   return {
     carpeta,
 
-    // Guarda la imagen y devuelve su ruta pública. Rechaza lo que no sea JPG/PNG/WEBP.
+    // Guarda la imagen y devuelve su ruta pública. Rechaza lo que no sea JPG/PNG/WEBP real.
+    // Se redimensiona (máximo 1080 px de lado, sin agrandar), se convierte a WebP y se descartan
+    // los metadatos: sharp no los copia a la salida. rotate() aplica antes la orientación del EXIF,
+    // para que la foto no quede girada al perder ese dato.
     async guardar(datos: Buffer): Promise<string> {
-      const extension = extensionPorContenido(datos);
-      if (!extension) throw errores.solicitudInvalida(MENSAJE_TIPO);
-      const archivo = `${randomUUID()}.${extension}`;
-      await writeFile(join(carpeta, archivo), datos, { flag: 'wx' });
+      if (!extensionPorContenido(datos)) throw errores.solicitudInvalida(MENSAJE_TIPO);
+      let procesada: Buffer;
+      try {
+        procesada = await sharp(datos, { limitInputPixels: MAX_PIXELES, failOn: 'error' })
+          .rotate()
+          .resize(MAX_LADO_FOTO, MAX_LADO_FOTO, { fit: 'inside', withoutEnlargement: true })
+          .webp({ quality: 80 })
+          .toBuffer();
+      } catch {
+        // Archivo con la firma de una imagen pero dañado o que no se puede decodificar
+        throw errores.solicitudInvalida(MENSAJE_TIPO);
+      }
+      const archivo = `${randomUUID()}.webp`;
+      await writeFile(join(carpeta, archivo), procesada, { flag: 'wx' });
       return `${prefijo}/${archivo}`;
     },
 
