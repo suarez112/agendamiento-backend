@@ -23,7 +23,7 @@ export const manejadorErrores: ErrorRequestHandler = (error, req, res, next) => 
   }
 
   if (error instanceof ErrorApp) {
-    res.status(error.estado).json({ error: error.message });
+    res.status(error.estado).json({ error: error.message, ...error.extra });
     return;
   }
 

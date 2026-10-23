@@ -1,4 +1,6 @@
 import type pg from 'pg';
+import { diasHabilesParaResponder, PLAN_SIN_NEGOCIO, PLAZO_POR_PLAN } from '../../config/pqrs.js';
+import { buscarPlan } from '../../config/planes.js';
 import { ZONA_PLATAFORMA } from '../../config/plataforma.js';
 import { errores } from '../../shared/errores.js';
 import { aIsoEnZona } from '../../shared/zonaHoraria.js';
@@ -16,6 +18,11 @@ export const armarPqrs = (p: FilaPqrs) => ({
   respuesta: p.respuesta,
   respondidaEn: aIsoEnZona(p.respondida_en, ZONA_PLATAFORMA),
   creadaEn: aIsoEnZona(p.creado_en, ZONA_PLATAFORMA),
+  // Prioridad (1 = la más urgente), según el plan del negocio de quien radicó, y plazo de respuesta
+  prioridad: p.prioridad,
+  planEquipo: p.plan_equipo,
+  diasHabiles: p.dias_habiles,
+  fechaLimite: aIsoEnZona(p.fecha_limite, ZONA_PLATAFORMA),
   zonaHoraria: ZONA_PLATAFORMA,
 });
 
@@ -26,7 +33,16 @@ export const crearServicioPqrs = ({ pool }: { pool: pg.Pool }) => ({
     const contacto = entrada.contacto ?? cuenta?.correo ?? cuenta?.telefono ?? undefined;
     if (!nombre) throw errores.solicitudInvalida('El campo "nombre" es obligatorio');
     if (!contacto) throw errores.solicitudInvalida('El campo "contacto" es obligatorio');
+    // Plan del negocio de quien radica (una administradora); invitados y clientes usan el más pequeño
+    const empresa = cuenta?.empresa_id
+      ? (await pool.query<{ plan_equipo: string }>('SELECT plan_equipo FROM empresas WHERE id = $1', [cuenta.empresa_id])).rows[0]
+      : undefined;
+    const plan = buscarPlan(empresa?.plan_equipo ?? PLAN_SIN_NEGOCIO) ?? buscarPlan(PLAN_SIN_NEGOCIO)!;
     const fila = await repositorio.insertarPqrs(pool, {
+      empresaId: cuenta?.empresa_id ?? null,
+      planEquipo: plan.id,
+      prioridad: PLAZO_POR_PLAN[plan.id].prioridad,
+      diasHabiles: diasHabilesParaResponder(plan.id, entrada.tipo),
       tipo: entrada.tipo,
       mensaje: entrada.mensaje,
       nombre,

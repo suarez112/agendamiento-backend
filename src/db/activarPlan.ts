@@ -6,9 +6,9 @@ import { buscarSuscripcion } from '../modules/empresas/empresas.repositorio.js';
 import { ErrorApp } from '../shared/errores.js';
 import { crearPool, enTransaccion } from './pool.js';
 
-// npm run dev:activar-plan -- CODIGO [basico|equipo|pro] mensual|anual
+// npm run dev:activar-plan -- CODIGO [emprendedor|equipo|pro] mensual|anual
 // Activa un plan a una empresa sin pagos reales (no hay pasarela de pagos todavía).
-// Sin plan (basico, equipo o pro) conserva el que tiene. Un plan cuyo cupo no alcanza
+// Sin plan (emprendedor, equipo o pro) conserva el que tiene. Un plan cuyo cupo no alcanza
 // para el equipo activo se rechaza y no cambia nada.
 // La fecha de pago es hoy (fecha en la zona horaria del negocio) y la empresa queda 'activa' de inmediato.
 // El plan dura 1 mes o 1 año contados desde:

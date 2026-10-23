@@ -39,6 +39,7 @@ import { crearRutasMiCuenta, crearServicioMiCuenta } from './modules/micuenta/mi
 import { crearRutasPqrs } from './modules/pqrs/pqrs.rutas.js';
 import { crearServicioPqrs } from './modules/pqrs/pqrs.servicio.js';
 import { crearRutasPlanes } from './modules/planes/planes.js';
+import { crearRutasFunciones, crearServicioFunciones } from './modules/planes/funciones.js';
 import { crearRutasProductos } from './modules/productos/productos.rutas.js';
 import { crearServicioProductos } from './modules/productos/productos.servicio.js';
 import { crearRutasServicios } from './modules/servicios/servicios.rutas.js';
@@ -86,6 +87,7 @@ export const crearApp = ({
   const empresas = crearServicioEmpresas({ pool, fotos: fotos.empresas, enlaceBase: entorno.ENLACE_PUBLICO_BASE });
   const limitadores = crearLimitadores(limites);
   const notificaciones = crearServicioNotificaciones({ pool, push });
+  const funciones = crearServicioFunciones({ pool });
 
   const app = express();
   app.set('trust proxy', entorno.TRUST_PROXY);
@@ -128,6 +130,8 @@ export const crearApp = ({
   app.use('/api/v1/cuentas', crearRutasCuentas(cuentas, recuperacion, crearServicioEliminacion({ pool }), guardiasCuenta, limitadores));
   app.use('/api/v1/ubicaciones', crearRutasUbicaciones());
   app.use('/api/v1/planes', crearRutasPlanes());
+  // Funciones que incluye el plan del negocio de la sesión
+  app.use('/api/v1/funciones', crearRutasFunciones(funciones, guardias));
   app.use('/api/v1/categorias', crearRutasCategorias(categorias));
   app.use('/api/v1/pqrs', crearRutasPqrs(crearServicioPqrs({ pool }), cuentas, guardiasCuenta, limitadores));
   // Panel del dueño de la plataforma: sesión propia, con verificación en dos pasos
@@ -152,16 +156,16 @@ export const crearApp = ({
   app.use('/api/v1/citas', crearRutasCitas(servicioCitas, guardias, suscripcion, limitadores, cuentas));
   // Gestión del negocio: personal (barberos) o la cuenta del administrador de la empresa
   app.use('/api/v1/clientes', crearRutasClientes(crearServicioClientes({ pool }), permisos));
-  app.use('/api/v1/equipo', crearRutasEquipo(crearServicioEquipo({ pool, fotos: fotos.barberos }), permisos, urlBase));
+  app.use('/api/v1/equipo', crearRutasEquipo(crearServicioEquipo({ pool, fotos: fotos.barberos }), permisos, urlBase, funciones));
   app.use('/api/v1/servicios', crearRutasServicios(crearServicioServicios({ pool }), permisos));
   app.use(
     '/api/v1/productos',
     crearRutasProductos(crearServicioProductos({ pool, fotos: fotos.productos }), permisos, limitadores, urlBase),
   );
   app.use('/api/v1/bloqueos', crearRutasBloqueos(crearServicioBloqueos({ pool }), permisos));
-  app.use('/api/v1/cartera', crearRutasCartera(crearServicioCartera({ pool }), permisos));
+  app.use('/api/v1/cartera', crearRutasCartera(crearServicioCartera({ pool }), permisos, funciones));
   // Reportes para administradores: ocupación, servicios más rentables y demanda
-  app.use('/api/v1/reportes', crearRutasReportes(crearServicioReportes({ pool }), permisos));
+  app.use('/api/v1/reportes', crearRutasReportes(crearServicioReportes({ pool }), permisos, funciones));
 
   app.use(rutaNoEncontrada);
   app.use(manejadorErrores);

@@ -60,6 +60,8 @@ export const crearServicioEliminacion = ({ pool }: Dependencias) => ({
         await tx.query(`${ANONIMIZAR_CLIENTES} WHERE telefono = $1`, [rows[0].telefono]);
       }
 
+      // Si la administradora también atendía clientes, su perfil de profesional se desactiva (sus citas se conservan)
+      await tx.query('UPDATE barberos SET activo = false, atiende_clientes = false WHERE usuario_id = $1', [sesion.usuarioId]);
       await tx.query(
         `UPDATE pqrs SET nombre = 'Cuenta eliminada', contacto = 'Cuenta eliminada' WHERE usuario_id = $1`,
         [sesion.usuarioId],

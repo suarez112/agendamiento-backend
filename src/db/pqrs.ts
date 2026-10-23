@@ -25,7 +25,7 @@ try {
       `SELECT radicado, tipo, estado, to_char(creado_en AT TIME ZONE '${ZONA_PLATAFORMA}', 'YYYY-MM-DD HH24:MI') AS fecha,
               nombre, contacto, mensaje, respuesta
        FROM pqrs WHERE $1::varchar IS NULL OR estado = $1
-       ORDER BY (estado IN ('resuelta', 'cerrada')), creado_en`,
+       ORDER BY (estado IN ('resuelta', 'cerrada')), prioridad, fecha_limite, creado_en`,
       [estado],
     );
     if (rows.length === 0) console.log('No hay PQRS' + (estado ? ` en estado ${estado}` : ''));

@@ -66,7 +66,7 @@ export const crearServicioEmpresas = ({
       barberos: barberos.map((b) => ({
         id: b.id,
         nombre: b.nombre,
-        usuario: esPublica ? '' : b.usuario,
+        usuario: esPublica ? '' : (b.usuario ?? ''),
         clave: '', // por seguridad, el servidor nunca envía contraseñas
         esAdmin: b.es_admin,
         atiendeClientes: b.atiende_clientes,
@@ -130,7 +130,7 @@ export const crearServicioEmpresas = ({
     },
 
     // Datos y horario se guardan juntos: si algo falla, no cambia nada.
-    // Durante la prueba, el número de empleados decide el plan (1-3 Básico, 4-5 Equipo,
+    // Durante la prueba, el número de empleados decide el plan (1 Emprendedor, 2-5 Equipo,
     // 6-10 Pro); un plan cuyo cupo no alcanza para el equipo activo se rechaza. Fuera de
     // la prueba es solo informativo: el plan lo cambia el pago. El UPDATE bloquea la
     // fila de la empresa, así que un integrante nuevo creado a la vez espera.

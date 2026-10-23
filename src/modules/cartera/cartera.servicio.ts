@@ -14,6 +14,10 @@ export type Comparacion =
   | { tipo: 'anterior' | 'mes_pasado' | 'anio_pasado' }
   | { tipo: 'personalizado'; desde: string; hasta: string };
 
+// Secciones del resumen que dependen del plan (src/config/funciones.ts); sin ellas llegan en null
+export type Incluye = { compararPeriodos: boolean; comisiones: boolean; demanda: boolean };
+const TODO_INCLUIDO: Incluye = { compararPeriodos: true, comisiones: true, demanda: true };
+
 const DIA_MS = 86_400_000;
 const SERVICIOS_TOP = 10;
 
@@ -73,9 +77,19 @@ export const crearServicioCartera = ({ pool }: { pool: pg.Pool }) => ({
   // reglas de acceso que resumen(). Los profesionales van de mayor a menor en ventas.
   // Un rango no puede empezar antes del registro del negocio ni terminar después de hoy
   // (fechas en la zona del negocio). Las fechas AAAA-MM-DD se comparan bien como texto.
-  async resumenPeriodo(sesion: Sesion, consulta: ConsultaPeriodo, comparar: Comparacion = { tipo: 'anterior' }) {
+  async resumenPeriodo(
+    sesion: Sesion,
+    consulta: ConsultaPeriodo,
+    comparar: Comparacion = { tipo: 'anterior' },
+    incluye: Incluye = TODO_INCLUIDO,
+  ) {
     const { desde, hasta, limites } = await resolverPeriodo(pool, sesion.empresaId, consulta);
-    const r = await this.resumen(sesion, desde, hasta, consulta.barberoId);
+    // Sin comisiones en el plan no hay reparto con el equipo: toda la venta es del negocio
+    const resumir = async (d: string, h: string) => {
+      const x = await this.resumen(sesion, d, h, consulta.barberoId);
+      return incluye.comisiones ? x : { ...x, gananciaEquipo: 0, gananciaNegocio: x.totalVentas };
+    };
+    const r = await resumir(desde, hasta);
 
     // Mismo filtro que el resumen: un empleado solo ve lo suyo, aunque envíe otro barberoId
     const filtro = { empresaId: sesion.empresaId, desde, hasta, barberoId: r.barberoId };
@@ -97,12 +111,10 @@ export const crearServicioCartera = ({ pool }: { pool: pg.Pool }) => ({
     const sinDatos = { totalVentas: 0, gananciaNegocio: 0, gananciaEquipo: 0, totalCitas: 0 };
 
     const [previo, dias, servicios, ocupacion, cancelaciones, clientes] = await Promise.all([
-      antesDelRegistro
-        ? Promise.resolve(sinDatos)
-        : this.resumen(sesion, anterior.desde, anterior.hasta, consulta.barberoId),
+      antesDelRegistro || !incluye.compararPeriodos ? Promise.resolve(sinDatos) : resumir(anterior.desde, anterior.hasta),
       repositorio.ventasPorDia(pool, filtro),
       repositorio.serviciosMasVendidos(pool, filtro, SERVICIOS_TOP),
-      repositorio.ocupacion(pool, filtro),
+      incluye.demanda ? repositorio.ocupacion(pool, filtro) : Promise.resolve([]),
       repositorio.conteoCancelaciones(pool, filtro),
       repositorio.clientesNuevosYRecurrentes(pool, filtro),
     ]);
@@ -143,10 +155,10 @@ export const crearServicioCartera = ({ pool }: { pool: pg.Pool }) => ({
         activo: p.activo,
         citas: p.citas,
         ventas: p.ventas,
-        ganancia: p.ganancia,
+        ...(incluye.comisiones ? { ganancia: p.ganancia } : {}),
       })),
       ticketPromedio: r.totalCitas ? Math.round((r.totalVentas / r.totalCitas) * 100) / 100 : 0,
-      comparacion: {
+      comparacion: !incluye.compararPeriodos ? null : {
         tipo: comparar.tipo,
         aviso,
         periodoAnterior: {
@@ -171,7 +183,7 @@ export const crearServicioCartera = ({ pool }: { pool: pg.Pool }) => ({
         cantidad: s.cantidad,
         ventas: Number(s.ventas),
       })),
-      ocupacion: {
+      ocupacion: !incluye.demanda ? null : {
         diasSemana: porDia,
         horas,
         diaMasOcupado: masOcupado(porDia)?.dia ?? null,
@@ -183,7 +195,7 @@ export const crearServicioCartera = ({ pool }: { pool: pg.Pool }) => ({
         tasaPorcentaje: cancelaciones.total ? redondear1((cancelaciones.canceladas / cancelaciones.total) * 100) : 0,
       },
       clientes: { nuevos: clientes.nuevos, recurrentes: clientes.recurrentes },
-      pagoProfesionales: { total: r.gananciaEquipo, detalle: pagoProfesionales },
+      pagoProfesionales: incluye.comisiones ? { total: r.gananciaEquipo, detalle: pagoProfesionales } : null,
     };
   },
 

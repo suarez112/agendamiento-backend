@@ -26,6 +26,8 @@ const armarMiembro = (m: FilaMiembro, urlBase: string) => ({
   id: m.id,
   nombre: m.nombre,
   usuario: m.usuario,
+  // true = perfil de la cuenta de la administradora ("Yo también atiendo clientes"): entra con esa cuenta
+  cuentaAdministradora: m.usuario_id !== null,
   rol: m.es_admin ? ('admin' as const) : ('empleado' as const),
   esAdmin: m.es_admin,
   atiendeClientes: m.atiende_clientes,
@@ -42,6 +44,32 @@ export const cupoAlcanzado = (plan: Plan, activos: number) => {
     ? `${lleno} Para agregar a alguien más, sube al plan ${siguiente.nombre} (hasta ${siguiente.cupo} personas).`
     : `${lleno} Es el plan más grande: para agregar a alguien, elimina primero del equipo a quien ya no trabaje en el negocio.`;
 };
+
+const PERFIL_DE_CUENTA =
+  'Este perfil es el de la cuenta de la administradora: su usuario, contraseña y rol se cambian en su cuenta. ' +
+  'Para que deje de recibir reservas, desactiva "Yo también atiendo clientes".';
+
+const cuentaDe = (sesion: Sesion) => {
+  if (!sesion.usuarioId) {
+    throw errores.prohibido('Esta opción es solo para la cuenta de administración (la de correo). Tu perfil ya está en el equipo.');
+  }
+  return sesion.usuarioId;
+};
+
+const sinCupoParaAtender = (plan: Plan, activos: number) => {
+  const siguiente = planSiguiente(plan.id);
+  const lleno = `No hay cupo para que tú también atiendas: tu equipo ya tiene ${activos} integrante(s) activo(s) y tu plan ${plan.nombre} permite hasta ${plan.cupo}.`;
+  return siguiente
+    ? `${lleno} Sube al plan ${siguiente.nombre} (hasta ${siguiente.cupo} personas) o elimina a alguien del equipo.`
+    : `${lleno} Elimina primero del equipo a quien ya no trabaje en el negocio.`;
+};
+
+const respuestaAtiende = (perfil: FilaMiembro | undefined, urlBase: string) => ({
+  atiendeClientes: Boolean(perfil?.atiende_clientes),
+  // Id del profesional de la administradora (para filtrar su cartera o su agenda); null si nunca lo activó
+  barberoId: perfil?.id ?? null,
+  perfil: perfil ? armarMiembro(perfil, urlBase) : null,
+});
 
 // El usuario de inicio de sesión es único entre el equipo activo de todos los negocios
 const traducirUsuarioRepetido = (error: unknown): never => {
@@ -74,6 +102,10 @@ export const crearServicioEquipo = ({ pool, fotos }: { pool: pg.Pool; fotos: Alm
   },
 
   async actualizar(sesion: Sesion, id: string, { clave, ...cambios }: Partial<DatosMiembro>, urlBase: string) {
+    const actual = (await repositorio.listarEquipo(pool, sesion.empresaId)).find((m) => m.id === id);
+    if (actual?.usuario_id && (clave !== undefined || cambios.usuario !== undefined || cambios.esAdmin !== undefined)) {
+      throw errores.solicitudInvalida(PERFIL_DE_CUENTA);
+    }
     // Un barbero administrador no puede quitarse a sí mismo el rol (perdería el acceso)
     if (sesion.barberoId === id && cambios.esAdmin === false) {
       throw errores.solicitudInvalida('No puedes quitarte a ti mismo el rol de administrador.');
@@ -88,6 +120,9 @@ export const crearServicioEquipo = ({ pool, fotos }: { pool: pg.Pool; fotos: Alm
 
   async borrar(sesion: Sesion, id: string) {
     if (sesion.barberoId === id) throw errores.solicitudInvalida('No puedes eliminar tu propio usuario.');
+    if ((await repositorio.listarEquipo(pool, sesion.empresaId)).find((m) => m.id === id)?.usuario_id) {
+      throw errores.solicitudInvalida(PERFIL_DE_CUENTA);
+    }
     const pendientes = await repositorio.contarCitasPendientes(pool, id, sesion.empresaId);
     if (pendientes > 0) {
       throw errores.conflicto(
@@ -98,6 +133,38 @@ export const crearServicioEquipo = ({ pool, fotos }: { pool: pg.Pool; fotos: Alm
     if (!borrado) throw errores.noEncontrado(NO_ENCONTRADO);
     await fotos.borrar(borrado.foto_url);
     return { mensaje: 'Profesional eliminado' };
+  },
+
+  // "Yo también atiendo clientes": solo la cuenta de la administradora (la de correo). Activarlo crea o
+  // habilita su perfil de profesional vinculado a su cuenta (sin otro usuario) y ocupa un cupo del plan.
+  async estadoAtiende(sesion: Sesion, urlBase: string) {
+    const perfil = await repositorio.buscarPerfilDeCuenta(pool, cuentaDe(sesion));
+    return respuestaAtiende(perfil?.activo ? perfil : perfil && { ...perfil, atiende_clientes: false }, urlBase);
+  },
+
+  async cambiarAtiende(sesion: Sesion, atiende: boolean, urlBase: string) {
+    const usuarioId = cuentaDe(sesion);
+    const perfil = await enTransaccion(pool, async (tx) => {
+      const limite = await repositorio.bloquearLimiteEquipo(tx, sesion.empresaId);
+      if (!limite) throw errores.noEncontrado('Establecimiento no encontrado');
+      const actual = await repositorio.buscarPerfilDeCuenta(tx, usuarioId, true);
+      if (!atiende) {
+        if (!actual?.activo) return actual;
+        // Con citas pendientes conserva el cupo hasta que pasen; en todo caso deja de recibir reservas nuevas
+        const pendientes = await repositorio.contarCitasPendientes(tx, actual.id, sesion.empresaId);
+        return repositorio.cambiarPerfilDeCuenta(tx, actual.id, pendientes > 0, false);
+      }
+      if (actual?.activo) return repositorio.cambiarPerfilDeCuenta(tx, actual.id, true, true);
+      const plan = buscarPlan(limite.plan) ?? PLANES[PLANES.length - 1];
+      if (limite.activos >= plan.cupo) throw errores.conflicto(sinCupoParaAtender(plan, limite.activos));
+      if (actual) return repositorio.cambiarPerfilDeCuenta(tx, actual.id, true, true);
+      const nombre = (await repositorio.nombreDeLaAdministradora(tx, sesion.empresaId)) ?? 'Administradora';
+      return repositorio.crearPerfilDeCuenta(tx, { id: randomUUID(), empresaId: sesion.empresaId, usuarioId, nombre });
+    });
+    return {
+      mensaje: atiende ? 'Ahora también atiendes clientes' : 'Dejaste de recibir reservas nuevas. Tus citas se conservan.',
+      ...respuestaAtiende(perfil, urlBase),
+    };
   },
 
   // Igual que la foto del negocio: primero guarda el archivo nuevo; si la base

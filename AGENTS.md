@@ -15,7 +15,9 @@ src/
   config/entorno.ts  variables de entorno validadas con zod
   config/zonas.ts    zona horaria que se asigna según el país; config/plataforma.ts: zona de la plataforma (ZONA_PLATAFORMA)
   shared/zonaHoraria.ts  utilidades de zona horaria (hoy en una zona, ISO 8601 con desfase)
-  config/planes.ts   planes por tamaño de equipo (Básico, Equipo, Pro): cupo y precios (los reales los pone el dueño)
+  config/planes.ts   planes por tamaño de equipo (Emprendedor, Equipo, Pro): cupo y precio mensual (el anual sale solo; los reales los pone el dueño)
+  config/funciones.ts  tabla de funciones por plan (una sola tabla: para mover una función de plan, cambia su "planMinimo")
+  config/pqrs.ts    plazos de las PQRS según el plan y topes de la Ley 1581
   db/                pool, migraciones (migrar.ts) y scripts de mantenimiento
   shared/            errores, logs JSON, middlewares HTTP (CORS, límites, validación, errores)
   shared/telefonos.ts  validación y formato E.164 de los teléfonos (libphonenumber-js)
@@ -26,6 +28,7 @@ src/
   modules/empresas/horario.ts     horario por día (tabla horarios_empresa)
   modules/citas/disponibilidad.ts  cálculo de las horas libres de un profesional según la duración del servicio (funciones puras)
   modules/planes/planes.ts        GET /api/v1/planes (planes y precios, público)
+  modules/planes/funciones.ts     GET /api/v1/funciones, guardia `requerirFuncion` y el 403 `funcion_no_incluida`
   modules/ubicaciones/            departamentos y municipios de Colombia (DIVIPOLA del DANE, divipola.ts generado)
   modules/empresas/suscripcion.ts estado de la suscripción y guardia 402
   modules/legal/legal.ts          política y términos vigentes, prueba de las autorizaciones (Ley 1581)
@@ -62,11 +65,11 @@ npm test             # integración; requiere PostgreSQL y permiso CREATEDB
 No hay pagos reales. Para probar las suscripciones se usan dos comandos. `CODIGO` es el código del negocio (sin distinguir mayúsculas). Lee la base del `.env`; no hace falta tener el servidor encendido.
 
 ```bash
-npm run dev:activar-plan -- CODIGO equipo anual # plan: basico | equipo | pro (opcional); periodo: mensual | anual
+npm run dev:activar-plan -- CODIGO equipo anual # plan: emprendedor | equipo | pro (opcional); periodo: mensual | anual
 npm run dev:simular-vencimiento -- CODIGO DIAS # ej. 3, 0 o -2
 ```
 
-- **`dev:activar-plan`**: si lo ejecutas mal (o sin argumentos) muestra el uso con la lista de planes (`basico | equipo | pro`), los periodos (`mensual | anual`) y un ejemplo (`npm run dev:activar-plan -- INFINITY equipo anual`). Recibe el plan por tamaño de equipo (`basico`, `equipo` o `pro`; si no se envía, conserva el que tiene) y el periodo (`mensual` o `anual`). Si el equipo activo no cabe en el plan elegido, lo rechaza y no cambia nada (`✖ Tu equipo tiene 4 integrante(s) activo(s) y el plan Básico permite hasta 3. …`). Deja la empresa `activa` con ese plan, de inmediato (ya no aparece como prueba). Fecha de pago = hoy (Colombia). Fecha de fin = 1 mes o 1 año contados desde: el **fin de la prueba**, si paga durante la prueba (no pierde los días gratis que le quedaban; se guardan en `dias_prueba_sumados` y `/suscripcion` los muestra en `diasPruebaSumados`); el fin del plan actual, si aún no vencía (una renovación anticipada no pierde días); o hoy, en otro caso. Sirve también para activar a mano un negocio en producción mientras no haya pagos. Cada activación queda en el historial de ingresos (`activaciones_plan`, origen `comando`). Ejemplo: `npm run dev:activar-plan -- CENTRAL10 equipo anual` → `✔ Barbería Central (CENTRAL10): plan Equipo anual activo (cupo 2/5). Pago: 2026-10-19. Fin: 2027-10-19. Días restantes: 365.` Durante una prueba con 15 días restantes, `-- CENTRAL10 basico mensual` → `… Fin: 2026-12-03. Días restantes: 45. Días de prueba sumados: 15.`
+- **`dev:activar-plan`**: si lo ejecutas mal (o sin argumentos) muestra el uso con la lista de planes (`emprendedor | equipo | pro`), los periodos (`mensual | anual`) y un ejemplo (`npm run dev:activar-plan -- INFINITY equipo anual`). Recibe el plan por tamaño de equipo (`emprendedor`, `equipo` o `pro`; si no se envía, conserva el que tiene) y el periodo (`mensual` o `anual`). Si el equipo activo no cabe en el plan elegido, lo rechaza y no cambia nada (`✖ Tu equipo tiene 4 integrante(s) activo(s) y el plan Emprendedor permite hasta 1. …`). Deja la empresa `activa` con ese plan, de inmediato (ya no aparece como prueba). Fecha de pago = hoy (Colombia). Fecha de fin = 1 mes o 1 año contados desde: el **fin de la prueba**, si paga durante la prueba (no pierde los días gratis que le quedaban; se guardan en `dias_prueba_sumados` y `/suscripcion` los muestra en `diasPruebaSumados`); el fin del plan actual, si aún no vencía (una renovación anticipada no pierde días); o hoy, en otro caso. Sirve también para activar a mano un negocio en producción mientras no haya pagos. Cada activación queda en el historial de ingresos (`activaciones_plan`, origen `comando`). Ejemplo: `npm run dev:activar-plan -- CENTRAL10 equipo anual` → `✔ Barbería Central (CENTRAL10): plan Equipo anual activo (cupo 2/5). Pago: 2026-10-19. Fin: 2027-10-19. Días restantes: 365.` Durante una prueba con 15 días restantes, `-- CENTRAL10 emprendedor mensual` → `… Fin: 2026-12-03. Días restantes: 45. Días de prueba sumados: 15.`
 - **`dev:simular-vencimiento`**: deja a la empresa con `DIAS` días restantes de su prueba (si está en prueba) o de su plan (si está activa), cambiando la fecha de fin. `0` o negativo = vencida. Para un negocio vencido, actívale antes un plan. **No funciona con `NODE_ENV=production`** (responde con error y no cambia nada). Ejemplos: `-- CENTRAL10 5` (recordatorio de los últimos 7 días), `-- CENTRAL10 0` (vencida hoy).
 
 Los dos muestran cómo quedó: estado, fecha de fin y días restantes.
@@ -76,7 +79,7 @@ npm run dev:pqrs -- listar [estado]                          # estado: recibida 
 npm run dev:pqrs -- responder RADICADO estado ["respuesta"]  # ej. -- responder PQRS-2026-000001 resuelta "Ya lo corregimos"
 ```
 
-- **`dev:pqrs`**: `listar` muestra las PQRS (las sin resolver primero, de la más antigua a la más reciente; con un estado, solo las de ese estado) con radicado, tipo, quién la envió, mensaje y respuesta. `responder` cambia el estado de la PQRS con ese radicado (sin distinguir mayúsculas) y, si se envía texto (máx. 2000), guarda la respuesta y la fecha; sin texto conserva la respuesta anterior. Un radicado que no existe responde `No existe una PQRS con el radicado …`. La app ve el cambio en `GET /pqrs/mias`.
+- **`dev:pqrs`**: `listar` muestra las PQRS (las sin resolver primero, por prioridad del plan y fecha límite; con un estado, solo las de ese estado) con radicado, tipo, quién la envió, mensaje y respuesta. `responder` cambia el estado de la PQRS con ese radicado (sin distinguir mayúsculas) y, si se envía texto (máx. 2000), guarda la respuesta y la fecha; sin texto conserva la respuesta anterior. Un radicado que no existe responde `No existe una PQRS con el radicado …`. La app ve el cambio en `GET /pqrs/mias`.
 
 ```bash
 npm run dev:crear-superadmin -- correo              # crea tu cuenta de superadmin
@@ -113,6 +116,7 @@ Puerto por defecto `4000` (`PORT`). Rutas bajo `/api/v1`.
 - Migración 022: tabla `categorias_negocio` (`nombre` único sin distinguir mayúsculas, `activa`; se cargan Barbería, Peluquería y Salón de belleza; `empresas.categoria` sigue guardando el nombre, así que los negocios que ya existían no cambian) y tabla `notificaciones` (centro de notificaciones: de una cuenta `usuario_id` o de un integrante `barbero_id`, nunca los dos; `tipo`, `titulo`, `texto`, `cita_id` que se desvincula si la cita se borra, `leida_en`).
 - Migración 023: tabla `auditoria_autorizaciones` (prueba de cada aceptación de la política y los términos; ver "Autorización de tratamiento de datos"). Sin llaves foráneas y **solo de inserción**: un trigger rechaza `UPDATE`, `DELETE` y `TRUNCATE`. Copió las filas de `autorizaciones_datos`, que quedó solo como historial (ya no se escribe ni se lee).
 - Migración 024: **zonas horarias**. `empresas.pais` (ISO alfa-2, por defecto `CO`) y `empresas.zona_horaria` (IANA, por defecto `America/Bogota`; las empresas existentes quedaron así). Las columnas `timestamp` sin zona (`created_at` de empresas, barberos, bloqueos, clientes, lista_negra, productos, servicios y citas; `citas.completada_en` y `cancelada_en`) pasaron a `timestamptz`, interpretando los valores viejos como hora de Bogotá (el servidor ya trabajaba en esa zona): los instantes no cambian. No hubo que migrar nada más.
+- Migración 026: **planes nuevos** (Emprendedor, Equipo, Pro): `empresas.plan_equipo` pasa a `varchar(20)` con los valores `emprendedor` | `equipo` | `pro`; cada empresa quedó en el plan de su equipo activo (en la prueba, el mayor entre el equipo activo y `numero_empleados`); no se borró a nadie. El historial `activaciones_plan` pasó al plan nuevo de cada negocio y se **recalculó con los precios nuevos** (son estimados, no pagos). `barberos.usuario_id` (perfil de profesional vinculado a la cuenta de la administradora; `usuario` y `password_hash` ahora admiten `NULL`: ese perfil no tiene inicio de sesión propio). `pqrs.empresa_id`, `plan_equipo`, `prioridad` (1 a 3), `dias_habiles` y `fecha_limite` (las PQRS anteriores quedaron con prioridad 3 y plazo en días corridos desde su fecha).
 - Migración 025: `empresas.anticipacion_cancelacion_horas` (0 a 48, por defecto 3; los negocios existentes quedaron en 3), `empresas.whatsapp_contacto` (E.164, opcional) y tabla `citas_reprogramaciones` (historial de cambios de fecha y hora de una cita, con `ON DELETE CASCADE` desde la cita).
 - **Publicar una versión nueva de la política, los términos o el aviso**: una migración nueva que inserte filas en `documentos_legales` con otra `version` (nunca edites las filas publicadas). La más reciente de cada tipo es la vigente; los clientes con cuenta aceptan la política y los términos nuevos en su próxima reserva. Conviene publicar los tres tipos juntos con el mismo número.
 
@@ -127,6 +131,7 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | POST | `/api/v1/auth/login` | público, limitado. Personal (barberos). Cuerpo `{ usuario, clave }` (se mantiene) |
 | GET | `/api/v1/ubicaciones` | público. Departamentos de Colombia con sus municipios |
 | GET | `/api/v1/planes` | público. Planes por tamaño de equipo con sus precios (ver "Planes") |
+| GET | `/api/v1/funciones` | cualquier sesión del personal o la administradora, aunque esté vencida. Funciones que incluye el plan del negocio (ver "Funciones por plan") |
 | GET | `/api/v1/categorias` | público. Categorías de negocio activas (ver "Categorías de negocio") |
 | GET | `/api/v1/legal/politica-datos` | público. Texto vigente de la Política de Tratamiento de Datos, con su versión |
 | GET | `/api/v1/legal/terminos` | público. Texto vigente de los Términos y Condiciones, con su versión |
@@ -199,6 +204,7 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | POST | `/api/v1/equipo` | personal admin, suscripción vigente |
 | PATCH | `/api/v1/equipo/:id` | personal admin, suscripción vigente |
 | DELETE | `/api/v1/equipo/:id` | personal admin, suscripción vigente |
+| GET / PUT | `/api/v1/equipo/yo-atiendo` | solo la cuenta de administración (la de correo), suscripción vigente. "Yo también atiendo clientes" (ver "Equipo") |
 | PUT | `/api/v1/equipo/:id/foto` | personal admin, suscripción vigente |
 | GET | `/api/v1/servicios` | personal admin, suscripción vigente |
 | POST | `/api/v1/servicios` | personal admin, suscripción vigente |
@@ -285,7 +291,7 @@ Ambos se envían como `Authorization: Bearer <token>`.
       { "dia": 6, "abierto": true, "apertura": "09:00", "cierre": "14:00" }
     ],
     "nombreAdministradora": "Ana Pérez",   // obligatorio, máx. 120
-    "numeroEmpleados": 4,                  // obligatorio, entero de 1 a 10; decide el plan de la prueba (1-3 Básico, 4-5 Equipo, 6-10 Pro)
+    "numeroEmpleados": 4,                  // obligatorio, entero de 1 a 10; decide el plan de la prueba (1 Emprendedor, 2-5 Equipo, 6-10 Pro)
     "logoUrl": "https://cdn.central.co/logo.png", // opcional (o null); http:// o https://
     "correo": "ana@central.co",            // obligatorio: correo de inicio de sesión; único entre todas las cuentas
     "usuario": "ana.perez",                // obligatorio: 4 a 20, solo letras, números, punto y guion bajo; único (ver abajo)
@@ -386,8 +392,8 @@ Ambos se envían como `Authorization: Bearer <token>`.
 
 **Planes** (`GET /api/v1/planes`, público): tres planes por tamaño de equipo, cada uno mensual o anual. Cupo y precios en `src/config/planes.ts` (los precios actuales son **de ejemplo**).
 
-- Responde **200** `[{ "id": "basico", "nombre": "Básico", "cupo": 3, "precioMensual": 30000, "precioAnual": 300000, "moneda": "COP" }, { "id": "equipo", "nombre": "Equipo", "cupo": 5, … }, { "id": "pro", "nombre": "Pro", "cupo": 10, … }]`.
-- El cupo es el máximo de integrantes activos en Equipo (ver "Equipo"). Al registrarse, el plan de la prueba sale de `numeroEmpleados`: 1-3 Básico, 4-5 Equipo, 6-10 Pro.
+- Responde **200** `[{ "id": "emprendedor", "nombre": "Emprendedor", "cupo": 1, "precioMensual": 30000, "precioAnual": 324000, "moneda": "COP" }, { "id": "equipo", "nombre": "Equipo", "cupo": 5, … }, { "id": "pro", "nombre": "Pro", "cupo": 10, … }]`.
+- El cupo es el máximo de integrantes activos en Equipo (ver "Equipo"). Al registrarse, el plan de la prueba sale de `numeroEmpleados`: 1 Emprendedor, 2-5 Equipo, 6-10 Pro. El precio anual es el mensual × 12 con 10 % de descuento (`DESCUENTO_ANUAL`). Las funciones de cada plan están en "Funciones por plan".
 - El plan se cambia con `npm run dev:activar-plan` (no hay pagos reales). Cambiar a un plan menor se rechaza si el equipo activo no cabe.
 
 **Cuando la suscripción está vencida**:
@@ -420,7 +426,7 @@ Ambos se envían como `Authorization: Bearer <token>`.
 - Recibe uno o más de: `nombre`, `categoria`, `codigoAcceso`, `direccion`, `departamento` + `ciudad` (siempre juntos), `horario` (los 7 días, reemplaza el horario completo), `nombreAdministradora`, `numeroEmpleados`, `logoUrl`, `latitud` + `longitud` (siempre juntas; números, `null` en las dos las quita; si traen más de 6 decimales se redondean a 6), `precisionUbicacion` (opcional, metros: mayor que 0 y hasta 100000, redondeada a un decimal; solo junto con `latitud` y `longitud`; si se envían coordenadas nuevas sin ella queda en `null`, y al quitar las coordenadas también se quita). Mismas validaciones del registro. Se ignoran `id`, `empresaId`, `estadoSuscripcion`, `trialEndsAt`, `correo`, `usuario`, `clave` y cualquier otro campo (el acceso de la administradora no se cambia aquí).
 - Cambiar `codigoAcceso` cambia el código que usan los clientes: el anterior deja de funcionar de inmediato.
 - Responde **200** con el perfil actualizado (misma forma que el GET). Los datos y el horario se guardan juntos: si algo falla, no cambia nada.
-- `numeroEmpleados` ya **no limita** el equipo (el límite es el cupo del plan). **Durante la prueba** cambia el plan: 1-3 Básico, 4-5 Equipo, 6-10 Pro; si el equipo activo no cabe en ese plan, responde 409. Fuera de la prueba es solo informativo.
+- `numeroEmpleados` ya **no limita** el equipo (el límite es el cupo del plan). **Durante la prueba** cambia el plan: 1 Emprendedor, 2-5 Equipo, 6-10 Pro; si el equipo activo no cabe en ese plan, responde 409. Fuera de la prueba es solo informativo.
 - Errores: **400** `Envía al menos un dato para actualizar`, `Envía el departamento y la ciudad juntos`, `Envía la latitud y la longitud juntas (o las dos en null para quitarlas)`, `Envía la precisión de la ubicación junto con la latitud y la longitud`, `La precisión de la ubicación debe ser un número de metros mayor que 0 y hasta 100000`, `La latitud debe ser un número entre -90 y 90`, `La longitud debe ser un número entre -180 y 180` y los de validación del registro; **409** `Ese código ya lo usa otro negocio. Elige otro.` o (en la prueba) `Tu equipo tiene 4 integrante(s) activo(s) y el plan Básico permite hasta 3. Elimina primero del equipo a quien ya no trabaje en el negocio, o elige un plan más grande.`
 
 **PUT `/api/v1/admin/empresa/foto`**: sube la foto del negocio o reemplaza la que tenía (la anterior se borra del servidor).
@@ -505,7 +511,14 @@ Forma de un profesional: `{ "id", "nombre", "usuario", "rol": "admin" | "emplead
 
 - **Rol**: `"admin"` (Administrador: los mismos permisos que la cuenta admin) o `"empleado"` (Empleado: solo su agenda y su cartera). `esAdmin` se mantiene igual a `rol === "admin"`.
 - **Atiende clientes** (`atiendeClientes`): si recibe reservas como profesional. Quien no atiende no aparece en la vista pública del negocio (`/empresas/validar/:codigo`) y no se puede reservar con él (`POST /citas` responde 404 `Servicio o profesional no encontrado`). En `/empresas/actual` aparecen todos, con `atiendeClientes`.
-- **Límite (cupo del plan)**: no puede haber más integrantes activos que el cupo del plan de la empresa (Básico 3, Equipo 5, Pro 10; ver "Planes"). Cuentan los integrantes activos de Equipo: la cuenta de correo de la administradora no cuenta, salvo que también esté agregada como integrante. Los eliminados no cuentan. Si un negocio ya tenía más, conserva su equipo pero no puede agregar a nadie hasta quedar por debajo.
+- **Límite (cupo del plan)**: no puede haber más integrantes activos que el cupo del plan de la empresa (Emprendedor 1, Equipo 5, Pro 10; ver "Planes"). Cuentan los integrantes activos de Equipo: la cuenta de correo de la administradora no cuenta, salvo que active "Yo también atiendo clientes" o esté agregada como integrante. Los eliminados no cuentan. Si un negocio ya tenía más, conserva su equipo pero no puede agregar a nadie hasta quedar por debajo.
+
+**"Yo también atiendo clientes"** (solo la cuenta de administración, la de correo; un integrante administrador ya es profesional y usa `atiendeClientes`; otro tipo de sesión: **403** `Esta opción es solo para la cuenta de administración…`):
+
+- **GET `/api/v1/equipo/yo-atiendo`**: **200** `{ "atiendeClientes": false, "barberoId": null, "perfil": null }`. `barberoId` es el id del profesional de la administradora (para filtrar su cartera con `?barberoId=` o su agenda); `null` si nunca lo activó.
+- **PUT `/api/v1/equipo/yo-atiendo`** `{ "atiende": true }`: crea (o vuelve a habilitar) su **perfil de profesional vinculado a su misma cuenta** (`barberos.usuario_id`), sin otro usuario ni contraseña: entra con su cuenta de siempre. Tiene agenda, horario del negocio, comisión (`porcentajeGanancia`, 50 por defecto; se edita con `PATCH /equipo/:id` si el plan tiene `comisiones`), horas disponibles y reservas como cualquier profesional, y aparece en `/empresas/validar`. **Ocupa un cupo del plan**: sin cupo, **409** `No hay cupo para que tú también atiendas: tu equipo ya tiene 1 integrante(s) activo(s) y tu plan Emprendedor permite hasta 1. Sube al plan Equipo (hasta 5 personas) o elimina a alguien del equipo.` **200** `{ "mensaje": "Ahora también atiendes clientes", "atiendeClientes": true, "barberoId", "perfil": { …forma de un profesional…, "usuario": null, "cuentaAdministradora": true } }`.
+- **`{ "atiende": false }`**: deja de recibir reservas nuevas (`atiendeClientes: false`) y **conserva sus citas**. Libera el cupo salvo que tenga citas pendientes (en ese caso lo conserva hasta que pasen). **200** `{ "mensaje": "Dejaste de recibir reservas nuevas. Tus citas se conservan.", … }`.
+- Ese perfil no se puede eliminar, ni cambiarle usuario, contraseña o rol desde Equipo (**400** `Este perfil es el de la cuenta de la administradora…`). Si la administradora elimina su cuenta, el perfil se desactiva (sus citas se conservan).
 
 **GET `/api/v1/equipo`**: **200** lista del equipo activo.
 
@@ -725,6 +738,21 @@ Errores: **400** `El campo "desde" es obligatorio`, `El campo "desde" debe ser u
 - `empresas.whatsapp_contacto` (opcional, E.164). Se envía como `whatsappContacto` en `POST /cuentas/registro/empresa` y en `PATCH /admin/empresa` (con `indicativoWhatsapp` opcional, por defecto 57), con las reglas de "Teléfonos (formato E.164)"; inválido → **400** `El número de teléfono no es válido…`. `""` o `null` lo quita.
 - Se devuelve como `whatsappContacto` y `whatsappUrl` (`https://wa.me/<número sin +>`, `null` si no hay) en `GET`/`PATCH /admin/empresa`, `GET /empresas/perfil/:codigo` y `empresa` de `/empresas/validar/:codigo`.
 
+### Funciones por plan
+
+Todo se define en una sola tabla, `src/config/funciones.ts` (`FUNCIONES`): cada función tiene un `planMinimo` y la incluyen ese plan y los más grandes. Para mover una función de plan, cambia solo esa línea. Los precios y cupos están en `src/config/planes.ts` (precio mensual; el anual es × 12 con 10 % de descuento).
+
+| Plan | Cupo | Funciones |
+| --- | --- | --- |
+| **Emprendedor** (1 persona) | 1 | Todos: agenda, reservas, recordatorios, enlace y QR, notificaciones, clientes y lista de bloqueados, catálogo de productos y cartera básica (ventas, ganancias, ticket promedio, servicios más vendidos) |
+| **Equipo** (2 a 5) | 5 | Lo anterior + `roles` (administrador y empleado), `comisiones` (comisiones y pago a profesionales), `ocupacion_profesional`, `comparar_periodos` y `demanda` (por día y hora) |
+| **Pro** (6 a 10) | 10 | Lo anterior + `servicios_rentables`, `reportes_avanzados` (reservada: aún sin endpoint propio) y `exportar_reportes` |
+
+- **Durante la prueba gratuita** el negocio tiene las funciones del plan que corresponde a su `numeroEmpleados` del registro (1 Emprendedor, 2-5 Equipo, 6-10 Pro): `plan_equipo` ya se calcula así.
+- **GET `/api/v1/funciones`** (cualquier sesión del personal o la administradora; responde aunque la suscripción esté vencida): **200** `{ "plan": { "id", "nombre", "cupo" }, "enPrueba": true, "funciones": [{ "id": "demanda", "nombre": "Demanda por día y hora", "incluida": false, "planRequerido": { "id": "equipo", "nombre": "Equipo" } }, …] }`.
+- **Si el plan no incluye la función → 403** `{ "error": "La función «Demanda por día y hora» no está incluida en tu plan. Está disponible desde el plan Equipo.", "codigo": "funcion_no_incluida", "funcion": "demanda", "planRequerido": { "id": "equipo", "nombre": "Equipo" } }`. Lo lanza `funcionNoIncluida` (`modules/planes/funciones.ts`); `requerirFuncion(funciones, 'id')` es el middleware para una ruta nueva.
+- **Dónde se valida hoy**: `GET /reportes/ocupacion` (`ocupacion_profesional`), `/reportes/demanda` (`demanda`), `/reportes/servicios-rentables` (`servicios_rentables`); `?formato=csv` en esos tres (`exportar_reportes`: descarga la tabla principal del reporte); `POST`/`PATCH /equipo` con rol administrador (`roles`) o con `porcentajeGanancia` en el cuerpo (`comisiones`); y `GET /cartera/resumen`: pedir `comparar` sin `comparar_periodos` es 403, y sin pedirlo las secciones de los planes que no las incluyen llegan en `null` (`comparacion` sin `comparar_periodos`; `ocupacion` —días y horas— sin `demanda`; `pagoProfesionales` sin `comisiones`, y entonces `porProfesional` no trae `ganancia` y `gananciaNegocio` = `totalVentas`, porque no hay reparto con el equipo). Las funciones de todos los planes están en la tabla pero no tienen un 403 propio (siempre están incluidas).
+
 ### Reportes para administradores (`/api/v1/reportes`)
 
 Solo personal admin con suscripción vigente. Mismos filtros de período que la cartera (`periodo=hoy|semana|mes|rango` con `desde` y `hasta`, y `barberoId` opcional; mismos límites y errores del rango). Código en `src/modules/reportes/`.
@@ -763,8 +791,9 @@ Para cuentas de la tabla `usuarios` con correo (administradoras y clientes). El 
 **POST `/api/v1/pqrs`**: público, límite por IP (10 cada 15 minutos). Sirve como invitado o con el token de una cuenta (administradora o cliente); un token vencido o inválido no falla: se radica como invitado.
 
 - Recibe `{ "tipo": "queja", "mensaje": "La app se cierra", "nombre": "Ana", "contacto": "ana@x.co" }`: `tipo` = `peticion` | `queja` | `reclamo` | `sugerencia`; `mensaje` hasta 2000 caracteres; `nombre` hasta 100 y `contacto` (correo o teléfono, texto libre) hasta 150. Con sesión, `nombre` y `contacto` son opcionales: se toman de la cuenta (nombre; correo o, si no, teléfono). Como invitado son obligatorios.
-- Responde **201** `{ "mensaje": "Recibimos tu queja. Guarda tu número de radicado: PQRS-2026-000001.", "pqrs": { "radicado", "tipo", "mensaje", "estado": "recibida", "respuesta": null, "respondidaEn": null, "creadaEn" } }`.
+- Responde **201** `{ "mensaje": "Recibimos tu queja. Guarda tu número de radicado: PQRS-2026-000001.", "pqrs": { "radicado", "tipo", "mensaje", "estado": "recibida", "respuesta": null, "respondidaEn": null, "creadaEn", "prioridad": 3, "planEquipo": "emprendedor", "diasHabiles": 3, "fechaLimite": "2026-10-27T23:59:59.000-05:00" } }`.
 - Errores: **400** `El tipo debe ser "peticion", "queja", "reclamo" o "sugerencia"`, `El campo "mensaje" es obligatorio`, `El campo "nombre" es obligatorio`, `El campo "contacto" es obligatorio`, `Envía el tipo y el mensaje de tu PQRS`; **429** `Enviaste varias PQRS seguidas. Intenta de nuevo en unos minutos.`
+- **PQRS prioritarias**: cada PQRS guarda la prioridad según el **plan del negocio** de quien radica (una administradora con sesión; los invitados y los clientes sin negocio usan el plan más pequeño) y su **fecha límite de respuesta**: Emprendedor, prioridad 3 y 3 días hábiles; Equipo, prioridad 2 y 2 días hábiles; Pro, prioridad 1 y 1 día hábil. Los plazos están en `src/config/pqrs.ts`. Se cuentan en días hábiles (lunes a viernes, desde el día siguiente; los festivos no se descuentan, así el plazo nunca queda más largo de lo prometido) y la fecha límite es el final de ese día (23:59:59, zona de la plataforma). **Ley 1581 de 2012**: las peticiones nunca superan 10 días hábiles y los reclamos 15 (`TOPE_LEY_1581_DIAS_HABILES`); el plazo del plan se recorta a ese tope si algún día se amplía, y se guarda en `dias_habiles`. El plan y la prioridad quedan **fijos** al radicar (cambiar de plan después no los mueve).
 - Estados: `recibida` → `en_proceso` → `resuelta` → `cerrada`. Los cambia el equipo de soporte con `npm run dev:pqrs` (ver "Comandos de desarrollador"), con una respuesta de texto.
 
 **GET `/api/v1/pqrs/mias`**: cuenta (administradora o cliente; **401** sin sesión). **200** las que radicó con su sesión, de la más reciente a la más antigua, con la misma forma de `pqrs` de arriba. Las de invitado no aparecen: se consultan con el radicado que recibió.
@@ -798,7 +827,7 @@ Las listas se paginan con `?pagina=1&limite=25` (máximo 100) y responden `{ "to
 {
   "negociosNuevosPorMes": [{ "mes": "2025-11", "total": 0 }, …],        // últimos 12 meses, el actual al final (por fecha de registro)
   "negociosPorEstado": [{ "estado": "prueba" | "activo" | "vencido" | "suspendido", "total": 3 }, …],  // los 4, aunque sean 0
-  "negociosPorPlan": [{ "plan": "basico", "nombre": "Básico", "total": 5, "activos": 2 }, …],         // los 3 planes; "activos" = estado activo
+  "negociosPorPlan": [{ "plan": "emprendedor", "nombre": "Emprendedor", "total": 5, "activos": 2 }, …],         // los 3 planes; "activos" = estado activo
   "citasPorDia": [{ "dia": "2026-09-21", "total": 12 }, …],             // últimos 30 días hasta hoy (zona horaria del negocio), sin las canceladas
   "topDepartamentos": [{ "departamento": "SANTANDER", "total": 4 }, …], // hasta 5, más negocios primero
   "conversionPruebaAPlan": { "pruebasTerminadas": 20, "convertidos": 8, "tasaPorcentaje": 40 },
@@ -826,11 +855,11 @@ Las listas se paginan con `?pagina=1&limite=25` (máximo 100) y responden `{ "to
 
 **Acciones sobre un negocio** (todas responden **200** `{ "mensaje", "negocio": { …forma de la lista… } }`, **404** `Negocio no encontrado`, y quedan en el registro de actividad; `motivo` opcional hasta 300 caracteres salvo donde se indica):
 
-- **POST `/negocios/:id/plan`** `{ "periodo": "mensual" | "anual", "planEquipo"?: "basico" | "equipo" | "pro", "motivo"? }`: misma regla que `dev:activar-plan` (`activarPlanEmpresa`): queda `activa` hoy; la fecha de fin cuenta desde el fin de la prueba, el fin del plan vigente u hoy; sin `planEquipo` conserva el actual. **409** si el equipo activo no cabe en el plan (`Tu equipo tiene …`) o `Este negocio está cancelado (su cuenta fue eliminada) y no se puede activar.`; **400** `El periodo debe ser "mensual" o "anual"`.
+- **POST `/negocios/:id/plan`** `{ "periodo": "mensual" | "anual", "planEquipo"?: "emprendedor" | "equipo" | "pro", "motivo"? }`: misma regla que `dev:activar-plan` (`activarPlanEmpresa`): queda `activa` hoy; la fecha de fin cuenta desde el fin de la prueba, el fin del plan vigente u hoy; sin `planEquipo` conserva el actual. **409** si el equipo activo no cabe en el plan (`Tu equipo tiene …`) o `Este negocio está cancelado (su cuenta fue eliminada) y no se puede activar.`; **400** `El periodo debe ser "mensual" o "anual"`.
 - **POST `/negocios/:id/extender-prueba`** `{ "dias": 1-365, "motivo"? }`: alarga la prueba desde su fin (o desde hoy si ya había terminado). **409** `Este negocio no está en prueba gratuita. Para darle más tiempo, actívale un plan.`; **400** `Los días deben ser un número entero entre 1 y 365`.
 - **POST `/negocios/:id/suspender`** `{ "motivo" }` y **POST `/negocios/:id/reactivar`** `{ "motivo" }`: el **motivo es obligatorio** (**400** `El campo "motivo" es obligatorio`). **409** `Este negocio ya está suspendido.` / `Este negocio no está suspendido.` Suspender no toca el plan ni las fechas; ver "Cuando la suscripción está vencida".
 
-**PQRS**: **GET `/superadmin/pqrs?estado=&tipo=&pagina=&limite=`** (las sin resolver primero, de la más antigua a la más reciente) y **GET `/superadmin/pqrs/:radicado`** (sin distinguir mayúsculas; **404** `No existe una PQRS con ese radicado`). Forma: `{ "radicado", "tipo", "estado", "mensaje", "nombre", "contacto", "conCuenta", "respuesta", "respondidaEn", "creadaEn", "actualizadaEn" }`. **PATCH `/superadmin/pqrs/:radicado`** `{ "estado", "respuesta"? }` (respuesta hasta 2000; sin texto conserva la anterior): **200** `{ "mensaje": "PQRS actualizada", "pqrs": {…} }`. Es lo mismo que `dev:pqrs responder`.
+**PQRS**: **GET `/superadmin/pqrs?estado=&tipo=&pagina=&limite=`** (las sin resolver primero, ordenadas por **prioridad** (Pro antes que Equipo y Emprendedor) y por **fecha límite**; cada una trae `prioridad`, `planEquipo`, `diasHabiles` y `fechaLimite`) y **GET `/superadmin/pqrs/:radicado`** (sin distinguir mayúsculas; **404** `No existe una PQRS con ese radicado`). Forma: `{ "radicado", "tipo", "estado", "mensaje", "nombre", "contacto", "conCuenta", "respuesta", "respondidaEn", "creadaEn", "actualizadaEn" }`. **PATCH `/superadmin/pqrs/:radicado`** `{ "estado", "respuesta"? }` (respuesta hasta 2000; sin texto conserva la anterior): **200** `{ "mensaje": "PQRS actualizada", "pqrs": {…} }`. Es lo mismo que `dev:pqrs responder`.
 
 **Registro de actividad**: **GET `/superadmin/actividad?accion=&empresaId=&desde=&hasta=&pagina=&limite=`** (`desde` y `hasta` AAAA-MM-DD, zona horaria del negocio), de la más reciente a la más antigua: `{ "id", "superadmin": "correo", "accion", "negocio": { "id", "codigoAcceso", "nombre" } | null, "referencia", "detalle", "motivo", "fecha" }`. Acciones: `inicio_sesion` (con la IP en `detalle`), `cerrar_sesion`, `activar_plan`, `extender_prueba`, `suspender`, `reactivar` y `responder_pqrs` (`referencia` = radicado). Las consultas no se registran. No hay endpoint para editarlo ni borrarlo, y la base rechaza `UPDATE`, `DELETE` y `TRUNCATE` (migración 016). El nombre y el código del negocio quedan copiados tal como estaban en ese momento.
 

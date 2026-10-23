@@ -1,17 +1,24 @@
 // Planes por tamaño de equipo. Cada plan se paga mensual o anual.
-// PRECIOS DE EJEMPLO en pesos colombianos (COP): cámbialos por los reales.
-// El cupo es el máximo de integrantes activos en Equipo (la cuenta de correo de la
-// administradora no cuenta, salvo que también esté agregada como integrante).
-export const PLANES = [
-  { id: 'basico', nombre: 'Básico', cupo: 3, precioMensual: 30000, precioAnual: 300000 },
-  { id: 'equipo', nombre: 'Equipo', cupo: 5, precioMensual: 50000, precioAnual: 500000 },
-  { id: 'pro', nombre: 'Pro', cupo: 10, precioMensual: 80000, precioAnual: 800000 },
+// PRECIOS DE EJEMPLO en pesos colombianos (COP): cambia aquí el precio mensual por el real.
+// El precio anual sale solo: el mensual × 12 con DESCUENTO_ANUAL.
+// El cupo es el máximo de integrantes activos en Equipo (incluida la administradora si también atiende clientes).
+// Las funciones de cada plan están en src/config/funciones.ts.
+export const DESCUENTO_ANUAL = 0.1;
+
+const DEFINICION = [
+  { id: 'emprendedor', nombre: 'Emprendedor', cupo: 1, personasDesde: 1, precioMensual: 30000 },
+  { id: 'equipo', nombre: 'Equipo', cupo: 5, personasDesde: 2, precioMensual: 60000 },
+  { id: 'pro', nombre: 'Pro', cupo: 10, personasDesde: 6, precioMensual: 100000 },
 ] as const;
 
-export type IdPlan = (typeof PLANES)[number]['id'];
-export type Plan = (typeof PLANES)[number];
+export type IdPlan = (typeof DEFINICION)[number]['id'];
+export type Plan = (typeof DEFINICION)[number] & { precioAnual: number };
 
-export const ID_PLANES = PLANES.map((p) => p.id) as IdPlan[];
+export const precioAnualDe = (precioMensual: number) => Math.round(precioMensual * 12 * (1 - DESCUENTO_ANUAL));
+
+export const PLANES: readonly Plan[] = DEFINICION.map((p) => ({ ...p, precioAnual: precioAnualDe(p.precioMensual) }));
+
+export const ID_PLANES = PLANES.map((p) => p.id) as [IdPlan, ...IdPlan[]];
 
 export const buscarPlan = (id: string): Plan | undefined => PLANES.find((p) => p.id === id);
 
@@ -22,3 +29,6 @@ export const planParaPersonas = (personas: number): Plan =>
 
 // Plan que sigue (para invitar a subir de plan); undefined si ya es el más grande
 export const planSiguiente = (id: string): Plan | undefined => PLANES[PLANES.findIndex((p) => p.id === id) + 1];
+
+// Posición del plan de menor a mayor (para comparar planes)
+export const nivelDePlan = (id: string) => PLANES.findIndex((p) => p.id === id);

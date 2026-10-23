@@ -217,7 +217,7 @@ export type FilaSuscripcion = {
   // Un negocio suspendido por soporte no está habilitado, aunque su plan siga vigente
   suspendida: boolean;
   habilitada: boolean;
-  // Plan por tamaño de equipo (basico | equipo | pro) e integrantes activos
+  // Plan por tamaño de equipo (emprendedor | equipo | pro) e integrantes activos
   plan_equipo: string;
   equipo_activo: number;
   // Día del registro de la empresa (AAAA-MM-DD, zona del negocio); null en empresas muy antiguas

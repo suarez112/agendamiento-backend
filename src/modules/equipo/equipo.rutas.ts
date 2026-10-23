@@ -5,6 +5,7 @@ import { parsear } from '../../shared/http/validacion.js';
 import { sesionDe } from '../auth/guardias.js';
 import type { Permisos } from '../auth/permisos.js';
 import { recibirFoto, type UrlBase } from '../empresas/fotos.js';
+import { funcionNoIncluida, type ServicioFunciones } from '../planes/funciones.js';
 import type { ServicioEquipo } from './equipo.servicio.js';
 
 const MENSAJE_USUARIO = 'El usuario debe tener entre 3 y 60 caracteres: letras, números, punto, guion o guion bajo';
@@ -48,11 +49,38 @@ const esquemaCambios = conAlMenosUnDato(
   z.object(campos, { error: 'Envía al menos un dato para actualizar' }).partial(),
 ).transform(({ rol, ...d }) => ({ ...d, esAdmin: esAdminSegun({ rol, esAdmin: d.esAdmin }) }));
 
+const esquemaAtiende = z.object(
+  { atiende: z.boolean({ error: 'Envía "atiende": true o false' }) },
+  { error: 'Envía "atiende": true o false' },
+);
+
 const esquemaIdMiembro = esquemaId('Identificador de profesional inválido');
 
 // Equipo del negocio de la sesión. Solo administradores.
-export const crearRutasEquipo = (equipo: ServicioEquipo, permisos: Permisos, urlBase: UrlBase) => {
+export const crearRutasEquipo = (
+  equipo: ServicioEquipo,
+  permisos: Permisos,
+  urlBase: UrlBase,
+  funciones: ServicioFunciones,
+) => {
   const rutas = Router();
+
+  // Roles (administrador) y comisiones dependen del plan (src/config/funciones.ts)
+  const validarPlan = async (empresaId: string, body: unknown, esAdmin: boolean | undefined) => {
+    if (esAdmin === true && !(await funciones.incluida(empresaId, 'roles'))) throw funcionNoIncluida('roles');
+    const conPorcentaje = (body as { porcentajeGanancia?: unknown } | undefined)?.porcentajeGanancia !== undefined;
+    if (conPorcentaje && !(await funciones.incluida(empresaId, 'comisiones'))) throw funcionNoIncluida('comisiones');
+  };
+
+  // "Yo también atiendo clientes": solo la cuenta de administración (la de correo)
+  rutas.get('/yo-atiendo', ...permisos.admin, async (req, res) => {
+    res.json(await equipo.estadoAtiende(sesionDe(res), urlBase(req)));
+  });
+
+  rutas.put('/yo-atiendo', ...permisos.admin, async (req, res) => {
+    const { atiende } = parsear(esquemaAtiende, req.body);
+    res.json(await equipo.cambiarAtiende(sesionDe(res), atiende, urlBase(req)));
+  });
 
   rutas.get('/', ...permisos.admin, async (req, res) => {
     res.json(await equipo.listar(sesionDe(res).empresaId, urlBase(req)));
@@ -60,12 +88,15 @@ export const crearRutasEquipo = (equipo: ServicioEquipo, permisos: Permisos, url
 
   rutas.post('/', ...permisos.admin, async (req, res) => {
     const datos = parsear(esquemaMiembro, req.body);
+    await validarPlan(sesionDe(res).empresaId, req.body, datos.esAdmin);
     res.status(201).json(await equipo.crear(sesionDe(res).empresaId, datos, urlBase(req)));
   });
 
   rutas.patch('/:id', ...permisos.admin, async (req, res) => {
     const { id } = parsear(esquemaIdMiembro, req.params);
-    res.json(await equipo.actualizar(sesionDe(res), id, parsear(esquemaCambios, req.body), urlBase(req)));
+    const cambios = parsear(esquemaCambios, req.body);
+    await validarPlan(sesionDe(res).empresaId, req.body, cambios.esAdmin);
+    res.json(await equipo.actualizar(sesionDe(res), id, cambios, urlBase(req)));
   });
 
   rutas.delete('/:id', ...permisos.admin, async (req, res) => {

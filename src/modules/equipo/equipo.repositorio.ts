@@ -4,7 +4,9 @@ import type { Consultable } from '../../db/pool.js';
 export type FilaMiembro = {
   id: string;
   nombre: string;
-  usuario: string;
+  // null en el perfil vinculado a la cuenta de la administradora (no tiene inicio de sesión propio)
+  usuario: string | null;
+  usuario_id: string | null;
   es_admin: boolean;
   especialidad: string | null;
   porcentaje_ganancia: string;
@@ -12,7 +14,7 @@ export type FilaMiembro = {
   atiende_clientes: boolean;
 };
 
-const COLUMNAS = 'id, nombre, usuario, es_admin, especialidad, porcentaje_ganancia, foto_url, atiende_clientes';
+const COLUMNAS = 'id, nombre, usuario, usuario_id, es_admin, especialidad, porcentaje_ganancia, foto_url, atiende_clientes';
 
 // Solo el equipo activo; quienes fueron eliminados se conservan para las citas pasadas
 export const listarEquipo = async (db: Consultable, empresaId: string) =>
@@ -144,3 +146,41 @@ export const cambiarFotoMiembro = async (db: Consultable, id: string, empresaId:
       [id, empresaId, fotoUrl],
     )
   ).rows[0];
+
+// ---- "Yo también atiendo clientes": perfil de profesional de la cuenta de la administradora ----
+
+// Perfil vinculado a la cuenta (activo o no)
+export const buscarPerfilDeCuenta = async (db: Consultable, usuarioId: string, bloquear = false) =>
+  (
+    await db.query<FilaMiembro & { activo: boolean }>(
+      `SELECT ${COLUMNAS}, activo FROM barberos WHERE usuario_id = $1${bloquear ? ' FOR UPDATE' : ''}`,
+      [usuarioId],
+    )
+  ).rows[0];
+
+export const crearPerfilDeCuenta = async (
+  db: Consultable,
+  p: { id: string; empresaId: string; usuarioId: string; nombre: string },
+) =>
+  (
+    await db.query<FilaMiembro>(
+      `INSERT INTO barberos (id, empresa_id, usuario_id, nombre, es_admin, atiende_clientes)
+       VALUES ($1, $2, $3, $4, false, true)
+       RETURNING ${COLUMNAS}`,
+      [p.id, p.empresaId, p.usuarioId, p.nombre],
+    )
+  ).rows[0];
+
+// Activa o desactiva el perfil (activo = ocupa cupo; atiende = recibe reservas nuevas)
+export const cambiarPerfilDeCuenta = async (db: Consultable, id: string, activo: boolean, atiende: boolean) =>
+  (
+    await db.query<FilaMiembro>(
+      `UPDATE barberos SET activo = $2, atiende_clientes = $3 WHERE id = $1 RETURNING ${COLUMNAS}`,
+      [id, activo, atiende],
+    )
+  ).rows[0];
+
+export const nombreDeLaAdministradora = async (db: Consultable, empresaId: string) =>
+  (
+    await db.query<{ nombre: string | null }>('SELECT nombre_administradora AS nombre FROM empresas WHERE id = $1', [empresaId])
+  ).rows[0]?.nombre ?? null;

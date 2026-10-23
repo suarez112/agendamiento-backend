@@ -18,23 +18,45 @@ export type FilaPqrs = {
   respondida_en: Date | null;
   creado_en: Date;
   actualizado_en: Date;
+  // Prioridad (1 = la más urgente) según el plan del negocio de quien radicó, y fecha límite de respuesta
+  plan_equipo: string;
+  prioridad: number;
+  dias_habiles: number;
+  fecha_limite: Date;
 };
 
-const COLUMNAS = `id, radicado, tipo, mensaje, nombre, contacto, estado, respuesta, respondida_en, creado_en, actualizado_en`;
+const COLUMNAS = `id, radicado, tipo, mensaje, nombre, contacto, estado, respuesta, respondida_en, creado_en, actualizado_en,
+  plan_equipo, prioridad, dias_habiles, fecha_limite`;
 
-export type DatosPqrs = { tipo: TipoPqrs; mensaje: string; nombre: string; contacto: string; usuarioId: string | null };
+export type DatosPqrs = {
+  tipo: TipoPqrs;
+  mensaje: string;
+  nombre: string;
+  contacto: string;
+  usuarioId: string | null;
+  empresaId: string | null;
+  planEquipo: string;
+  prioridad: number;
+  diasHabiles: number;
+};
 
 // El radicado sale de una secuencia: nunca se repite, aunque lleguen dos a la vez
 export const insertarPqrs = async (db: Consultable, d: DatosPqrs) =>
   (
     await db.query<FilaPqrs>(
       `WITH n AS (SELECT nextval('pqrs_numero_seq') AS numero)
-       INSERT INTO pqrs (radicado, tipo, mensaje, nombre, contacto, usuario_id)
+       INSERT INTO pqrs (radicado, tipo, mensaje, nombre, contacto, usuario_id, empresa_id, plan_equipo, prioridad,
+                         dias_habiles, fecha_limite)
        SELECT 'PQRS-' || to_char(now() AT TIME ZONE '${ZONA_PLATAFORMA}', 'YYYY') || '-' || lpad(n.numero::text, 6, '0'),
-              $1, $2, $3, $4, $5
+              $1, $2, $3, $4, $5, $6, $7, $8, $9::int,
+              -- Fin del día hábil número $9 después de hoy (lunes a viernes), en la zona de la plataforma
+              ((SELECT d::date FROM generate_series((now() AT TIME ZONE '${ZONA_PLATAFORMA}')::date + 1,
+                                                    (now() AT TIME ZONE '${ZONA_PLATAFORMA}')::date + 60, interval '1 day') d
+                WHERE extract(isodow FROM d) < 6 ORDER BY d OFFSET $9::int - 1 LIMIT 1)
+               + time '23:59:59') AT TIME ZONE '${ZONA_PLATAFORMA}'
        FROM n
        RETURNING ${COLUMNAS}`,
-      [d.tipo, d.mensaje, d.nombre, d.contacto, d.usuarioId],
+      [d.tipo, d.mensaje, d.nombre, d.contacto, d.usuarioId, d.empresaId, d.planEquipo, d.prioridad, d.diasHabiles],
     )
   ).rows[0];
 
@@ -51,14 +73,14 @@ const COLUMNAS_SOPORTE = `${COLUMNAS}, usuario_id IS NOT NULL AS con_cuenta`;
 
 export type FiltrosPqrs = { estado?: EstadoPqrs; tipo?: TipoPqrs; limite: number; desplazamiento: number };
 
-// Las sin resolver primero, de la más antigua a la más reciente
+// Las sin resolver primero, por prioridad (plan Pro antes que Equipo y Emprendedor) y fecha límite
 export const listarTodasLasPqrs = async (db: Consultable, f: FiltrosPqrs) =>
   (
     await db.query<FilaPqrsSoporte & { total: number }>(
       `SELECT ${COLUMNAS_SOPORTE}, count(*) OVER ()::int AS total
        FROM pqrs
        WHERE ($1::varchar IS NULL OR estado = $1) AND ($2::varchar IS NULL OR tipo = $2)
-       ORDER BY (estado IN ('resuelta', 'cerrada')), creado_en
+       ORDER BY (estado IN ('resuelta', 'cerrada')), prioridad, fecha_limite, creado_en
        LIMIT $3 OFFSET $4`,
       [f.estado ?? null, f.tipo ?? null, f.limite, f.desplazamiento],
     )

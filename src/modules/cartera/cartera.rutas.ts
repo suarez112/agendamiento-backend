@@ -4,6 +4,7 @@ import { fecha } from '../../shared/http/esquemas.js';
 import { parsear } from '../../shared/http/validacion.js';
 import { sesionDe } from '../auth/guardias.js';
 import type { Permisos } from '../auth/permisos.js';
+import { funcionNoIncluida, type ServicioFunciones } from '../planes/funciones.js';
 import type { ServicioCartera } from './cartera.servicio.js';
 
 const MAX_DIAS = 366;
@@ -79,13 +80,21 @@ const esquemaComparacion = z
   );
 
 // Cartera: ganancias del negocio de la sesión entre dos fechas
-export const crearRutasCartera = (cartera: ServicioCartera, permisos: Permisos) => {
+export const crearRutasCartera = (cartera: ServicioCartera, permisos: Permisos, funciones: ServicioFunciones) => {
   const rutas = Router();
 
   rutas.get('/resumen', ...permisos.personal, async (req, res) => {
     const consulta = parsear(esquemaPeriodo, req.query);
     const comparacion = parsear(esquemaComparacion, req.query);
-    res.json(await cartera.resumenPeriodo(sesionDe(res), consulta, comparacion));
+    const sesion = sesionDe(res);
+    const incluye = {
+      compararPeriodos: await funciones.incluida(sesion.empresaId, 'comparar_periodos'),
+      comisiones: await funciones.incluida(sesion.empresaId, 'comisiones'),
+      demanda: await funciones.incluida(sesion.empresaId, 'demanda'),
+    };
+    // Pedir una comparación explícita sin tener la función es un 403; sin pedirla, la sección llega en null
+    if (req.query.comparar !== undefined && !incluye.compararPeriodos) throw funcionNoIncluida('comparar_periodos');
+    res.json(await cartera.resumenPeriodo(sesion, consulta, comparacion, incluye));
   });
 
   rutas.get('/', ...permisos.personal, async (req, res) => {

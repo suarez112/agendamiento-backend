@@ -41,7 +41,7 @@ export const estadoEfectivo = (s: FilaSuscripcion): 'prueba' | 'activa' | 'venci
 };
 
 // Empresa de la sesión, sea de una cuenta de administrador o del personal (barberos)
-const empresaDeSesion = (res: Response): string => {
+export const empresaDeSesion = (res: Response): string => {
   const empresaId = res.locals.cuenta?.empresaId ?? res.locals.sesion?.empresaId;
   if (!empresaId) throw errores.noAutenticado('Sesión no válida. Inicia sesión de nuevo.');
   return empresaId;
