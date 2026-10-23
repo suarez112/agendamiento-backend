@@ -1,3 +1,5 @@
+import { ZONA_PLATAFORMA } from '../../config/plataforma.js';
+import { aIsoEnZona } from '../../shared/zonaHoraria.js';
 import { isIP } from 'node:net';
 import { Router, type Request } from 'express';
 import type pg from 'pg';
@@ -54,8 +56,9 @@ export const contextoDe = (req: Request): ContextoPeticion => {
   return { ip: ip && isIP(ip) ? ip : null, userAgent: req.get('user-agent')?.slice(0, 500) || null };
 };
 
-// Colombia no tiene horario de verano: su zona es siempre UTC-5
-const aIsoColombia = (fecha: Date) => `${new Date(fecha.getTime() - 5 * 3_600_000).toISOString().slice(0, -1)}-05:00`;
+// Zona del negocio donde se aceptó; la de la plataforma si la aceptación no tiene negocio
+const ZONA_DE_ACEPTACION = (empresaId: string) =>
+  `COALESCE((SELECT zona_horaria FROM empresas WHERE id = ${empresaId}), '${ZONA_PLATAFORMA}')`;
 
 // Guarda la prueba en auditoria_autorizaciones (solo inserción): quién (cuenta, integrante del equipo o
 // teléfono del invitado), cuándo (now(), en UTC), por qué canal, desde dónde y las versiones vigentes
@@ -78,7 +81,7 @@ export const registrarAutorizacion = async (
        (usuario_id, barbero_id, correo, telefono, indicativo, empresa_id, cita_id, canal,
         version_politica, version_terminos, ip, user_agent)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ${VIGENTE('politica_datos')}, ${VIGENTE('terminos')}, $9, $10)
-     RETURNING canal, version_politica, version_terminos, aceptado_en`,
+     RETURNING canal, version_politica, version_terminos, aceptado_en, ${ZONA_DE_ACEPTACION('empresa_id')} AS zona_horaria`,
     [
       a.usuarioId ?? null, a.barberoId ?? null, a.correo ?? null, a.telefono ?? null, a.indicativo ?? null,
       a.empresaId ?? null, a.citaId ?? null, a.canal, a.contexto.ip, a.contexto.userAgent,
@@ -87,22 +90,24 @@ export const registrarAutorizacion = async (
   return aAceptacion(rows[0]!);
 };
 
-type FilaAuditoria = { canal: CanalAutorizacion; version_politica: string; version_terminos: string; aceptado_en: Date };
+type FilaAuditoria = { canal: CanalAutorizacion; version_politica: string; version_terminos: string; aceptado_en: Date; zona_horaria: string };
 const aAceptacion = (f: FilaAuditoria) => ({
   canal: f.canal,
   versionPolitica: f.version_politica,
   versionTerminos: f.version_terminos,
-  aceptadoEn: aIsoColombia(f.aceptado_en),
+  aceptadoEn: aIsoEnZona(f.aceptado_en, f.zona_horaria),
+  zonaHoraria: f.zona_horaria,
 });
 
 // Última aceptación del titular y versiones vigentes. "vigente" = aceptó las dos versiones actuales.
 export const estadoAutorizacion = async (db: Consultable, titular: Titular) => {
   const { rows } = await db.query<FilaAuditoria & { vigente_politica: string; vigente_terminos: string }>(
-    `SELECT canal, version_politica, version_terminos, aceptado_en,
+    `SELECT canal, version_politica, version_terminos, aceptado_en, zona_horaria,
             ${VIGENTE('politica_datos')} AS vigente_politica, ${VIGENTE('terminos')} AS vigente_terminos
      FROM (SELECT 1) base
      LEFT JOIN LATERAL (
-       SELECT canal, version_politica, version_terminos, aceptado_en FROM auditoria_autorizaciones
+       SELECT canal, version_politica, version_terminos, aceptado_en, ${ZONA_DE_ACEPTACION('empresa_id')} AS zona_horaria
+       FROM auditoria_autorizaciones
        WHERE ($1::varchar IS NOT NULL AND usuario_id = $1) OR ($2::varchar IS NOT NULL AND barbero_id = $2)
        ORDER BY aceptado_en DESC, id DESC LIMIT 1
      ) ultima ON true`,

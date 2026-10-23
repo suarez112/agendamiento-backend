@@ -16,6 +16,8 @@ export const crearPool = (entorno: EntornoBaseDeDatos): pg.Pool => {
     max: entorno.DB_POOL_MAX,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 5_000,
+    // Todas las sesiones trabajan en UTC: ninguna consulta depende de la hora del servidor
+    options: '-c timezone=UTC',
   });
 
   // Un cliente inactivo que se cae no debe tumbar el proceso

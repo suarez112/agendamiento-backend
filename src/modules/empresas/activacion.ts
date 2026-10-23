@@ -6,7 +6,7 @@ import { planInsuficiente } from './suscripcion.js';
 export type Periodo = 'mensual' | 'anual';
 export type OrigenActivacion = 'panel' | 'comando';
 
-// Deja la empresa 'activa' con el plan de hoy (hora de Colombia). Sin plan por tamaño de equipo
+// Deja la empresa 'activa' con el plan de hoy (fecha en la zona del negocio). Sin plan por tamaño de equipo
 // conserva el que tiene. Si el equipo activo no cabe en el plan elegido, responde 409 y no cambia nada.
 // El plan dura 1 mes o 1 año contados desde:
 // - el fin de la prueba, si paga durante la prueba (no pierde los días gratis que le quedaban;
@@ -42,22 +42,22 @@ export const activarPlanEmpresa = async (
          suscripcion_fin = (
            GREATEST(hoy.fecha, CASE e.estado_suscripcion
                                  WHEN 'activa' THEN e.suscripcion_fin
-                                 WHEN 'trial' THEN (e.trial_ends_at AT TIME ZONE 'America/Bogota')::date
+                                 WHEN 'trial' THEN (e.trial_ends_at AT TIME ZONE e.zona_horaria)::date
                                END)
            + CASE $2::varchar WHEN 'mensual' THEN interval '1 month' ELSE interval '1 year' END
          )::date,
          dias_prueba_sumados = CASE e.estado_suscripcion
-                                 WHEN 'trial' THEN GREATEST((e.trial_ends_at AT TIME ZONE 'America/Bogota')::date - hoy.fecha, 0)
+                                 WHEN 'trial' THEN GREATEST((e.trial_ends_at AT TIME ZONE e.zona_horaria)::date - hoy.fecha, 0)
                                  WHEN 'activa' THEN e.dias_prueba_sumados
                                END
-     FROM (SELECT (now() AT TIME ZONE 'America/Bogota')::date AS fecha) hoy
+     FROM (SELECT (now() AT TIME ZONE zona_horaria)::date AS fecha FROM empresas WHERE id = $1) hoy
      WHERE e.id = $1`,
     [empresaId, periodo, planEquipo?.id ?? null],
   );
   // Plan final (puede ser el que ya tenía) y precio de hoy, que es lo que se estima como ingreso
   const final = (
     await tx.query<{ plan_equipo: string; codigo_acceso: string; nombre: string; fecha: string }>(
-      `SELECT plan_equipo, codigo_acceso, nombre, to_char((now() AT TIME ZONE 'America/Bogota')::date, 'YYYY-MM-DD') AS fecha
+      `SELECT plan_equipo, codigo_acceso, nombre, to_char((now() AT TIME ZONE zona_horaria)::date, 'YYYY-MM-DD') AS fecha
        FROM empresas WHERE id = $1`,
       [empresaId],
     )

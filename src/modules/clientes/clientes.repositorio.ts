@@ -21,7 +21,7 @@ export type FilaCliente = {
 // Días hacia atrás que cuenta una cita para que el cliente siga "activo"
 export const DIAS_CLIENTE_ACTIVO = 45;
 
-// Activo: tiene una cita no cancelada desde hace 45 días (fecha de Colombia) en
+// Activo: tiene una cita no cancelada desde hace 45 días (fecha en la zona del negocio) en
 // adelante. Eso incluye una visita de hoy y cualquier cita próxima.
 const COLUMNAS_CLIENTE = `c.id, c.nombre, c.telefono, c.indicativo, c.total_citas,
   to_char(c.fecha_ultima_cita, 'YYYY-MM-DD') AS fecha_ultima_cita,
@@ -31,11 +31,12 @@ const COLUMNAS_CLIENTE = `c.id, c.nombre, c.telefono, c.indicativo, c.total_cita
   est.citas_completadas, est.citas_canceladas, est.activo`;
 
 const DESDE_CLIENTES = `FROM clientes c
+  JOIN empresas em ON em.id = c.empresa_id
   CROSS JOIN LATERAL (
     SELECT count(*) FILTER (WHERE ci.estado = 'COMPLETADA')::int AS citas_completadas,
            count(*) FILTER (WHERE ci.estado = 'CANCELADA')::int AS citas_canceladas,
            coalesce(bool_or(ci.estado <> 'CANCELADA'
-             AND ci.fecha >= (now() AT TIME ZONE 'America/Bogota')::date - ${DIAS_CLIENTE_ACTIVO}), false) AS activo
+             AND ci.fecha >= (now() AT TIME ZONE em.zona_horaria)::date - ${DIAS_CLIENTE_ACTIVO}), false) AS activo
     FROM citas ci WHERE ci.cliente_id = c.id AND ci.empresa_id = c.empresa_id
   ) est`;
 

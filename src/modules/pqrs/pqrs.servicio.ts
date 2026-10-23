@@ -1,5 +1,7 @@
 import type pg from 'pg';
+import { ZONA_PLATAFORMA } from '../../config/plataforma.js';
 import { errores } from '../../shared/errores.js';
+import { aIsoEnZona } from '../../shared/zonaHoraria.js';
 import type { FilaUsuario } from '../cuentas/cuentas.repositorio.js';
 import * as repositorio from './pqrs.repositorio.js';
 import type { FilaPqrs, TipoPqrs } from './pqrs.repositorio.js';
@@ -12,8 +14,9 @@ export const armarPqrs = (p: FilaPqrs) => ({
   mensaje: p.mensaje,
   estado: p.estado,
   respuesta: p.respuesta,
-  respondidaEn: p.respondida_en,
-  creadaEn: p.creado_en,
+  respondidaEn: aIsoEnZona(p.respondida_en, ZONA_PLATAFORMA),
+  creadaEn: aIsoEnZona(p.creado_en, ZONA_PLATAFORMA),
+  zonaHoraria: ZONA_PLATAFORMA,
 });
 
 export const crearServicioPqrs = ({ pool }: { pool: pg.Pool }) => ({

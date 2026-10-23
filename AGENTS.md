@@ -13,6 +13,8 @@ src/
   server.ts          arranque y apagado ordenado
   app.ts             crea servicios y conecta rutas (recibe pool y entorno)
   config/entorno.ts  variables de entorno validadas con zod
+  config/zonas.ts    zona horaria que se asigna según el país; config/plataforma.ts: zona de la plataforma (ZONA_PLATAFORMA)
+  shared/zonaHoraria.ts  utilidades de zona horaria (hoy en una zona, ISO 8601 con desfase)
   config/planes.ts   planes por tamaño de equipo (Básico, Equipo, Pro): cupo y precios (los reales los pone el dueño)
   db/                pool, migraciones (migrar.ts) y scripts de mantenimiento
   shared/            errores, logs JSON, middlewares HTTP (CORS, límites, validación, errores)
@@ -91,7 +93,7 @@ Puerto por defecto `4000` (`PORT`). Rutas bajo `/api/v1`.
 ## Base de datos y entorno
 
 - PostgreSQL vía `pg` (`src/db/pool.ts`), con las extensiones `btree_gist` (migración 002) y `gen_random_uuid()` (PostgreSQL 13 o superior).
-- Variables en `.env` en la raíz (ignorado por git; nunca lo subas). Se validan al arrancar en `src/config/entorno.ts`: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_POOL_MAX`, `JWT_SECRET`, `JWT_EXPIRA_EN`, `CORS_ORIGINS`, `TRUST_PROXY`, `NODE_ENV`, `PORT`, `CARPETA_SUBIDAS` (opcional, por defecto `uploads`: carpeta de las fotos subidas, ignorada por git) `ENLACE_PUBLICO_BASE` (opcional, por defecto `agendaya.app`: dirección base de los enlaces públicos de los negocios; sin `http(s)://` se asume `https://`; ver "Enlace público del negocio"), `URL_PUBLICA` (opcional: dirección pública del servidor, ej. `https://api.mibarberia.co`, para armar las URL de las fotos; si falta se usa la dirección de cada solicitud, así que configúrala en producción) y `EXPO_ACCESS_TOKEN` (opcional: token de acceso de Expo para las notificaciones push; sin él también se envían).
+- Variables en `.env` en la raíz (ignorado por git; nunca lo subas). Se validan al arrancar en `src/config/entorno.ts`: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_POOL_MAX`, `JWT_SECRET`, `JWT_EXPIRA_EN`, `CORS_ORIGINS`, `TRUST_PROXY`, `NODE_ENV`, `PORT`, `CARPETA_SUBIDAS` (opcional, por defecto `uploads`: carpeta de las fotos subidas, ignorada por git) `ENLACE_PUBLICO_BASE` (opcional, por defecto `agendaya.app`: dirección base de los enlaces públicos de los negocios; sin `http(s)://` se asume `https://`; ver "Enlace público del negocio"), `ZONA_PLATAFORMA` (opcional, por defecto `America/Bogota`: zona para lo que no es de ningún negocio; ver "Zonas horarias"), `URL_PUBLICA` (opcional: dirección pública del servidor, ej. `https://api.mibarberia.co`, para armar las URL de las fotos; si falta se usa la dirección de cada solicitud, así que configúrala en producción) y `EXPO_ACCESS_TOKEN` (opcional: token de acceso de Expo para las notificaciones push; sin él también se envían).
 - El esquema solo cambia con un archivo nuevo en `db/migraciones/` (siguiente número). Nunca edites una migración ya aplicada. Casi siempre es `.sql`; si hace falta código (ej. una librería), puede ser `.ts` y exportar por defecto `async (db: pg.PoolClient) => {…}`, que corre en la misma transacción (ver la 011). Una migración `.ts` no importa nada de `src/`, para que siga haciendo lo mismo aunque el código cambie.
 - Migración 007: horario por día en `horarios_empresa` (un día sin fila = cerrado; reemplaza `dias_atencion`, `horario_apertura` y `horario_cierre`, que se copiaron ahí), quita `nit`, `telefono` y `correo` de `empresas`, agrega `empresas.departamento`, empleados de 1 a 10, código del negocio `^[A-Z0-9]{1,10}$`, `usuarios.usuario` y bloqueos semanales o de una fecha (`bloqueos_tipo_valido`). La 008 corrige el trigger de usuario único.
 - Migración 009: `barberos.atiende_clientes`; plan de la suscripción (`empresas.plan_suscripcion` `mensual`|`anual`, `fecha_pago`, `suscripcion_fin`); cuentas de cliente (`usuarios.nombre`, `telefono`, `indicativo`; `correo` pasa a opcional: correo o usuario); `negocios_guardados`; `citas.usuario_id` (cliente que reservó con su sesión); `documentos_legales` y `autorizaciones_datos`. La 010 publica el borrador `0.1-borrador` de la política y los términos.
@@ -104,10 +106,11 @@ Puerto por defecto `4000` (`PORT`). Rutas bajo `/api/v1`.
 - Migración 017: textos legales **versión 1.0** (reemplazan los borradores 0.1) a partir de `docs/legal/documentos-legales.md`: Política de Tratamiento de Datos, Términos y Condiciones y Aviso de privacidad (texto corto). `documentos_legales.tipo` admite un tercer valor, `aviso_privacidad`. Los clientes con cuenta deben aceptar la 1.0 en su próxima reserva.
 - Migración 018: notificaciones push. Tabla `dispositivos_push` (`token` único, de un integrante del equipo `barbero_id` o de una cuenta `usuario_id`, nunca los dos; se borra con su dueño) y `citas.recordatorio_enviado_en` (marca el recordatorio de 24 h ya enviado).
 - Migración 019: `superadmins.ultima_actividad` (momento de la última solicitud del superadmin; con más de 15 minutos de diferencia, o `NULL`, la sesión ya no sirve).
-- Migración 020: tabla `activaciones_plan` (historial de activaciones de plan: negocio, `plan_equipo`, `periodo`, `precio` de ese momento, `fecha` en hora de Colombia, `origen` `panel` | `comando` | `historico`). Sin llave foránea (copia el código y el nombre del negocio, como `actividad_superadmin`). La llena `activarPlanEmpresa` en cada activación; al aplicarla se copió la **última** activación de cada negocio que ya había pagado (`origen = 'historico'`, con los precios de `src/config/planes.ts` de ese día). Las activaciones anteriores a esta migración no se guardaron, así que no se pueden recuperar.
+- Migración 020: tabla `activaciones_plan` (historial de activaciones de plan: negocio, `plan_equipo`, `periodo`, `precio` de ese momento, `fecha` en zona horaria del negocio, `origen` `panel` | `comando` | `historico`). Sin llave foránea (copia el código y el nombre del negocio, como `actividad_superadmin`). La llena `activarPlanEmpresa` en cada activación; al aplicarla se copió la **última** activación de cada negocio que ya había pagado (`origen = 'historico'`, con los precios de `src/config/planes.ts` de ese día). Las activaciones anteriores a esta migración no se guardaron, así que no se pueden recuperar.
 - Migración 021: la duración de los servicios pasa a múltiplos de 10 de 10 a 150 (`servicios_duracion_valida`); los servicios que ya existían se redondearon hacia arriba al múltiplo de 10 más cercano dentro de ese rango (45 → 50; más de 150 → 150), las citas ya agendadas no cambian. `empresas.intervalo_minutos` (10, 20, 30, 40, 50 o 60; por defecto 30): cada cuántos minutos pueden agendar los clientes.
 - Migración 022: tabla `categorias_negocio` (`nombre` único sin distinguir mayúsculas, `activa`; se cargan Barbería, Peluquería y Salón de belleza; `empresas.categoria` sigue guardando el nombre, así que los negocios que ya existían no cambian) y tabla `notificaciones` (centro de notificaciones: de una cuenta `usuario_id` o de un integrante `barbero_id`, nunca los dos; `tipo`, `titulo`, `texto`, `cita_id` que se desvincula si la cita se borra, `leida_en`).
 - Migración 023: tabla `auditoria_autorizaciones` (prueba de cada aceptación de la política y los términos; ver "Autorización de tratamiento de datos"). Sin llaves foráneas y **solo de inserción**: un trigger rechaza `UPDATE`, `DELETE` y `TRUNCATE`. Copió las filas de `autorizaciones_datos`, que quedó solo como historial (ya no se escribe ni se lee).
+- Migración 024: **zonas horarias**. `empresas.pais` (ISO alfa-2, por defecto `CO`) y `empresas.zona_horaria` (IANA, por defecto `America/Bogota`; las empresas existentes quedaron así). Las columnas `timestamp` sin zona (`created_at` de empresas, barberos, bloqueos, clientes, lista_negra, productos, servicios y citas; `citas.completada_en` y `cancelada_en`) pasaron a `timestamptz`, interpretando los valores viejos como hora de Bogotá (el servidor ya trabajaba en esa zona): los instantes no cambian. No hubo que migrar nada más.
 - **Publicar una versión nueva de la política, los términos o el aviso**: una migración nueva que inserte filas en `documentos_legales` con otra `version` (nunca edites las filas publicadas). La más reciente de cada tipo es la vigente; los clientes con cuenta aceptan la política y los términos nuevos en su próxima reserva. Conviene publicar los tres tipos juntos con el mismo número.
 
 ## Endpoints
@@ -138,7 +141,7 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | GET | `/api/v1/empresas/validar/:codigo` | público, limitado |
 | GET | `/api/v1/empresas/perfil/:codigo` | público, limitado. Información del negocio con su foto, para clientes |
 | GET | `/api/v1/empresas/actual` | sesión del personal |
-| POST | `/api/v1/citas` | público, limitado. Invitado o cliente con sesión. Exige aceptar la política y los términos (ver "Reservas"). Solo de hoy a 14 días después (hora de Colombia) y dentro del horario de ese día. 403 si el teléfono está en la lista negra o el negocio está vencido; 409 si choca con un bloqueo |
+| POST | `/api/v1/citas` | público, limitado. Invitado o cliente con sesión. Exige aceptar la política y los términos (ver "Reservas"). Solo de hoy a 14 días después (zona horaria del negocio) y dentro del horario de ese día. 403 si el teléfono está en la lista negra o el negocio está vencido; 409 si choca con un bloqueo |
 | GET | `/api/v1/citas/ocupadas?empresaId=` | público (sin datos de clientes) |
 | GET | `/api/v1/citas/disponibilidad?empresaId=&barberoId=&servicioId=&fecha=` | público. Horas libres de un profesional para un servicio ese día (ver "Horas disponibles") |
 | GET | `/api/v1/citas/bloqueos?empresaId=` | público. Horarios bloqueados del equipo, semanales y de una fecha (sin el motivo) |
@@ -216,6 +219,15 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 ### Contraseñas nuevas
 
 Toda contraseña **nueva o cambiada** (registro de empresa, registro de cliente, restablecer con código, y crear o editar un integrante del equipo con `clave`) debe tener de 8 a 64 caracteres con al menos una **mayúscula**, una **minúscula**, un **número** y un **carácter especial** (algo que no sea letra, número ni espacio). Si no, **400** `La contraseña debe tener entre 8 y 64 caracteres e incluir una mayúscula, una minúscula, un número y un carácter especial`. La regla está en `claveNueva` (`src/shared/http/esquemas.ts`). Las contraseñas que ya existen **siguen funcionando** en los logins (que solo piden que la clave no esté vacía). Las del superadmin las genera el comando de desarrollador y ya cumplen la regla.
+
+### Zonas horarias
+
+- **En la base** todo instante es `timestamptz` (UTC) y las conexiones del pool trabajan en UTC (`options: -c timezone=UTC`). Nada usa `CURRENT_DATE` ni la hora del servidor.
+- **Hora de pared del negocio**: `citas.fecha`, `hora_inicio`, `hora_fin`, el horario por día, los bloqueos y `suscripcion_fin`/`fecha_pago` son fecha y hora **locales de la zona del negocio** (así funciona un horario de atención). El instante real se calcula con `(fecha + hora_inicio) AT TIME ZONE empresas.zona_horaria`.
+- **Zona del negocio** (`empresas.zona_horaria`, IANA): en el registro se envía `pais` (opcional, por defecto `CO`) y/o `zonaHoraria` (opcional); sin `zonaHoraria` se usa la del país (`src/config/zonas.ts`); un país desconocido sin `zonaHoraria` responde **400** `No conocemos la zona horaria de ese país. Envía "zonaHoraria" (ej. America/Bogota)`. Zona inválida: **400** `La zona horaria no es válida. Usa un nombre como America/Bogota`. Con `pais` distinto de `CO`, departamento y ciudad se guardan tal cual (la lista DIVIPOLA solo se exige en Colombia). `PATCH /admin/empresa` acepta `zonaHoraria`; si hay citas confirmadas que aún no empiezan responde **409** `Tienes N cita(s) pendiente(s). Cancélalas o espera a que pasen antes de cambiar la zona horaria: …` (sus horas están en la zona actual).
+- **Qué usa la zona del negocio**: "hoy" y el límite de 14 días para reservar, las horas disponibles de hoy, los días de prueba y de plan (`/suscripcion`, `buscarSuscripcion`), activar plan y simular vencimiento, los bloqueos de hoy en adelante, la cartera (períodos, rangos y límites), clientes activos, cancelación del cliente, recordatorios de 24 h, "citas de hoy" y "este mes" del superadmin, y el estado de cada negocio.
+- **ISO 8601 con desfase**: los instantes de las respuestas (`completadaEn`, `canceladaEn`, `trialEndsAt`, `creadaEn`, `guardadoEn`, `agregadoEn`, notificaciones, `aceptadoEn`…) salen como `2026-10-22T09:30:00.000-05:00`, con el desfase de la zona del negocio, y la respuesta trae `zonaHoraria` (en perfil/Mi negocio, `/empresas/validar`, suscripción, prueba, disponibilidad, reservas, agenda, completar/cancelar, cartera/resumen, mi-cuenta, lista negra y notificaciones). Se calcula con `aIsoEnZona` (`src/shared/zonaHoraria.ts`).
+- **Zona de la plataforma** (`ZONA_PLATAFORMA`, por defecto `America/Bogota`): solo para lo que no pertenece a un negocio: año del radicado de las PQRS, fechas de PQRS y del registro de actividad del superadmin (también traen `zonaHoraria`), sus filtros `desde`/`hasta` y los gráficos/ingresos de toda la plataforma.
 
 ### Enlace público del negocio
 
@@ -356,12 +368,12 @@ Ambos se envían como `Authorization: Bearer <token>`.
   ```
 
 - `plan` es el **periodo** (`"mensual"` o `"anual"`); `planEquipo` es el **plan por tamaño de equipo** (ver "Planes"), también durante la prueba. `cupoUsado` = integrantes activos en Equipo; `cupoDisponible` = cuántos más se pueden agregar.
-- `fechaRegistro` (AAAA-MM-DD, hora de Colombia): día en que se registró el negocio. Es la fecha más antigua que acepta el resumen de la cartera con `rango`. `null` en empresas sin fecha de creación.
+- `fechaRegistro` (AAAA-MM-DD, zona horaria del negocio): día en que se registró el negocio. Es la fecha más antigua que acepta el resumen de la cartera con `rango`. `null` en empresas sin fecha de creación.
 
 - `estado`: `"prueba"` (15 días gratis desde el registro), `"activa"` (plan `"mensual"` o `"anual"`) o `"vencida"`.
 - Si la empresa activó el plan **durante la prueba**, pasa de inmediato a `"activa"` y el plan empieza a contar desde el fin de la prueba. `diasPruebaSumados` = días de prueba que le quedaban y se sumaron al plan (`0` si pagó con la prueba ya vencida). `null` en la prueba o si el plan no se activó durante una prueba. Se conserva al renovar.
 - `fechaPago` y `plan` son `null` en la prueba. `fechaFin` (AAAA-MM-DD) es el día en que termina la prueba o el plan. Las empresas activas de antes de los planes tienen `plan`, `fechaPago`, `fechaFin` y `diasRestantes` en `null` y no vencen.
-- `diasRestantes` = `fechaFin` − hoy, con la **fecha actual de Colombia**: baja uno cada día a medianoche. El día de `fechaFin` ya es 0 y la suscripción queda **vencida**. Vencida = `0`.
+- `diasRestantes` = `fechaFin` − hoy, con la **fecha actual en la zona del negocio**: baja uno cada día a medianoche. El día de `fechaFin` ya es 0 y la suscripción queda **vencida**. Vencida = `0`.
 - `mostrarRecordatorio`: `true` siempre durante la prueba y en los últimos 7 días de un plan (`diasRestantes` ≤ 7). `mensaje` es el texto para mostrar (o el aviso de vencida); `null` si no hay nada que mostrar.
 - `suspendida`: `true` si soporte suspendió el negocio (ver "Panel del superadministrador"). Entonces `estado` es `"vencida"`, `diasRestantes` es `0` y `mensaje` es `Negocio suspendido; contacta a soporte`.
 - Los planes se activan con `npm run dev:activar-plan` (no hay pagos reales; ver "Comandos de desarrollador").
@@ -386,7 +398,7 @@ Ambos se envían como `Authorization: Bearer <token>`.
 **GET `/api/v1/admin/empresa/prueba`** (se mantiene para la app de antes; usa `/suscripcion`): días de prueba que le quedan a la empresa.
 
 - Responde **200** `{ "estadoSuscripcion": "trial", "trialEndsAt": "<fecha ISO>", "diasRestantes": 12, "pruebaVencida": false }`.
-- `diasRestantes` se cuenta igual que en `/suscripcion` (fecha de Colombia) y nunca es negativo; es `null` si la empresa no está en prueba (por ejemplo `"activa"`). Con la prueba vencida responde `diasRestantes: 0` y `pruebaVencida: true`.
+- `diasRestantes` se cuenta igual que en `/suscripcion` (fecha en la zona del negocio) y nunca es negativo; es `null` si la empresa no está en prueba (por ejemplo `"activa"`). Con la prueba vencida responde `diasRestantes: 0` y `pruebaVencida: true`.
 
 **GET `/api/v1/admin/empresa`** ("Mi negocio"): perfil de la empresa del administrador (siempre la suya; no recibe id). Lo usan la cuenta admin y los integrantes con rol Administrador. `estadoSuscripcion` es el estado guardado; el estado real (con la fecha de fin) está en `/admin/empresa/suscripcion`.
 
@@ -467,7 +479,7 @@ Todos usan `Authorization: Bearer <token>` del barbero o de la cuenta admin. El 
    "enListaNegra": false, "listaNegraId": null }]
 ```
 
-- `estado`: `"activo"` si el cliente tiene una cita no cancelada desde hace 45 días hasta hoy, o una cita próxima (fecha de Colombia; una visita de hoy cuenta como activo). Si no, `"inactivo"`. Se calcula en cada consulta a partir de sus citas.
+- `estado`: `"activo"` si el cliente tiene una cita no cancelada desde hace 45 días hasta hoy, o una cita próxima (fecha en la zona del negocio; una visita de hoy cuenta como activo). Si no, `"inactivo"`. Se calcula en cada consulta a partir de sus citas.
 - `citasCompletadas` y `citasCanceladas`: cuántas citas del cliente en el negocio están en cada estado. `totalCitas` son las reservas que hizo.
 - `fechaUltimaCita`: la fecha más lejana que ha reservado (puede ser futura); reservar una fecha anterior ya no la hace retroceder.
 
@@ -555,7 +567,7 @@ Cualquiera de los dos puede ser de unas horas (`horaInicio`–`horaFin`) o del *
 
 Forma: `{ "id", "barberoId", "barberoNombre", "tipo": "semanal" | "fecha", "diaSemana": 1 | null, "fecha": "2026-10-21" | null, "todoElDia": false, "horaInicio": "12:00", "horaFin": "13:00", "motivo": "Almuerzo" | null }`.
 
-**GET `/api/v1/bloqueos`** (solo admin): **200** lista: los semanales y los de fecha de hoy en adelante (hora de Colombia), de todo el equipo (opcional `?barberoId=` para filtrar).
+**GET `/api/v1/bloqueos`** (solo admin): **200** lista: los semanales y los de fecha de hoy en adelante (zona horaria del negocio), de todo el equipo (opcional `?barberoId=` para filtrar).
 
 **POST `/api/v1/bloqueos`** (solo admin): recibe uno de estos cuerpos (`motivo` opcional, máx. 200):
 
@@ -584,7 +596,7 @@ Un bloqueo solo se puede crear en un día que el negocio abre (según el `horari
 
 **DELETE `/api/v1/bloqueos/:id`** (solo admin): **200** `{ "mensaje": "Bloqueo eliminado" }`. **403** `Solo el administrador del negocio puede usar esta función.`; **404** `Bloqueo no encontrado`.
 
-**GET `/api/v1/citas/bloqueos?empresaId=`** (público, para la pantalla de reservar): **200** los dos tipos, **sin el motivo**: `[{ "barberoId", "tipo": "semanal", "diaSemana": 1, "fecha": null, "todoElDia": false, "horaInicio": "12:00", "horaFin": "13:00" }, { "barberoId", "tipo": "fecha", "diaSemana": null, "fecha": "2026-10-22", "todoElDia": true, "horaInicio": "00:00", "horaFin": "24:00" }]`. Los de fecha solo de hoy en adelante (hora de Colombia). Una reserva que cae en cualquier bloqueo responde **409** `El profesional no atiende en ese horario. Por favor elige otra hora.`
+**GET `/api/v1/citas/bloqueos?empresaId=`** (público, para la pantalla de reservar): **200** los dos tipos, **sin el motivo**: `[{ "barberoId", "tipo": "semanal", "diaSemana": 1, "fecha": null, "todoElDia": false, "horaInicio": "12:00", "horaFin": "13:00" }, { "barberoId", "tipo": "fecha", "diaSemana": null, "fecha": "2026-10-22", "todoElDia": true, "horaInicio": "00:00", "horaFin": "24:00" }]`. Los de fecha solo de hoy en adelante (zona horaria del negocio). Una reserva que cae en cualquier bloqueo responde **409** `El profesional no atiende en ese horario. Por favor elige otra hora.`
 
 #### Horas disponibles (`GET /api/v1/citas/disponibilidad`)
 
@@ -597,7 +609,7 @@ Público. Parámetros: `empresaId`, `barberoId`, `servicioId` y `fecha` (AAAA-MM
 
 - `inicio` es HH:MM de 24 h; `hora` es el mismo momento en el formato de `POST /citas` (`"08:30 AM"`). `pegada: true` = recomendada: queda pegada a la apertura, al fin de una cita o bloqueo, o termina justo cuando empieza la siguiente cita, el siguiente bloqueo o el cierre (no deja huecos). Ordenadas de menor a mayor; `[]` si el negocio no atiende ese día o no queda espacio.
 - **Qué se ofrece** (solo si el servicio cabe completo en el espacio libre): (1) siempre las horas pegadas; (2) en el resto del espacio libre, las horas del intervalo del negocio (`intervalo_minutos`, alineadas al reloj: con 30, 10:00 y 10:30), **salvo** las que dejarían antes o después del servicio un hueco más corto que el servicio activo más corto del negocio (ese hueco no se podría vender; los servicios no están ligados a un profesional, así que "el más corto" es el del negocio). Ejemplo: 08:00 a 12:00 con una cita de 09:10 a 09:50, servicio de 30 min, intervalo 30 y servicio más corto 20 → `08:00* 08:40* 09:50* 10:30 11:00 11:30*` (`*` = pegada; 08:30 y 10:00 se descartan porque dejarían un hueco de 10 min).
-- Hoy no se ofrecen las horas que ya pasaron (hora de Colombia). Cálculo en `src/modules/citas/disponibilidad.ts` (funciones puras).
+- Hoy no se ofrecen las horas que ya pasaron (zona horaria del negocio). Cálculo en `src/modules/citas/disponibilidad.ts` (funciones puras).
 - Errores: **400** `No se pueden agendar citas en fechas pasadas` o `Solo puedes reservar desde hoy hasta 14 días después (…)`, `La fecha debe tener el formato AAAA-MM-DD`, `Falta el identificador …`; **403** negocio sin suscripción vigente; **404** `Servicio o profesional no encontrado`.
 - `POST /citas` **no** exige que la hora venga de esta lista: solo que no choque (ver "Reservas").
 
@@ -617,7 +629,7 @@ El teléfono se valida y se guarda en E.164 (ver "Teléfonos"); la respuesta tra
 
 Además de las reglas de siempre (lista negra, bloqueos, choque con otra cita), una reserva debe cumplir:
 
-- **Fecha**: desde hoy hasta 14 días después (15 días en total contando hoy), en hora de Colombia (`America/Bogota`). Errores **400** `No se pueden agendar citas en fechas pasadas` o `Solo puedes reservar desde hoy hasta 14 días después (hasta el 2026-11-02).` (con la fecha límite real).
+- **Fecha**: desde hoy hasta 14 días después (15 días en total contando hoy), en zona horaria del negocio (`America/Bogota`). Errores **400** `No se pueden agendar citas en fechas pasadas` o `Solo puedes reservar desde hoy hasta 14 días después (hasta el 2026-11-02).` (con la fecha límite real).
 - **Horario de ese día** (el `horario` del negocio): **400** `El negocio no atiende ese día. Por favor elige otra fecha.` si ese día está cerrado, o `La hora elegida está fuera del horario del negocio` si la cita empieza antes de la apertura o termina después del cierre de ese día.
 
 #### Cartera
@@ -654,7 +666,7 @@ Errores: **400** `El campo "desde" es obligatorio`, `El campo "desde" debe ser u
   ```
 
   `ganancia` es lo que ganó el profesional (con el porcentaje guardado en cada cita, igual que `/cartera`); `gananciaNegocio` = `totalVentas` − lo que ganó el equipo.
-- Además de lo anterior (que no cambia), la respuesta trae estos campos, calculados con el mismo filtro (un admin ve todo el negocio o un integrante con `barberoId`; un **empleado solo lo suyo**, aunque envíe otro `barberoId`) y las mismas fechas de Colombia y límites de `rango`:
+- Además de lo anterior (que no cambia), la respuesta trae estos campos, calculados con el mismo filtro (un admin ve todo el negocio o un integrante con `barberoId`; un **empleado solo lo suyo**, aunque envíe otro `barberoId`) y las mismas fechas en la zona del negocio y límites de `rango`:
 
   ```jsonc
   {
@@ -739,7 +751,7 @@ Rol aparte de `admin` y `cliente`: vive en la tabla `superadmins`, no en `usuari
 
 Las listas se paginan con `?pagina=1&limite=25` (máximo 100) y responden `{ "total", "pagina", "limite", "datos": [...] }`.
 
-**Estado de un negocio** (se calcula hoy, hora de Colombia, igual que `buscarSuscripcion`): `suspendido` (manda sobre los demás); `prueba` o `activo` mientras no pase su fecha de fin; `vencido` en otro caso (incluye los cancelados). Un negocio activo sin fecha de fin (anterior a los planes) no vence.
+**Estado de un negocio** (se calcula hoy, zona horaria del negocio, igual que `buscarSuscripcion`): `suspendido` (manda sobre los demás); `prueba` o `activo` mientras no pase su fecha de fin; `vencido` en otro caso (incluye los cancelados). Un negocio activo sin fecha de fin (anterior a los planes) no vence.
 
 **GET `/superadmin/resumen`**: **200** `{ "totalNegocios", "enPrueba", "activos", "vencidos", "suspendidos", "nuevosEsteMes", "porVencerEn7Dias", "citasHoy" }`. `enPrueba + activos + vencidos + suspendidos = totalNegocios`. `porVencerEn7Dias` = en prueba o activos con 7 días o menos. `citasHoy` = citas de hoy de todos los negocios, sin contar las canceladas.
 
@@ -754,7 +766,7 @@ Las listas se paginan con `?pagina=1&limite=25` (máximo 100) y responden `{ "to
   "negociosNuevosPorMes": [{ "mes": "2025-11", "total": 0 }, …],        // últimos 12 meses, el actual al final (por fecha de registro)
   "negociosPorEstado": [{ "estado": "prueba" | "activo" | "vencido" | "suspendido", "total": 3 }, …],  // los 4, aunque sean 0
   "negociosPorPlan": [{ "plan": "basico", "nombre": "Básico", "total": 5, "activos": 2 }, …],         // los 3 planes; "activos" = estado activo
-  "citasPorDia": [{ "dia": "2026-09-21", "total": 12 }, …],             // últimos 30 días hasta hoy (hora de Colombia), sin las canceladas
+  "citasPorDia": [{ "dia": "2026-09-21", "total": 12 }, …],             // últimos 30 días hasta hoy (zona horaria del negocio), sin las canceladas
   "topDepartamentos": [{ "departamento": "SANTANDER", "total": 4 }, …], // hasta 5, más negocios primero
   "conversionPruebaAPlan": { "pruebasTerminadas": 20, "convertidos": 8, "tasaPorcentaje": 40 },
   "vencenEn7Dias": { "total": 2, "negocios": [{ "id", "nombre", "codigoAcceso", "estado", "diasRestantes", "fechaFin" }] },  // prueba o activos, hasta 50
@@ -787,7 +799,7 @@ Las listas se paginan con `?pagina=1&limite=25` (máximo 100) y responden `{ "to
 
 **PQRS**: **GET `/superadmin/pqrs?estado=&tipo=&pagina=&limite=`** (las sin resolver primero, de la más antigua a la más reciente) y **GET `/superadmin/pqrs/:radicado`** (sin distinguir mayúsculas; **404** `No existe una PQRS con ese radicado`). Forma: `{ "radicado", "tipo", "estado", "mensaje", "nombre", "contacto", "conCuenta", "respuesta", "respondidaEn", "creadaEn", "actualizadaEn" }`. **PATCH `/superadmin/pqrs/:radicado`** `{ "estado", "respuesta"? }` (respuesta hasta 2000; sin texto conserva la anterior): **200** `{ "mensaje": "PQRS actualizada", "pqrs": {…} }`. Es lo mismo que `dev:pqrs responder`.
 
-**Registro de actividad**: **GET `/superadmin/actividad?accion=&empresaId=&desde=&hasta=&pagina=&limite=`** (`desde` y `hasta` AAAA-MM-DD, hora de Colombia), de la más reciente a la más antigua: `{ "id", "superadmin": "correo", "accion", "negocio": { "id", "codigoAcceso", "nombre" } | null, "referencia", "detalle", "motivo", "fecha" }`. Acciones: `inicio_sesion` (con la IP en `detalle`), `cerrar_sesion`, `activar_plan`, `extender_prueba`, `suspender`, `reactivar` y `responder_pqrs` (`referencia` = radicado). Las consultas no se registran. No hay endpoint para editarlo ni borrarlo, y la base rechaza `UPDATE`, `DELETE` y `TRUNCATE` (migración 016). El nombre y el código del negocio quedan copiados tal como estaban en ese momento.
+**Registro de actividad**: **GET `/superadmin/actividad?accion=&empresaId=&desde=&hasta=&pagina=&limite=`** (`desde` y `hasta` AAAA-MM-DD, zona horaria del negocio), de la más reciente a la más antigua: `{ "id", "superadmin": "correo", "accion", "negocio": { "id", "codigoAcceso", "nombre" } | null, "referencia", "detalle", "motivo", "fecha" }`. Acciones: `inicio_sesion` (con la IP en `detalle`), `cerrar_sesion`, `activar_plan`, `extender_prueba`, `suspender`, `reactivar` y `responder_pqrs` (`referencia` = radicado). Las consultas no se registran. No hay endpoint para editarlo ni borrarlo, y la base rechaza `UPDATE`, `DELETE` y `TRUNCATE` (migración 016). El nombre y el código del negocio quedan copiados tal como estaban en ese momento.
 
 ### Eliminar la cuenta (Ley 1581 de 2012)
 
@@ -819,7 +831,7 @@ Forma de un negocio guardado: `{ "id", "nombre", "codigoAcceso", "categoria", "d
 - **POST `/mi-cuenta/negocios`**: recibe `{ "codigo": "central10" }`. **201** `{ "mensaje": "Negocio guardado", "negocio": { … } }` (si ya estaba, responde igual). Errores: **400** `Envía el código del negocio en "codigo"` o el mensaje del código inválido; **404** `Establecimiento no encontrado`; **429** (mismo límite que `/empresas/validar/:codigo`).
 - **DELETE `/mi-cuenta/negocios/:id`** (`:id` = `id` del negocio): **200** `{ "mensaje": "Negocio quitado de tu lista" }`. **404** `Ese negocio no está en tu lista`.
 - **GET `/mi-cuenta/citas`**: **200** citas que reservó con su sesión, de la más reciente a la más antigua: `[{ "id", "empresaId", "negocio", "codigoAcceso", "servicio", "barberoId", "barberoNombre", "fecha": "2026-10-21", "hora": "10:00 AM", "duracionMin": 30, "precio": 25000, "estado": "CONFIRMADA" }]`. Las reservas como invitado no aparecen.
-- **PATCH `/mi-cuenta/citas/:id/cancelar`**: el cliente cancela una cita **suya** (reservada con su sesión) que sigue `CONFIRMADA` y todavía no empezó (hora de Colombia). **200** `{ "mensaje": "Cita cancelada", "estado": "CANCELADA", "canceladaEn": "<fecha ISO>" }`. **409** `No se pudo cancelar: la cita no existe, no es tuya, ya fue atendida o cancelada, o ya empezó.`; **400** `Identificador de cita inválido`. No se llena `cancelada_por` (la agenda no muestra quién canceló). Avisa por push al profesional y a los administradores (ver "Notificaciones push").
+- **PATCH `/mi-cuenta/citas/:id/cancelar`**: el cliente cancela una cita **suya** (reservada con su sesión) que sigue `CONFIRMADA` y todavía no empezó (zona horaria del negocio). **200** `{ "mensaje": "Cita cancelada", "estado": "CANCELADA", "canceladaEn": "<fecha ISO>" }`. **409** `No se pudo cancelar: la cita no existe, no es tuya, ya fue atendida o cancelada, o ya empezó.`; **400** `Identificador de cita inválido`. No se llena `cancelada_por` (la agenda no muestra quién canceló). Avisa por push al profesional y a los administradores (ver "Notificaciones push").
 
 ### Notificaciones push (Expo Push)
 
@@ -851,7 +863,7 @@ Guardar la notificación y enviar la push son pasos independientes: sin token de
 
 - **Un fallo de envío nunca afecta la reserva ni la cancelación**: el aviso se dispara después de guardar y sin esperarlo, y cualquier error solo queda en el log (`push_fallo`, `push_expo_fallo`). Quien no tenga tokens registrados no recibe la push (la notificación interna sí queda).
 - **Tokens inválidos**: si Expo responde `DeviceNotRegistered`, el token se borra de `dispositivos_push`. No se consultan los recibos de Expo (solo la respuesta inmediata).
-- **Recordatorios** (`modules/notificaciones/recordatorios.ts`): una tarea que arranca `server.ts` (no `crearApp`, así las pruebas no la inician) y corre al arrancar y luego **cada 15 minutos**. Recuerda las citas `CONFIRMADA` de clientes con cuenta que empiezan dentro de **23 a 24 horas** (hora de Colombia). Una cita reservada con menos de 24 h de anticipación no recibe recordatorio. Cada cita se marca en `citas.recordatorio_enviado_en` en el mismo paso en que se elige (con bloqueo de filas), así que **no se envía dos veces** aunque haya varias instancias o dos vueltas se crucen; si el envío falla, ese recordatorio no se reintenta. Los invitados no reciben recordatorio (no tienen dispositivo).
+- **Recordatorios** (`modules/notificaciones/recordatorios.ts`): una tarea que arranca `server.ts` (no `crearApp`, así las pruebas no la inician) y corre al arrancar y luego **cada 15 minutos**. Recuerda las citas `CONFIRMADA` de clientes con cuenta que empiezan dentro de **23 a 24 horas** (zona horaria del negocio). Una cita reservada con menos de 24 h de anticipación no recibe recordatorio. Cada cita se marca en `citas.recordatorio_enviado_en` en el mismo paso en que se elige (con bloqueo de filas), así que **no se envía dos veces** aunque haya varias instancias o dos vueltas se crucen; si el envío falla, ese recordatorio no se reintenta. Los invitados no reciben recordatorio (no tienen dispositivo).
 
 ### Autorización de tratamiento de datos (Ley 1581 de 2012)
 
@@ -874,7 +886,7 @@ Guardar la notificación y enviar la push son pasos independientes: sin token de
 - Los tokens son JWT HS256 y duran `JWT_EXPIRA_EN`.
 - Superadmin (`src/modules/superadmin/`): tabla `superadmins`, token propio (`tipo: "superadmin"`, 1 hora, con `ver` = `version_sesion`) que las demás guardias rechazan. La guardia lee la cuenta de la base en cada solicitud. Detalle en "Panel del superadministrador".
 - Cuentas de cliente: `rol = cliente`, sin empresa, con `nombre`, `telefono`, `indicativo` y correo o usuario (los dos opcionales, al menos uno). `cuentas.clienteDeToken` reconoce su token en `POST /citas`; `requerirCuenta` + `requerirCliente` protegen `/mi-cuenta`.
-- Suscripción (`src/modules/empresas/suscripcion.ts`, `buscarSuscripcion` en `empresas.repositorio.ts`): el estado se **calcula** en cada consulta con la fecha de Colombia, sin tareas programadas. Fin = día de `trial_ends_at` (prueba) o `suscripcion_fin` (plan); habilitada si el estado guardado es `trial` o `activa` y el fin es posterior a hoy (o `activa` sin fin, empresas de antes de los planes, que quedaron `activa`). `requerirSuscripcionVigente` va después de la guardia de sesión en los endpoints de gestión, agenda y citas, y responde 402 (mensaje de negocio inactivo a los empleados). Mi negocio y `/suscripcion` no la llevan.
+- Suscripción (`src/modules/empresas/suscripcion.ts`, `buscarSuscripcion` en `empresas.repositorio.ts`): el estado se **calcula** en cada consulta con la fecha en la zona del negocio, sin tareas programadas. Fin = día de `trial_ends_at` (prueba) o `suscripcion_fin` (plan); habilitada si el estado guardado es `trial` o `activa` y el fin es posterior a hoy (o `activa` sin fin, empresas de antes de los planes, que quedaron `activa`). `requerirSuscripcionVigente` va después de la guardia de sesión en los endpoints de gestión, agenda y citas, y responde 402 (mensaje de negocio inactivo a los empleados). Mi negocio y `/suscripcion` no la llevan.
 
 ## Reglas de seguridad (auditoría previa)
 

@@ -1,3 +1,4 @@
+import { aIsoEnZona } from '../../shared/zonaHoraria.js';
 import { type RequestHandler, Router } from 'express';
 import type pg from 'pg';
 import { z } from 'zod';
@@ -30,7 +31,8 @@ export const crearServicioMiCuenta = ({ pool, notificaciones }: { pool: pg.Pool;
     logoUrl: n.logo_url,
     fotoUrl: urlFoto(urlBase, n.foto_url),
     recibiendoReservas: Boolean((await buscarSuscripcion(pool, n.id))?.habilitada),
-    guardadoEn: n.guardado_en,
+    guardadoEn: aIsoEnZona(n.guardado_en, n.zona_horaria),
+    zonaHoraria: n.zona_horaria,
   });
 
   return {
@@ -66,6 +68,7 @@ export const crearServicioMiCuenta = ({ pool, notificaciones }: { pool: pg.Pool;
         duracionMin: c.duracion_min,
         precio: Number(c.precio),
         estado: c.estado,
+        zonaHoraria: c.zona_horaria,
       }));
     },
 
@@ -78,7 +81,7 @@ export const crearServicioMiCuenta = ({ pool, notificaciones }: { pool: pg.Pool;
       }
       // Aviso al profesional y a los administradores, sin esperar a que termine el envío
       void notificaciones?.avisarCancelacionPorCliente(citaId);
-      return { mensaje: 'Cita cancelada', estado: r.estado, canceladaEn: r.cancelada_en };
+      return { mensaje: 'Cita cancelada', estado: r.estado, canceladaEn: aIsoEnZona(r.cancelada_en, r.zona_horaria), zonaHoraria: r.zona_horaria };
     },
   };
 };

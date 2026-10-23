@@ -53,12 +53,9 @@ export const crearServicioCartera = ({ pool }: { pool: pg.Pool }) => ({
   // Resumen de un período: hoy, esta semana, este mes o un rango de fechas. Mismas
   // reglas de acceso que resumen(). Los profesionales van de mayor a menor en ventas.
   // Un rango no puede empezar antes del registro del negocio ni terminar después de hoy
-  // (fechas de Colombia). Las fechas AAAA-MM-DD se comparan bien como texto.
+  // (fechas en la zona del negocio). Las fechas AAAA-MM-DD se comparan bien como texto.
   async resumenPeriodo(sesion: Sesion, consulta: ConsultaPeriodo, comparar: Comparacion = { tipo: 'anterior' }) {
-    const limites =
-      consulta.periodo === 'rango' || comparar.tipo !== 'anterior'
-        ? await repositorio.limitesDeRango(pool, sesion.empresaId)
-        : undefined;
+    const limites = await repositorio.limitesDeRango(pool, sesion.empresaId);
     if (consulta.periodo === 'rango') {
       if (limites?.fecha_registro && consulta.desde < limites.fecha_registro) {
         throw errores.solicitudInvalida(
@@ -70,7 +67,7 @@ export const crearServicioCartera = ({ pool }: { pool: pg.Pool }) => ({
       }
     }
     const { desde, hasta } =
-      consulta.periodo === 'rango' ? consulta : await repositorio.fechasDePeriodo(pool, consulta.periodo);
+      consulta.periodo === 'rango' ? consulta : await repositorio.fechasDePeriodo(pool, sesion.empresaId, consulta.periodo);
     const r = await this.resumen(sesion, desde, hasta, consulta.barberoId);
 
     // Mismo filtro que el resumen: un empleado solo ve lo suyo, aunque envíe otro barberoId
@@ -128,6 +125,7 @@ export const crearServicioCartera = ({ pool }: { pool: pg.Pool }) => ({
       periodo: consulta.periodo,
       desde,
       hasta,
+      zonaHoraria: limites?.zona_horaria ?? null,
       barberoId: r.barberoId,
       totalVentas: r.totalVentas,
       gananciaNegocio: r.gananciaNegocio,

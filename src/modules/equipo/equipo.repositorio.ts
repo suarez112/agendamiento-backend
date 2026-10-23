@@ -115,7 +115,7 @@ export const contarCitasPendientes = async (db: Consultable, id: string, empresa
   (
     await db.query<{ total: number }>(
       `SELECT count(*)::int AS total FROM citas
-       WHERE barbero_id = $1 AND empresa_id = $2 AND estado = 'CONFIRMADA' AND fecha >= CURRENT_DATE`,
+       WHERE barbero_id = $1 AND empresa_id = $2 AND estado = 'CONFIRMADA' AND fecha >= (now() AT TIME ZONE (SELECT zona_horaria FROM empresas WHERE id = $2))::date`,
       [id, empresaId],
     )
   ).rows[0].total;

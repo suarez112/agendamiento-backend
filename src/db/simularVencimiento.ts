@@ -28,13 +28,13 @@ if (!codigo || diasArg === undefined || !Number.isInteger(dias) || Math.abs(dias
 const pool = crearPool(cargarEntornoBaseDeDatos());
 
 try {
-  // Prueba: el fin queda a DIAS días de ahora (misma hora). Plan: a DIAS días de hoy en Colombia.
+  // Prueba: el fin queda a DIAS días de ahora (misma hora). Plan: a DIAS días de hoy en la zona del negocio.
   const { rows } = await pool.query<{ id: string; nombre: string }>(
     `UPDATE empresas
      SET trial_ends_at = CASE WHEN estado_suscripcion = 'trial'
                               THEN now() + make_interval(days => $2) ELSE trial_ends_at END,
          suscripcion_fin = CASE WHEN estado_suscripcion = 'activa'
-                                THEN (now() AT TIME ZONE 'America/Bogota')::date + $2::int ELSE suscripcion_fin END
+                                THEN (now() AT TIME ZONE zona_horaria)::date + $2::int ELSE suscripcion_fin END
      WHERE codigo_acceso = $1 AND estado_suscripcion IN ('trial', 'activa')
      RETURNING id, nombre`,
     [codigo, dias],

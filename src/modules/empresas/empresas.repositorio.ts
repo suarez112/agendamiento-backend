@@ -6,9 +6,10 @@ export type FilaEmpresa = {
   codigo_acceso: string;
   color_primario: string | null;
   color_secundario: string | null;
+  zona_horaria: string;
 };
 
-const COLUMNAS_EMPRESA = 'id, nombre, codigo_acceso, color_primario, color_secundario';
+const COLUMNAS_EMPRESA = 'id, nombre, codigo_acceso, color_primario, color_secundario, zona_horaria';
 
 export const buscarEmpresaPorCodigo = async (db: Consultable, codigo: string) =>
   (
@@ -75,15 +76,35 @@ export type FilaPerfilEmpresa = {
   trial_ends_at: Date | null;
   created_at: Date | null;
   intervalo_minutos: number;
+  pais: string;
+  zona_horaria: string;
 };
 
 const COLUMNAS_PERFIL = `id, nombre, codigo_acceso, categoria, direccion, departamento, ciudad,
                          nombre_administradora, numero_empleados, logo_url, foto_url, color_primario, color_secundario,
                          latitud, longitud, precision_ubicacion, estado_suscripcion, trial_ends_at, created_at,
-                         intervalo_minutos`;
+                         intervalo_minutos, pais, zona_horaria`;
 
 export const buscarPerfilEmpresa = async (db: Consultable, id: string) =>
   (await db.query<FilaPerfilEmpresa>(`SELECT ${COLUMNAS_PERFIL} FROM empresas WHERE id = $1`, [id])).rows[0];
+
+// Zona horaria IANA del negocio; undefined si no existe
+export const buscarZonaHoraria = async (db: Consultable, empresaId: string) =>
+  (await db.query<{ zona_horaria: string }>('SELECT zona_horaria FROM empresas WHERE id = $1', [empresaId])).rows[0]
+    ?.zona_horaria;
+
+// Citas confirmadas que aún no empezaron (hora de pared de la zona actual del negocio). Se guardan como
+// fecha y hora locales, así que cambiar la zona las movería de instante.
+export const contarCitasPendientes = async (db: Consultable, empresaId: string) =>
+  (
+    await db.query<{ total: number }>(
+      `SELECT count(*)::int AS total
+       FROM citas c JOIN empresas e ON e.id = c.empresa_id
+       WHERE c.empresa_id = $1 AND c.estado = 'CONFIRMADA'
+         AND (c.fecha + c.hora_inicio) AT TIME ZONE e.zona_horaria > now()`,
+      [empresaId],
+    )
+  ).rows[0].total;
 
 // Cada cuántos minutos pueden agendar los clientes (10, 20, 30, 40, 50 o 60)
 export const buscarIntervalo = async (db: Consultable, empresaId: string) =>
@@ -134,6 +155,7 @@ const COLUMNA_EDITABLE = {
   latitud: 'latitud',
   longitud: 'longitud',
   precisionUbicacion: 'precision_ubicacion',
+  zonaHoraria: 'zona_horaria',
 } as const;
 
 export type CambiosPerfil = Partial<Record<keyof typeof COLUMNA_EDITABLE, unknown>>;
@@ -178,7 +200,7 @@ export type FilaSuscripcion = {
   estado_suscripcion: string;
   trial_ends_at: Date | null;
   plan: 'mensual' | 'anual' | null;
-  // AAAA-MM-DD, en hora de Colombia
+  // AAAA-MM-DD, en la zona horaria del negocio
   fecha_pago: string | null;
   fecha_fin: string | null;
   // Fecha de fin menos hoy: 0 o negativo = vencida. null si no tiene fecha de fin.
@@ -191,11 +213,12 @@ export type FilaSuscripcion = {
   // Plan por tamaño de equipo (basico | equipo | pro) e integrantes activos
   plan_equipo: string;
   equipo_activo: number;
-  // Día del registro de la empresa (AAAA-MM-DD, hora de Colombia); null en empresas muy antiguas
+  // Día del registro de la empresa (AAAA-MM-DD, zona del negocio); null en empresas muy antiguas
   fecha_registro: string | null;
+  zona_horaria: string;
 };
 
-// Estado de la suscripción con la fecha actual de Colombia, así los días que
+// Estado de la suscripción con la fecha actual en la zona del negocio, así los días que
 // quedan bajan cada día. La prueba termina el día de trial_ends_at y un plan el
 // día de suscripcion_fin: ese día ya no queda ninguno. No hace falta una tarea
 // programada que marque las vencidas: se calcula en cada consulta.
@@ -209,17 +232,17 @@ export const buscarSuscripcion = async (db: Consultable, empresaId: string) =>
               fin - hoy AS dias_restantes, dias_prueba_sumados,
               suspendida,
               NOT suspendida AND estado_suscripcion IN ('trial', 'activa') AND (fin IS NULL OR fin > hoy) AS habilitada,
-              plan_equipo, equipo_activo, to_char(registro, 'YYYY-MM-DD') AS fecha_registro
+              plan_equipo, equipo_activo, to_char(registro, 'YYYY-MM-DD') AS fecha_registro, zona_horaria
        FROM (
-         SELECT estado_suscripcion, trial_ends_at, plan_suscripcion, fecha_pago, dias_prueba_sumados, plan_equipo,
+         SELECT estado_suscripcion, trial_ends_at, plan_suscripcion, fecha_pago, dias_prueba_sumados, plan_equipo, zona_horaria,
                 suspendida_en IS NOT NULL AS suspendida,
                 (SELECT count(*)::int FROM barberos b WHERE b.empresa_id = empresas.id AND b.activo) AS equipo_activo,
-                (created_at::timestamptz AT TIME ZONE 'America/Bogota')::date AS registro,
+                (created_at AT TIME ZONE zona_horaria)::date AS registro,
                 CASE estado_suscripcion
-                  WHEN 'trial' THEN (trial_ends_at AT TIME ZONE 'America/Bogota')::date
+                  WHEN 'trial' THEN (trial_ends_at AT TIME ZONE zona_horaria)::date
                   WHEN 'activa' THEN suscripcion_fin
                 END AS fin,
-                (now() AT TIME ZONE 'America/Bogota')::date AS hoy
+                (now() AT TIME ZONE zona_horaria)::date AS hoy
          FROM empresas WHERE id = $1
        ) s`,
       [empresaId],

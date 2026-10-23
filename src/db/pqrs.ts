@@ -1,3 +1,4 @@
+import { ZONA_PLATAFORMA } from '../config/plataforma.js';
 import dotenv from 'dotenv';
 import { cargarEntornoBaseDeDatos } from '../config/entorno.js';
 import { ESTADOS_PQRS, type EstadoPqrs } from '../modules/pqrs/pqrs.repositorio.js';
@@ -21,7 +22,7 @@ try {
   if (orden === 'listar' && resto.length <= 1 && (resto[0] === undefined || esEstado(resto[0]?.toLowerCase()))) {
     const estado = resto[0]?.toLowerCase() ?? null;
     const { rows } = await pool.query(
-      `SELECT radicado, tipo, estado, to_char(creado_en AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD HH24:MI') AS fecha,
+      `SELECT radicado, tipo, estado, to_char(creado_en AT TIME ZONE '${ZONA_PLATAFORMA}', 'YYYY-MM-DD HH24:MI') AS fecha,
               nombre, contacto, mensaje, respuesta
        FROM pqrs WHERE $1::varchar IS NULL OR estado = $1
        ORDER BY (estado IN ('resuelta', 'cerrada')), creado_en`,

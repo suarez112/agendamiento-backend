@@ -11,10 +11,11 @@ export type FilaNegocioGuardado = {
   logo_url: string | null;
   foto_url: string | null;
   guardado_en: Date;
+  zona_horaria: string;
 };
 
 const COLUMNAS_NEGOCIO = `e.id, e.nombre, e.codigo_acceso, e.categoria, e.direccion, e.departamento, e.ciudad,
-                          e.logo_url, e.foto_url, g.guardado_en`;
+                          e.logo_url, e.foto_url, g.guardado_en, e.zona_horaria`;
 
 // Negocios guardados por el cliente, del más reciente al más antiguo
 export const listarNegociosGuardados = async (db: Consultable, usuarioId: string) =>
@@ -69,6 +70,7 @@ export type FilaCitaCliente = {
   duracion_min: number;
   precio: string;
   estado: string;
+  zona_horaria: string;
 };
 
 // Citas que el cliente reservó con su sesión, de la más reciente a la más antigua
@@ -79,7 +81,7 @@ export const listarCitasCliente = async (db: Consultable, usuarioId: string) =>
               c.barbero_id, b.nombre AS barbero_nombre,
               to_char(c.fecha, 'YYYY-MM-DD') AS fecha, to_char(c.hora_inicio, 'HH12:MI AM') AS hora,
               (EXTRACT(EPOCH FROM (c.hora_fin - c.hora_inicio)) / 60)::int AS duracion_min,
-              c.precio, c.estado
+              c.precio, c.estado, e.zona_horaria
        FROM citas c
        JOIN empresas e ON e.id = c.empresa_id
        JOIN servicios s ON s.id = c.servicio_id
@@ -90,15 +92,15 @@ export const listarCitasCliente = async (db: Consultable, usuarioId: string) =>
     )
   ).rows;
 
-// El cliente cancela una cita suya que sigue confirmada y todavía no empezó (hora de Colombia).
+// El cliente cancela una cita suya que sigue confirmada y todavía no empezó (en la zona del negocio).
 // No se llena cancelada_por: la agenda mostraría a la administradora como quien canceló.
 export const cancelarCitaCliente = async (db: Consultable, p: { id: string; usuarioId: string }) =>
   (
-    await db.query<{ estado: string; cancelada_en: Date }>(
+    await db.query<{ estado: string; cancelada_en: Date; zona_horaria: string }>(
       `UPDATE citas SET estado = 'CANCELADA', cancelada_en = NOW()
        WHERE id = $1 AND usuario_id = $2 AND estado = 'CONFIRMADA'
-         AND (fecha + hora_inicio) AT TIME ZONE 'America/Bogota' > now()
-       RETURNING estado, cancelada_en`,
+         AND (fecha + hora_inicio) AT TIME ZONE (SELECT zona_horaria FROM empresas WHERE id = citas.empresa_id) > now()
+       RETURNING estado, cancelada_en, (SELECT zona_horaria FROM empresas WHERE id = citas.empresa_id) AS zona_horaria`,
       [p.id, p.usuarioId],
     )
   ).rows[0];

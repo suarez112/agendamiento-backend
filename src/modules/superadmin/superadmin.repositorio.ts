@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { ZONA_PLATAFORMA } from '../../config/plataforma.js';
 import type { Consultable } from '../../db/pool.js';
 
 export type FilaSuperadmin = {
@@ -186,8 +187,8 @@ export const listarActividad = async (db: Consultable, f: FiltrosActividad) =>
        FROM actividad_superadmin
        WHERE ($1::varchar IS NULL OR accion = $1)
          AND ($2::varchar IS NULL OR empresa_id = $2)
-         AND ($3::date IS NULL OR (creado_en AT TIME ZONE 'America/Bogota')::date >= $3)
-         AND ($4::date IS NULL OR (creado_en AT TIME ZONE 'America/Bogota')::date <= $4)
+         AND ($3::date IS NULL OR (creado_en AT TIME ZONE '${ZONA_PLATAFORMA}')::date >= $3)
+         AND ($4::date IS NULL OR (creado_en AT TIME ZONE '${ZONA_PLATAFORMA}')::date <= $4)
        ORDER BY creado_en DESC, id DESC
        LIMIT $5 OFFSET $6`,
       [f.accion ?? null, f.empresaId ?? null, f.desde ?? null, f.hasta ?? null, f.limite, f.desplazamiento],
@@ -201,14 +202,14 @@ export type EstadoNegocio = (typeof ESTADOS_NEGOCIO)[number];
 // Días restantes a partir de los cuales un negocio cuenta como "por vencer"
 export const DIAS_POR_VENCER = 7;
 
-// Cada negocio con su estado calculado hoy (hora de Colombia). Sigue la misma regla que buscarSuscripcion
+// Cada negocio con su estado calculado hoy (fecha en la zona de cada negocio). Sigue la misma regla que buscarSuscripcion
 // (empresas.repositorio.ts): suspendido; si no, prueba o activo mientras no pase la fecha de fin; si no, vencido.
 // Un negocio activo sin fecha de fin (anterior a los planes) no vence.
 const NEGOCIOS = `(
   SELECT e.id, e.nombre, e.codigo_acceso, e.ciudad, e.departamento, e.plan_equipo, e.plan_suscripcion AS periodo,
          e.estado_suscripcion, e.suspendida_en, e.suspension_motivo, e.categoria, e.direccion,
-         e.nombre_administradora, e.trial_ends_at, e.fecha_pago, e.dias_prueba_sumados,
-         (e.created_at::timestamptz AT TIME ZONE 'America/Bogota')::date AS registro,
+         e.nombre_administradora, e.trial_ends_at, e.fecha_pago, e.dias_prueba_sumados, e.zona_horaria,
+         (e.created_at AT TIME ZONE e.zona_horaria)::date AS registro,
          f.fin, f.hoy, f.fin - f.hoy AS dias,
          CASE WHEN e.suspendida_en IS NOT NULL THEN 'suspendido'
               WHEN e.estado_suscripcion IN ('trial', 'activa') AND (f.fin IS NULL OR f.fin > f.hoy)
@@ -218,10 +219,10 @@ const NEGOCIOS = `(
   FROM empresas e
   CROSS JOIN LATERAL (
     SELECT CASE e.estado_suscripcion
-             WHEN 'trial' THEN (e.trial_ends_at AT TIME ZONE 'America/Bogota')::date
+             WHEN 'trial' THEN (e.trial_ends_at AT TIME ZONE e.zona_horaria)::date
              WHEN 'activa' THEN e.suscripcion_fin
            END AS fin,
-           (now() AT TIME ZONE 'America/Bogota')::date AS hoy
+           (now() AT TIME ZONE e.zona_horaria)::date AS hoy
   ) f
 ) n`;
 
@@ -237,6 +238,7 @@ export type FilaNegocio = {
   dias: number | null;
   registro: string;
   equipo_activo: number;
+  zona_horaria: string;
 };
 
 export type FiltrosNegocios = { buscar?: string; estado?: EstadoNegocio; limite: number; desplazamiento: number };
@@ -245,7 +247,7 @@ export const listarNegocios = async (db: Consultable, f: FiltrosNegocios) =>
   (
     await db.query<FilaNegocio & { total: number }>(
       `SELECT id, nombre, codigo_acceso, ciudad, departamento, plan_equipo, periodo, estado, dias,
-              to_char(registro, 'YYYY-MM-DD') AS registro, equipo_activo, count(*) OVER ()::int AS total
+              to_char(registro, 'YYYY-MM-DD') AS registro, equipo_activo, zona_horaria, count(*) OVER ()::int AS total
        FROM ${NEGOCIOS}
        WHERE ($1::varchar IS NULL OR position(lower($1) in lower(nombre)) > 0 OR position(lower($1) in lower(codigo_acceso)) > 0)
          AND ($2::varchar IS NULL
@@ -276,8 +278,8 @@ export const resumenPlataforma = async (db: Consultable) =>
               count(*) FILTER (WHERE estado = 'suspendido')::int AS suspendidos,
               count(*) FILTER (WHERE to_char(registro, 'YYYY-MM') = to_char(hoy, 'YYYY-MM'))::int AS nuevos_mes,
               count(*) FILTER (WHERE estado IN ('prueba', 'activo') AND dias IS NOT NULL AND dias <= $1::int)::int AS por_vencer,
-              (SELECT count(*)::int FROM citas
-               WHERE fecha = (now() AT TIME ZONE 'America/Bogota')::date AND estado <> 'CANCELADA') AS citas_hoy
+              (SELECT count(*)::int FROM citas c JOIN empresas ce ON ce.id = c.empresa_id
+               WHERE c.fecha = (now() AT TIME ZONE ce.zona_horaria)::date AND c.estado <> 'CANCELADA') AS citas_hoy
        FROM ${NEGOCIOS}`,
       [DIAS_POR_VENCER],
     )
@@ -300,7 +302,7 @@ export const buscarNegocio = async (db: Consultable, id: string) =>
   (
     await db.query<FilaDetalleNegocio>(
       `SELECT id, nombre, codigo_acceso, ciudad, departamento, plan_equipo, periodo, estado, dias,
-              to_char(registro, 'YYYY-MM-DD') AS registro, equipo_activo, estado_suscripcion, categoria, direccion,
+              to_char(registro, 'YYYY-MM-DD') AS registro, equipo_activo, zona_horaria, estado_suscripcion, categoria, direccion,
               nombre_administradora, trial_ends_at, to_char(fecha_pago, 'YYYY-MM-DD') AS fecha_pago,
               to_char(fin, 'YYYY-MM-DD') AS fecha_fin, dias_prueba_sumados, suspendida_en, suspension_motivo
        FROM ${NEGOCIOS} WHERE n.id = $1`,
@@ -343,10 +345,10 @@ export const cifrasDeNegocio = async (db: Consultable, empresaId: string) =>
                 count(*) FILTER (WHERE estado = 'COMPLETADA')::int AS completadas,
                 count(*) FILTER (WHERE estado = 'CANCELADA')::int AS canceladas,
                 count(*) FILTER (WHERE estado <> 'CANCELADA'
-                                   AND to_char(fecha, 'YYYY-MM') = to_char(now() AT TIME ZONE 'America/Bogota', 'YYYY-MM'))::int AS mes,
+                                   AND to_char(fecha, 'YYYY-MM') = to_char(now() AT TIME ZONE (SELECT zona_horaria FROM empresas WHERE id = $1), 'YYYY-MM'))::int AS mes,
                 COALESCE(sum(precio) FILTER (WHERE estado = 'COMPLETADA'), 0)::text AS ventas,
                 COALESCE(sum(precio) FILTER (WHERE estado = 'COMPLETADA'
-                                               AND to_char(fecha, 'YYYY-MM') = to_char(now() AT TIME ZONE 'America/Bogota', 'YYYY-MM')), 0)::text AS ventas_mes,
+                                               AND to_char(fecha, 'YYYY-MM') = to_char(now() AT TIME ZONE (SELECT zona_horaria FROM empresas WHERE id = $1), 'YYYY-MM')), 0)::text AS ventas_mes,
                 to_char(max(fecha), 'YYYY-MM-DD') AS ultima
          FROM citas WHERE empresa_id = $1
        ) c`,
@@ -396,7 +398,8 @@ export const extenderPrueba = async (db: Consultable, id: string, dias: number) 
 
 // ---- Estadísticas para gráficos (solo cifras de la plataforma, nunca datos de clientes) ----
 
-const HOY = "(now() AT TIME ZONE 'America/Bogota')::date";
+// Fecha de hoy en la zona de la plataforma (gráficos de toda la plataforma, no de un negocio)
+const HOY = `(now() AT TIME ZONE '${ZONA_PLATAFORMA}')::date`;
 
 export const estadisticasPlataforma = async (db: Consultable) => {
   const [nuevosPorMes, porEstado, porPlan, citasPorDia, departamentos, conversion, porVencer, activosPorPlan] =
@@ -456,7 +459,7 @@ export const estadisticasPlataforma = async (db: Consultable) => {
 };
 
 // Ingresos estimados por mes de todo el historial de activaciones (activaciones_plan), más el
-// mes actual de Colombia. Solo los meses con activaciones; el servicio rellena los demás con ceros.
+// mes actual en la zona de la plataforma. Solo los meses con activaciones; el servicio rellena los demás con ceros.
 export const ingresosPorMes = async (db: Consultable) => {
   const [meses, actual] = await Promise.all([
     db.query<{ mes: string; total: string; activaciones: number }>(

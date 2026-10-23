@@ -10,7 +10,7 @@ import { crearPool, enTransaccion } from './pool.js';
 // Activa un plan a una empresa sin pagos reales (no hay pasarela de pagos todavía).
 // Sin plan (basico, equipo o pro) conserva el que tiene. Un plan cuyo cupo no alcanza
 // para el equipo activo se rechaza y no cambia nada.
-// La fecha de pago es hoy (hora de Colombia) y la empresa queda 'activa' de inmediato.
+// La fecha de pago es hoy (fecha en la zona horaria del negocio) y la empresa queda 'activa' de inmediato.
 // El plan dura 1 mes o 1 año contados desde:
 // - el fin de la prueba, si paga durante la prueba (no pierde los días gratis que le
 //   quedaban; se guardan en dias_prueba_sumados),

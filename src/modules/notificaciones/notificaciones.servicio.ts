@@ -1,3 +1,4 @@
+import { aIsoEnZona } from '../../shared/zonaHoraria.js';
 import type pg from 'pg';
 import { errores } from '../../shared/errores.js';
 import { registro } from '../../shared/registro.js';
@@ -20,8 +21,9 @@ const armarNotificacion = (n: repositorio.FilaNotificacion) => ({
   texto: n.texto,
   citaId: n.cita_id,
   leida: n.leida,
-  leidaEn: n.leida_en,
-  creadaEn: n.creada_en,
+  leidaEn: aIsoEnZona(n.leida_en, n.zona_horaria),
+  creadaEn: aIsoEnZona(n.creada_en, n.zona_horaria),
+  zonaHoraria: n.zona_horaria,
 });
 
 export const crearServicioNotificaciones = ({ pool, push }: { pool: pg.Pool; push: EnviadorPush }) => {

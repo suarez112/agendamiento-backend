@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { INTERVALOS_MINUTOS } from '../citas/disponibilidad.js';
 import { departamentoOficial, municipioOficial } from '../ubicaciones/ubicaciones.js';
+import { esZonaValida, zonaCanonica } from '../../shared/zonaHoraria.js';
 import { esquemaHorario } from './horario.js';
 
 // Perfil de la empresa: lo usan el registro y la edición del administrador.
@@ -75,27 +76,42 @@ const perfil = {
   ),
 };
 
-type ConUbicacion = { departamento?: string; ciudad?: string };
+type ConUbicacion = { departamento?: string; ciudad?: string; pais?: string };
 
-// El departamento debe ser de Colombia y la ciudad un municipio de ese departamento
-// (lista DIVIPOLA del DANE). Se guardan con el nombre oficial.
+// Zona horaria IANA del negocio (ej. America/Bogota); se guarda con su nombre oficial
+export const MENSAJE_ZONA = 'La zona horaria no es válida. Usa un nombre como America/Bogota';
+
+export const esquemaZonaHoraria = z
+  .string({ error: MENSAJE_ZONA })
+  .trim()
+  .refine(esZonaValida, MENSAJE_ZONA)
+  .transform(zonaCanonica);
+
+// Con el país en Colombia, el departamento debe ser de Colombia y la ciudad un municipio de ese
+// departamento (lista DIVIPOLA del DANE) y se guardan con el nombre oficial. Con otro país
+// se guardan tal cual. Si no llega el país (edición), solo se exige enviar los dos juntos:
+// el servicio la valida con el país del negocio (ver ubicacionOficial).
+export const ubicacionOficial = (d: { departamento: string; ciudad: string }): string | { departamento: string; ciudad: string } => {
+  if (!departamentoOficial(d.departamento)) return 'El departamento no es un departamento de Colombia';
+  if (!municipioOficial(d.departamento, d.ciudad)) return 'La ciudad no es un municipio de ese departamento';
+  return { departamento: departamentoOficial(d.departamento)!, ciudad: municipioOficial(d.departamento, d.ciudad)! };
+};
+
 export const conUbicacionValida = <T extends z.ZodType<ConUbicacion>>(esquema: T) =>
   esquema
     .superRefine((d, ctx) => {
       if (d.departamento === undefined && d.ciudad === undefined) return;
       if (d.departamento === undefined || d.ciudad === undefined) {
         ctx.addIssue({ code: 'custom', message: 'Envía el departamento y la ciudad juntos' });
-      } else if (!departamentoOficial(d.departamento)) {
-        ctx.addIssue({ code: 'custom', message: 'El departamento no es un departamento de Colombia' });
-      } else if (!municipioOficial(d.departamento, d.ciudad)) {
-        ctx.addIssue({ code: 'custom', message: 'La ciudad no es un municipio de ese departamento' });
+      } else if (d.pais === 'CO') {
+        const r = ubicacionOficial({ departamento: d.departamento, ciudad: d.ciudad });
+        if (typeof r === 'string') ctx.addIssue({ code: 'custom', message: r });
       }
     })
-    .transform((d) =>
-      d.departamento === undefined || d.ciudad === undefined
-        ? d
-        : { ...d, departamento: departamentoOficial(d.departamento)!, ciudad: municipioOficial(d.departamento, d.ciudad)! },
-    );
+    .transform((d) => {
+      if (d.pais !== 'CO' || d.departamento === undefined || d.ciudad === undefined) return d;
+      return { ...d, ...(ubicacionOficial({ departamento: d.departamento, ciudad: d.ciudad }) as object) };
+    });
 
 export const esquemaPerfilEmpresa = z.object(perfil, { error: 'Envía los datos de la empresa' });
 
@@ -136,6 +152,7 @@ export const esquemaActualizarEmpresa = conUbicacionValida(
       latitud: coordenada('latitud', 90),
       longitud: coordenada('longitud', 180),
       precisionUbicacion,
+      zonaHoraria: esquemaZonaHoraria,
     })
     .partial()
     .refine((d) => Object.values(d).some((v) => v !== undefined), {

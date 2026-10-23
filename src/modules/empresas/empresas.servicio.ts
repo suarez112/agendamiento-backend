@@ -1,7 +1,8 @@
 import type pg from 'pg';
 import { CODIGO_PG, enTransaccion, esErrorPg } from '../../db/pool.js';
 import { errores } from '../../shared/errores.js';
-import type { CambiosEmpresa } from './empresas.esquemas.js';
+import { aIsoEnZona } from '../../shared/zonaHoraria.js';
+import { type CambiosEmpresa, ubicacionOficial } from './empresas.esquemas.js';
 import * as repositorio from './empresas.repositorio.js';
 import { enlacePublico } from './enlace.js';
 import { armarHorario, guardarHorario, listarHorarios } from './horario.js';
@@ -57,6 +58,7 @@ export const crearServicioEmpresas = ({
         horario: dias,
         // false si la suscripción venció: la app puede avisar antes de reservar
         recibiendoReservas: Boolean(suscripcion?.habilitada),
+        zonaHoraria: empresa.zona_horaria,
       },
       barberos: barberos.map((b) => ({
         id: b.id,
@@ -131,6 +133,24 @@ export const crearServicioEmpresas = ({
     // fila de la empresa, así que un integrante nuevo creado a la vez espera.
     async actualizarPerfil(empresaId: string, { horario, ...cambios }: CambiosEmpresa, urlBase: string) {
       const perfil = await enTransaccion(pool, async (tx) => {
+        const actual = await repositorio.buscarPerfilEmpresa(tx, empresaId);
+        if (!actual) return undefined;
+        // En Colombia el departamento y la ciudad deben ser los oficiales (DIVIPOLA)
+        if (actual.pais === 'CO' && cambios.departamento !== undefined && cambios.ciudad !== undefined) {
+          const ubicacion = ubicacionOficial({ departamento: cambios.departamento, ciudad: cambios.ciudad });
+          if (typeof ubicacion === 'string') throw errores.solicitudInvalida(ubicacion);
+          Object.assign(cambios, ubicacion);
+        }
+        // Las citas guardan la fecha y la hora locales del negocio: con la zona cambiada
+        // quedarían en otro instante. Hay que dejar sin citas pendientes antes de cambiarla.
+        if (cambios.zonaHoraria !== undefined && cambios.zonaHoraria !== actual.zona_horaria) {
+          const pendientes = await repositorio.contarCitasPendientes(tx, empresaId);
+          if (pendientes > 0) {
+            throw errores.conflicto(
+              `Tienes ${pendientes} cita(s) pendiente(s). Cancélalas o espera a que pasen antes de cambiar la zona horaria: sus horas se guardan en la hora de ${actual.zona_horaria}.`,
+            );
+          }
+        }
         const actualizado = await repositorio.actualizarPerfilEmpresa(tx, empresaId, cambios);
         if (actualizado && cambios.numeroEmpleados !== undefined && actualizado.estado_suscripcion === 'trial') {
           const plan = planParaPersonas(cambios.numeroEmpleados);
@@ -189,13 +209,14 @@ export const crearServicioEmpresas = ({
       const enPrueba = suscripcion.estado_suscripcion === 'trial';
       return {
         estadoSuscripcion: suscripcion.estado_suscripcion,
-        trialEndsAt: suscripcion.trial_ends_at,
+        trialEndsAt: aIsoEnZona(suscripcion.trial_ends_at, suscripcion.zona_horaria),
+        zonaHoraria: suscripcion.zona_horaria,
         diasRestantes: enPrueba ? Math.max(0, suscripcion.dias_restantes ?? 0) : null,
         pruebaVencida: enPrueba && !suscripcion.habilitada,
       };
     },
 
-    // Estado, plan, fechas y días que quedan (con la fecha actual de Colombia), y si
+    // Estado, plan, fechas y días que quedan (con la fecha actual en la zona del negocio), y si
     // la app debe mostrar un recordatorio: siempre en la prueba y en los últimos
     // días de un plan mensual o anual
     async suscripcion(empresaId: string) {
@@ -223,8 +244,9 @@ export const crearServicioEmpresas = ({
         planEquipo: { id: plan.id, nombre: plan.nombre, cupo: plan.cupo },
         cupoUsado: s.equipo_activo,
         cupoDisponible: Math.max(0, plan.cupo - s.equipo_activo),
-        // Día del registro (hora de Colombia): la cartera no acepta rangos que empiecen antes
+        // Día del registro (zona del negocio): la cartera no acepta rangos que empiecen antes
         fechaRegistro: s.fecha_registro,
+        zonaHoraria: s.zona_horaria,
       };
     },
   };
@@ -270,6 +292,8 @@ const armarPerfilPublico = ({ perfil: p, horario: h }: PerfilConHorario, urlBase
   colorSecundario: p.color_secundario,
   googleMapsUrl: enlaceGoogleMaps(p),
   intervaloMinutos: p.intervalo_minutos,
+  pais: p.pais,
+  zonaHoraria: p.zona_horaria,
 });
 
 const armarPerfil = ({ perfil: p, horario: h }: PerfilConHorario, urlBase: string, enlaceBase: string) => ({
@@ -297,8 +321,10 @@ const armarPerfil = ({ perfil: p, horario: h }: PerfilConHorario, urlBase: strin
   googleMapsUrl: enlaceGoogleMaps(p),
   intervaloMinutos: p.intervalo_minutos,
   estadoSuscripcion: p.estado_suscripcion,
-  trialEndsAt: p.trial_ends_at,
-  creadaEn: p.created_at,
+  pais: p.pais,
+  zonaHoraria: p.zona_horaria,
+  trialEndsAt: aIsoEnZona(p.trial_ends_at, p.zona_horaria),
+  creadaEn: aIsoEnZona(p.created_at, p.zona_horaria),
 });
 
 // Lo que la validación no puede saber sin mirar la base: el código de otro negocio

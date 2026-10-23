@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { CODIGO_PG, enTransaccion, esErrorPg } from '../../db/pool.js';
 import { errores } from '../../shared/errores.js';
+import { aIsoEnZona } from '../../shared/zonaHoraria.js';
 import { cifrarContrasena, verificarContrasena } from '../auth/contrasenas.js';
 import type { ServicioTokens } from '../auth/tokens.js';
 import type { PerfilEmpresa } from '../empresas/empresas.esquemas.js';
@@ -24,7 +25,13 @@ type Dependencias = {
   enlaceBase: string;
 };
 type Credenciales = { correo: string; clave: string };
-export type DatosRegistroEmpresa = PerfilEmpresa & { correo: string; usuario: string; clave: string };
+export type DatosRegistroEmpresa = PerfilEmpresa & {
+  correo: string;
+  usuario: string;
+  clave: string;
+  pais: string;
+  zonaHoraria: string;
+};
 export type DatosRegistroCliente = {
   nombre: string;
   telefono: string;
@@ -118,7 +125,9 @@ export const crearServicioCuentas = ({ pool, tokens, categorias, enlaceBase }: D
           codigoAcceso: empresa.codigo_acceso,
           enlacePublico: enlacePublico(enlaceBase, empresa.codigo_acceso),
           estadoSuscripcion: empresa.estado_suscripcion,
-          trialEndsAt: empresa.trial_ends_at,
+          trialEndsAt: aIsoEnZona(empresa.trial_ends_at, datosPerfil.zonaHoraria),
+          pais: datosPerfil.pais,
+          zonaHoraria: datosPerfil.zonaHoraria,
           diasPruebaRestantes: DIAS_PRUEBA,
         },
       };

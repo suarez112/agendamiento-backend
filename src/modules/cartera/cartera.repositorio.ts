@@ -39,9 +39,9 @@ export const resumenPorProfesional = async (
 
 export type Periodo = 'hoy' | 'semana' | 'mes';
 
-// Fechas (AAAA-MM-DD) de un período con la fecha actual de Colombia: hoy; la semana
+// Fechas (AAAA-MM-DD) de un período con la fecha actual en la zona del negocio: hoy; la semana
 // de lunes a domingo; el mes del día 1 al último día.
-export const fechasDePeriodo = async (db: Consultable, periodo: Periodo) =>
+export const fechasDePeriodo = async (db: Consultable, empresaId: string, periodo: Periodo) =>
   (
     await db.query<{ desde: string; hasta: string }>(
       `SELECT to_char(desde, 'YYYY-MM-DD') AS desde, to_char(hasta, 'YYYY-MM-DD') AS hasta
@@ -56,19 +56,20 @@ export const fechasDePeriodo = async (db: Consultable, periodo: Periodo) =>
                   WHEN 'semana' THEN date_trunc('week', hoy)::date + 6
                   ELSE (date_trunc('month', hoy) + interval '1 month - 1 day')::date
                 END AS hasta
-         FROM (SELECT (now() AT TIME ZONE 'America/Bogota')::date AS hoy) h
+         FROM (SELECT (now() AT TIME ZONE zona_horaria)::date AS hoy FROM empresas WHERE id = $2) h
        ) p`,
-      [periodo],
+      [periodo, empresaId],
     )
   ).rows[0];
 
-// Día del registro de la empresa y hoy, los dos con la fecha de Colombia (AAAA-MM-DD).
+// Día del registro de la empresa y hoy, los dos con la fecha en la zona del negocio (AAAA-MM-DD).
 // fecha_registro es null en empresas sin fecha de creación.
 export const limitesDeRango = async (db: Consultable, empresaId: string) =>
   (
-    await db.query<{ fecha_registro: string | null; hoy: string }>(
-      `SELECT to_char((created_at::timestamptz AT TIME ZONE 'America/Bogota')::date, 'YYYY-MM-DD') AS fecha_registro,
-              to_char((now() AT TIME ZONE 'America/Bogota')::date, 'YYYY-MM-DD') AS hoy
+    await db.query<{ fecha_registro: string | null; hoy: string; zona_horaria: string }>(
+      `SELECT to_char((created_at AT TIME ZONE zona_horaria)::date, 'YYYY-MM-DD') AS fecha_registro,
+              to_char((now() AT TIME ZONE zona_horaria)::date, 'YYYY-MM-DD') AS hoy,
+              zona_horaria
        FROM empresas WHERE id = $1`,
       [empresaId],
     )

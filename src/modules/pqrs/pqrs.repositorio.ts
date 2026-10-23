@@ -1,3 +1,4 @@
+import { ZONA_PLATAFORMA } from '../../config/plataforma.js';
 import type { Consultable } from '../../db/pool.js';
 
 export const TIPOS_PQRS = ['peticion', 'queja', 'reclamo', 'sugerencia'] as const;
@@ -29,7 +30,7 @@ export const insertarPqrs = async (db: Consultable, d: DatosPqrs) =>
     await db.query<FilaPqrs>(
       `WITH n AS (SELECT nextval('pqrs_numero_seq') AS numero)
        INSERT INTO pqrs (radicado, tipo, mensaje, nombre, contacto, usuario_id)
-       SELECT 'PQRS-' || to_char(now() AT TIME ZONE 'America/Bogota', 'YYYY') || '-' || lpad(n.numero::text, 6, '0'),
+       SELECT 'PQRS-' || to_char(now() AT TIME ZONE '${ZONA_PLATAFORMA}', 'YYYY') || '-' || lpad(n.numero::text, 6, '0'),
               $1, $2, $3, $4, $5
        FROM n
        RETURNING ${COLUMNAS}`,

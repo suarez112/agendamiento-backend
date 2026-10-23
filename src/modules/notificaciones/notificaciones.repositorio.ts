@@ -1,3 +1,4 @@
+import { ZONA_PLATAFORMA } from '../../config/plataforma.js';
 import type { Consultable } from '../../db/pool.js';
 
 // Dueño de un dispositivo: un integrante del equipo o una cuenta (nunca los dos)
@@ -72,11 +73,15 @@ export type FilaNotificacion = {
   texto: string;
   cita_id: string | null;
   leida: boolean;
-  leida_en: string | null;
-  creada_en: string;
+  leida_en: Date | null;
+  creada_en: Date;
+  // Zona del negocio de la cita; la de la plataforma si la notificación no tiene cita
+  zona_horaria: string;
 };
 
-const COLUMNAS_NOTIFICACION = 'id, tipo, titulo, texto, cita_id, leida_en IS NOT NULL AS leida, leida_en, creada_en';
+const COLUMNAS_NOTIFICACION = `id, tipo, titulo, texto, cita_id, leida_en IS NOT NULL AS leida, leida_en, creada_en,
+  COALESCE((SELECT e.zona_horaria FROM citas ci JOIN empresas e ON e.id = ci.empresa_id WHERE ci.id = notificaciones.cita_id),
+           '${ZONA_PLATAFORMA}') AS zona_horaria`;
 const DE_TITULAR = 'usuario_id IS NOT DISTINCT FROM $1::varchar AND barbero_id IS NOT DISTINCT FROM $2::varchar';
 
 export const listarNotificaciones = async (
@@ -160,12 +165,12 @@ export const reclamarRecordatorios = async (db: Consultable) =>
       `WITH marcadas AS (
          UPDATE citas SET recordatorio_enviado_en = now()
          WHERE id IN (
-           SELECT c.id FROM citas c
+           SELECT c.id FROM citas c JOIN empresas ce ON ce.id = c.empresa_id
            WHERE c.estado = 'CONFIRMADA' AND c.usuario_id IS NOT NULL AND c.recordatorio_enviado_en IS NULL
-             AND c.fecha BETWEEN (now() AT TIME ZONE 'America/Bogota')::date
-                             AND (now() AT TIME ZONE 'America/Bogota')::date + 1
-             AND (c.fecha + c.hora_inicio) AT TIME ZONE 'America/Bogota' > now() + interval '23 hours'
-             AND (c.fecha + c.hora_inicio) AT TIME ZONE 'America/Bogota' <= now() + interval '24 hours'
+             AND c.fecha BETWEEN (now() AT TIME ZONE ce.zona_horaria)::date
+                             AND (now() AT TIME ZONE ce.zona_horaria)::date + 1
+             AND (c.fecha + c.hora_inicio) AT TIME ZONE ce.zona_horaria > now() + interval '23 hours'
+             AND (c.fecha + c.hora_inicio) AT TIME ZONE ce.zona_horaria <= now() + interval '24 hours'
            FOR UPDATE OF c SKIP LOCKED
          )
          RETURNING id, empresa_id, barbero_id, usuario_id, cliente_id, servicio_id, fecha, hora_inicio

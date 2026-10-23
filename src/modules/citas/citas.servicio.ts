@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import { CODIGO_PG, enTransaccion, esErrorPg } from '../../db/pool.js';
 import { errores } from '../../shared/errores.js';
+import { aIsoEnZona } from '../../shared/zonaHoraria.js';
 import { esE164 } from '../../shared/telefonos.js';
 import type { Sesion } from '../auth/auth.servicio.js';
 import type { FilaUsuario } from '../cuentas/cuentas.repositorio.js';
@@ -20,7 +21,7 @@ const HORA_OCUPADA = 'Esa hora ya está ocupada. Por favor elige otra.';
 const HORA_BLOQUEADA = 'El profesional no atiende en ese horario. Por favor elige otra hora.';
 const FALTAN_DATOS = 'Faltan datos para agendar la cita';
 
-// Solo desde hoy hasta 14 días después, en hora de Colombia ("AAAA-MM-DD" se compara bien como texto)
+// Solo desde hoy hasta 14 días después, en la zona horaria del negocio ("AAAA-MM-DD" se compara bien como texto)
 const validarFecha = (fecha: string, { hoy, ultimo_dia }: { hoy: string; ultimo_dia: string }) => {
   if (fecha < hoy) throw errores.solicitudInvalida('No se pueden agendar citas en fechas pasadas');
   if (fecha > ultimo_dia) {
@@ -56,7 +57,7 @@ export const crearServicioCitas = ({ pool, notificaciones }: { pool: pg.Pool; no
     const reserva = await repositorio.buscarDatosReserva(pool, { empresaId, barberoId, servicioId, fecha });
     if (!reserva) throw errores.noEncontrado('Servicio o profesional no encontrado');
 
-    // 2. Solo desde hoy hasta 14 días después, en hora de Colombia
+    // 2. Solo desde hoy hasta 14 días después, en la zona horaria del negocio
     validarFecha(fecha, reserva);
 
     // 3. El negocio debe atender ese día, y la cita caber dentro de su horario de ese día
@@ -151,6 +152,7 @@ export const crearServicioCitas = ({ pool, notificaciones }: { pool: pg.Pool; no
         precio: Number(reserva.precio),
         duracionMin: reserva.duracion_min,
         estado: 'CONFIRMADA',
+        zonaHoraria: reserva.zona_horaria,
       },
     };
   },
@@ -184,6 +186,7 @@ export const crearServicioCitas = ({ pool, notificaciones }: { pool: pg.Pool; no
       barberoId: p.barberoId,
       servicioId: p.servicioId,
       fecha: p.fecha,
+      zonaHoraria: datos.zona_horaria,
       duracionMin: datos.duracion_min,
       intervaloMinutos: datos.intervalo_minutos,
       horas: horas.map((h) => ({ inicio: minutosAHHMM(h.inicio), hora: minutosAHora12(h.inicio), pegada: h.pegada })),
@@ -232,9 +235,10 @@ export const crearServicioCitas = ({ pool, notificaciones }: { pool: pg.Pool; no
       precio: Number(r.precio),
       duracionMin: r.duracion_min,
       estado: r.estado,
-      completadaEn: r.completada_en ?? undefined,
+      zonaHoraria: r.zona_horaria,
+      completadaEn: aIsoEnZona(r.completada_en, r.zona_horaria) ?? undefined,
       completadaPor: r.completada_por ?? undefined,
-      canceladaEn: r.cancelada_en ?? undefined,
+      canceladaEn: aIsoEnZona(r.cancelada_en, r.zona_horaria) ?? undefined,
       canceladaPor: r.cancelada_por ?? undefined,
     }));
   },
@@ -246,7 +250,12 @@ export const crearServicioCitas = ({ pool, notificaciones }: { pool: pg.Pool; no
         'No se pudo completar: la cita no existe, ya fue atendida o cancelada, o no es tuya.',
       );
     }
-    return { estado: r.estado, completadaEn: r.completada_en, completadaPor: r.completada_por };
+    return {
+      estado: r.estado,
+      completadaEn: aIsoEnZona(r.completada_en, r.zona_horaria),
+      completadaPor: r.completada_por,
+      zonaHoraria: r.zona_horaria,
+    };
   },
 
   async cancelar({ empresaId, barberoId, usuarioId }: Sesion, id: string) {
@@ -256,7 +265,12 @@ export const crearServicioCitas = ({ pool, notificaciones }: { pool: pg.Pool; no
     }
     // Si la cita era de un cliente con cuenta, se le avisa que el negocio la canceló
     void notificaciones?.avisarCancelacionPorNegocio(id);
-    return { estado: r.estado, canceladaEn: r.cancelada_en, canceladaPor: r.cancelada_por };
+    return {
+      estado: r.estado,
+      canceladaEn: aIsoEnZona(r.cancelada_en, r.zona_horaria),
+      canceladaPor: r.cancelada_por,
+      zonaHoraria: r.zona_horaria,
+    };
   },
 });
 

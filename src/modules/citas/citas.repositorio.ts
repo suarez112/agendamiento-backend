@@ -22,10 +22,11 @@ export type DatosReserva = {
   // null si el negocio no atiende ese día de la semana
   horario_apertura: string | null;
   horario_cierre: string | null;
-  // Hoy y el último día que se puede reservar, en hora de Colombia (AAAA-MM-DD)
+  // Hoy y el último día que se puede reservar, en la zona horaria del negocio (AAAA-MM-DD)
   hoy: string;
   ultimo_dia: string;
-  // Intervalo de horarios del negocio, servicio activo más corto y hora actual de Colombia
+  zona_horaria: string;
+  // Intervalo de horarios del negocio, servicio activo más corto y hora actual en la zona del negocio
   intervalo_minutos: number;
   servicio_mas_corto: number;
   minutos_ahora: number;
@@ -48,14 +49,14 @@ export const buscarDatosReserva = async (
               to_char(h.hora_cierre, 'HH24:MI') AS horario_cierre,
               to_char(hoy.fecha, 'YYYY-MM-DD') AS hoy,
               to_char(hoy.fecha + $5::int, 'YYYY-MM-DD') AS ultimo_dia,
-              e.intervalo_minutos,
+              e.intervalo_minutos, e.zona_horaria,
               (SELECT min(duracion_min) FROM servicios WHERE empresa_id = e.id AND activo)::int AS servicio_mas_corto,
               (EXTRACT(HOUR FROM hoy.ahora) * 60 + EXTRACT(MINUTE FROM hoy.ahora))::int AS minutos_ahora
        FROM empresas e
        JOIN servicios s ON s.empresa_id = e.id AND s.id = $2 AND s.activo
        JOIN barberos b ON b.empresa_id = e.id AND b.id = $3 AND b.activo AND b.atiende_clientes
-       CROSS JOIN (
-         SELECT (now() AT TIME ZONE 'America/Bogota')::date AS fecha, (now() AT TIME ZONE 'America/Bogota')::time AS ahora
+       CROSS JOIN LATERAL (
+         SELECT (now() AT TIME ZONE e.zona_horaria)::date AS fecha, (now() AT TIME ZONE e.zona_horaria)::time AS ahora
        ) hoy
        LEFT JOIN horarios_empresa h ON h.empresa_id = e.id AND h.dia_semana = EXTRACT(DOW FROM $4::date)
        WHERE e.id = $1`,
@@ -178,7 +179,7 @@ export const chocaConBloqueo = async (
   ).rowCount! > 0;
 
 // Bloqueos del equipo activo, para que la app no ofrezca esas horas: semanales y
-// de una fecha (de hoy en adelante, hora de Colombia). Sin el motivo.
+// de una fecha (de hoy en adelante, en la zona del negocio). Sin el motivo.
 export const listarBloqueosPublicos = async (db: Consultable, empresaId: string) =>
   (
     await db.query<{
@@ -193,20 +194,19 @@ export const listarBloqueosPublicos = async (db: Consultable, empresaId: string)
               to_char(bl.hora_inicio, 'HH24:MI') AS hora_inicio, to_char(bl.hora_fin, 'HH24:MI') AS hora_fin
        FROM bloqueos bl
        JOIN barberos b ON b.id = bl.barbero_id AND b.empresa_id = $1 AND b.activo
-       WHERE bl.es_repetitivo OR bl.fecha_especifica >= (now() AT TIME ZONE 'America/Bogota')::date
+       WHERE bl.es_repetitivo OR bl.fecha_especifica >= (now() AT TIME ZONE (SELECT zona_horaria FROM empresas WHERE id = $1))::date
        ORDER BY bl.barbero_id, bl.dia_semana, bl.fecha_especifica, bl.hora_inicio`,
       [empresaId],
     )
   ).rows;
 
-// "fecha >= CURRENT_DATE - 1" trae desde ayer, para no perder las citas de hoy
-// si el reloj del servidor y el de tu país no coinciden
+// Trae desde ayer (en la zona del negocio), para no perder las citas de hoy
 export const listarOcupadas = async (db: Consultable, empresaId: string) =>
   (
     await db.query<{ barbero_id: string; estado: string; fecha: string; hora: string; duracion_min: number }>(
       `SELECT c.barbero_id, c.estado, ${FECHA} AS fecha, ${HORA} AS hora, ${DURACION} AS duracion_min
        FROM citas c
-       WHERE c.empresa_id = $1 AND c.estado <> 'CANCELADA' AND c.fecha >= CURRENT_DATE - 1`,
+       WHERE c.empresa_id = $1 AND c.estado <> 'CANCELADA' AND c.fecha >= (now() AT TIME ZONE (SELECT zona_horaria FROM empresas WHERE id = $1))::date - 1`,
       [empresaId],
     )
   ).rows;
@@ -224,6 +224,7 @@ export type FilaAgenda = {
   completada_en: Date | null;
   cancelada_por: string | null;
   cancelada_en: Date | null;
+  zona_horaria: string;
   cliente: string;
   telefono: string;
   servicio: string;
@@ -237,7 +238,7 @@ export const listarAgenda = async (db: Consultable, empresaId: string, barberoId
       `SELECT c.id, c.empresa_id, c.barbero_id, c.estado, c.precio,
               ${FECHA} AS fecha, ${HORA} AS hora, ${DURACION} AS duracion_min,
               ${QUIEN('bc', 'uc', 'e')} AS completada_por, c.completada_en,
-              ${QUIEN('bx', 'ux', 'e')} AS cancelada_por, c.cancelada_en,
+              ${QUIEN('bx', 'ux', 'e')} AS cancelada_por, c.cancelada_en, e.zona_horaria,
               cl.nombre AS cliente, cl.telefono,
               s.nombre AS servicio, b.nombre AS barbero_nombre
        FROM citas c
@@ -259,7 +260,7 @@ export const listarAgenda = async (db: Consultable, empresaId: string, barberoId
 // cualquier cita del negocio. En ambos casos solo si sigue confirmada.
 export const completarCita = async (db: Consultable, p: { id: string; empresaId: string } & Autor) =>
   (
-    await db.query<{ estado: string; completada_en: Date; completada_por: string }>(
+    await db.query<{ estado: string; completada_en: Date; completada_por: string; zona_horaria: string }>(
       `WITH actualizada AS (
          UPDATE citas
          SET estado = 'COMPLETADA', completada_en = NOW(), completada_por = $3, completada_por_usuario = $4,
@@ -269,7 +270,7 @@ export const completarCita = async (db: Consultable, p: { id: string; empresaId:
            AND ($3::varchar IS NULL OR barbero_id = $3)
          RETURNING estado, completada_en, completada_por, completada_por_usuario, empresa_id
        )
-       SELECT a.estado, a.completada_en, ${QUIEN('b', 'u', 'e')} AS completada_por
+       SELECT a.estado, a.completada_en, e.zona_horaria, ${QUIEN('b', 'u', 'e')} AS completada_por
        FROM actualizada a
        JOIN empresas e ON e.id = a.empresa_id
        LEFT JOIN barberos b ON b.id = a.completada_por
@@ -281,14 +282,14 @@ export const completarCita = async (db: Consultable, p: { id: string; empresaId:
 // Cualquier cita confirmada del negocio (el permiso de admin lo valida la ruta)
 export const cancelarCita = async (db: Consultable, p: { id: string; empresaId: string } & Autor) =>
   (
-    await db.query<{ estado: string; cancelada_en: Date; cancelada_por: string }>(
+    await db.query<{ estado: string; cancelada_en: Date; cancelada_por: string; zona_horaria: string }>(
       `WITH actualizada AS (
          UPDATE citas
          SET estado = 'CANCELADA', cancelada_en = NOW(), cancelada_por = $3, cancelada_por_usuario = $4
          WHERE id = $1 AND empresa_id = $2 AND estado = 'CONFIRMADA'
          RETURNING estado, cancelada_en, cancelada_por, cancelada_por_usuario, empresa_id
        )
-       SELECT a.estado, a.cancelada_en, ${QUIEN('b', 'u', 'e')} AS cancelada_por
+       SELECT a.estado, a.cancelada_en, e.zona_horaria, ${QUIEN('b', 'u', 'e')} AS cancelada_por
        FROM actualizada a
        JOIN empresas e ON e.id = a.empresa_id
        LEFT JOIN barberos b ON b.id = a.cancelada_por

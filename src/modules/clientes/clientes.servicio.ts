@@ -1,5 +1,7 @@
 import type pg from 'pg';
 import { errores } from '../../shared/errores.js';
+import { aIsoEnZona } from '../../shared/zonaHoraria.js';
+import { buscarZonaHoraria } from '../empresas/empresas.repositorio.js';
 import * as repositorio from './clientes.repositorio.js';
 import type { FilaCliente, FilaListaNegra } from './clientes.repositorio.js';
 
@@ -20,11 +22,12 @@ const armarCliente = (c: FilaCliente) => ({
   listaNegraId: c.lista_negra_id,
 });
 
-const armarEntrada = (e: FilaListaNegra) => ({
+const armarEntrada = (e: FilaListaNegra, zona: string) => ({
   id: e.id,
   nombre: e.nombre,
   telefono: e.telefono,
-  agregadoEn: e.agregado_en,
+  agregadoEn: aIsoEnZona(e.agregado_en, zona),
+  zonaHoraria: zona,
 });
 
 export const crearServicioClientes = ({ pool }: { pool: pg.Pool }) => ({
@@ -53,7 +56,8 @@ export const crearServicioClientes = ({ pool }: { pool: pg.Pool }) => ({
   },
 
   async listaNegra(empresaId: string) {
-    return (await repositorio.listarListaNegra(pool, empresaId)).map(armarEntrada);
+    const zona = (await buscarZonaHoraria(pool, empresaId))!;
+    return (await repositorio.listarListaNegra(pool, empresaId)).map((e) => armarEntrada(e, zona));
   },
 
   async agregarAListaNegra(empresaId: string, clienteId: string) {
@@ -65,7 +69,10 @@ export const crearServicioClientes = ({ pool }: { pool: pg.Pool }) => ({
       telefono: cliente.telefono,
     });
     if (!entrada) throw errores.conflicto('Este cliente ya está en la lista negra');
-    return { mensaje: 'Cliente agregado a la lista negra', ...armarEntrada(entrada) };
+    return {
+      mensaje: 'Cliente agregado a la lista negra',
+      ...armarEntrada(entrada, (await buscarZonaHoraria(pool, empresaId))!),
+    };
   },
 
   async quitarDeListaNegra(empresaId: string, id: string) {

@@ -1,7 +1,9 @@
 import type pg from 'pg';
 import { buscarPlan, PLANES } from '../../config/planes.js';
 import { enTransaccion } from '../../db/pool.js';
+import { ZONA_PLATAFORMA } from '../../config/plataforma.js';
 import { errores } from '../../shared/errores.js';
+import { aIsoEnZona } from '../../shared/zonaHoraria.js';
 import { verificarContrasena } from '../auth/contrasenas.js';
 import type { ServicioTokens } from '../auth/tokens.js';
 import { activarPlanEmpresa, type Periodo } from '../empresas/activacion.js';
@@ -46,6 +48,7 @@ const armarNegocio = (n: FilaNegocio) => {
     municipio: n.ciudad,
     departamento: n.departamento,
     fechaRegistro: n.registro,
+    zonaHoraria: n.zona_horaria,
   };
 };
 
@@ -58,9 +61,10 @@ const armarPqrs = (p: FilaPqrsSoporte) => ({
   contacto: p.contacto,
   conCuenta: p.con_cuenta,
   respuesta: p.respuesta,
-  respondidaEn: p.respondida_en,
-  creadaEn: p.creado_en,
-  actualizadaEn: p.actualizado_en,
+  respondidaEn: aIsoEnZona(p.respondida_en, ZONA_PLATAFORMA),
+  creadaEn: aIsoEnZona(p.creado_en, ZONA_PLATAFORMA),
+  actualizadaEn: aIsoEnZona(p.actualizado_en, ZONA_PLATAFORMA),
+  zonaHoraria: ZONA_PLATAFORMA,
 });
 
 const armarActividad = (a: FilaActividad) => ({
@@ -71,7 +75,8 @@ const armarActividad = (a: FilaActividad) => ({
   referencia: a.referencia,
   detalle: a.detalle,
   motivo: a.motivo,
-  fecha: a.creado_en,
+  fecha: aIsoEnZona(a.creado_en, ZONA_PLATAFORMA),
+  zonaHoraria: ZONA_PLATAFORMA,
 });
 
 export const crearServicioSuperadmin = ({ pool, tokens, secreto }: Dependencias) => {
@@ -283,7 +288,7 @@ export const crearServicioSuperadmin = ({ pool, tokens, secreto }: Dependencias)
         direccion: n.direccion,
         administradora: { nombre: n.nombre_administradora, correo },
         suscripcion: detalleSuscripcion(n),
-        suspension: n.suspendida_en ? { desde: n.suspendida_en, motivo: n.suspension_motivo } : null,
+        suspension: n.suspendida_en ? { desde: aIsoEnZona(n.suspendida_en, n.zona_horaria), motivo: n.suspension_motivo } : null,
         equipo: {
           activos: n.equipo_activo,
           cupo: base.planEquipo.cupo,
@@ -435,7 +440,7 @@ const detalleSuscripcion = (n: FilaDetalleNegocio) => ({
   estadoGuardado: n.estado_suscripcion,
   fechaPago: n.fecha_pago,
   fechaFin: n.fecha_fin,
-  finDePrueba: n.estado_suscripcion === 'trial' ? n.trial_ends_at : null,
+  finDePrueba: n.estado_suscripcion === 'trial' ? aIsoEnZona(n.trial_ends_at, n.zona_horaria) : null,
   diasPruebaSumados: n.dias_prueba_sumados,
 });
 

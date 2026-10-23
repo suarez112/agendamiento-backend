@@ -12,8 +12,12 @@ export type FilaBloqueo = {
   motivo: string | null;
 };
 
-// Hoy en Colombia: los bloqueos de días que ya pasaron no se muestran
-export const HOY_COLOMBIA = `(now() AT TIME ZONE 'America/Bogota')::date`;
+// Hoy en la zona horaria del negocio: los bloqueos de días que ya pasaron no se muestran.
+// Cada una recibe el SQL que da el id de la empresa (o del profesional) en la consulta.
+const HOY_DE_EMPRESA = (empresaId: string) =>
+  `(now() AT TIME ZONE (SELECT zona_horaria FROM empresas WHERE id = ${empresaId}))::date`;
+const HOY_DE_PROFESIONAL = (barberoId: string) =>
+  `(now() AT TIME ZONE (SELECT e.zona_horaria FROM barberos pb JOIN empresas e ON e.id = pb.empresa_id WHERE pb.id = ${barberoId}))::date`;
 
 // Formato de salida; un día completo sale de "00:00" a "24:00"
 const SALIDA = (t: string) => `${t}.id, ${t}.barbero_id, ${t}.dia_semana,
@@ -30,7 +34,7 @@ export const listarBloqueos = async (db: Consultable, empresaId: string, barbero
       `SELECT ${SALIDA('bl')}, b.nombre AS barbero_nombre
        FROM bloqueos bl
        JOIN barberos b ON b.id = bl.barbero_id AND b.empresa_id = $1 AND b.activo
-       WHERE (bl.es_repetitivo OR bl.fecha_especifica >= ${HOY_COLOMBIA})
+       WHERE (bl.es_repetitivo OR bl.fecha_especifica >= ${HOY_DE_EMPRESA('$1')})
          AND ($2::varchar IS NULL OR bl.barbero_id = $2)
        ORDER BY b.nombre, bl.es_repetitivo DESC, bl.dia_semana, bl.fecha_especifica, bl.hora_inicio`,
       [empresaId, barberoId],
@@ -99,7 +103,7 @@ export const hayCitaEnHorario = async (
        WHERE barbero_id = $1 AND estado IN ('CONFIRMADA', 'COMPLETADA')
          AND hora_inicio < $5::time AND hora_fin > $4::time
          AND (CASE WHEN $2::int IS NOT NULL
-                   THEN fecha >= ${HOY_COLOMBIA} AND EXTRACT(DOW FROM fecha) = $2::int
+                   THEN fecha >= ${HOY_DE_PROFESIONAL('$1')} AND EXTRACT(DOW FROM fecha) = $2::int
                    ELSE fecha = $3::date END)
        LIMIT 1`,
       [p.barberoId, p.diaSemana, p.fecha, p.horaInicio, p.horaFin],

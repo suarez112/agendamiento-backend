@@ -7,7 +7,9 @@ import {
   esquemaCorreo,
   esquemaPerfilEmpresa,
   esquemaUsuarioAdmin,
+  esquemaZonaHoraria,
 } from '../empresas/empresas.esquemas.js';
+import { PAIS_POR_DEFECTO, ZONA_POR_PAIS } from '../../config/zonas.js';
 import { claveNueva, texto } from '../../shared/http/esquemas.js';
 import { esquemaIndicativo } from '../citas/citas.esquemas.js';
 import { conTelefonoNormalizado } from '../../shared/telefonos.js';
@@ -21,14 +23,29 @@ const esquemaClave = claveNueva;
 
 // La administradora entra con su correo o su usuario, y su contraseña
 // Debe aceptar la Política de Tratamiento de Datos y los Términos y Condiciones
+const MENSAJE_PAIS = 'El país debe ser un código de 2 letras (ej. CO para Colombia)';
+
+// País (por defecto Colombia) y zona horaria del negocio. Si no llega la zona, se asigna
+// la del país; un país que no conocemos exige enviarla.
 const esquemaRegistroEmpresa = conUbicacionValida(
   esquemaPerfilEmpresa.extend({
+    pais: z
+      .string({ error: MENSAJE_PAIS })
+      .trim()
+      .toUpperCase()
+      .regex(/^[A-Z]{2}$/, MENSAJE_PAIS)
+      .default(PAIS_POR_DEFECTO),
+    zonaHoraria: esquemaZonaHoraria.optional(),
     correo: esquemaCorreo,
     usuario: esquemaUsuarioAdmin,
     clave: esquemaClave,
     ...aceptacionObligatoria,
   }),
-);
+)
+  .refine((d) => d.zonaHoraria !== undefined || ZONA_POR_PAIS[d.pais] !== undefined, {
+    error: 'No conocemos la zona horaria de ese país. Envía "zonaHoraria" (ej. America/Bogota)',
+  })
+  .transform((d) => ({ ...d, zonaHoraria: d.zonaHoraria ?? ZONA_POR_PAIS[d.pais] }));
 
 const CORREO_O_USUARIO = 'Envía tu correo o un nombre de usuario para iniciar sesión';
 
