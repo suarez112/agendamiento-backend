@@ -8,7 +8,7 @@ import type { FilaUsuario } from '../cuentas/cuentas.repositorio.js';
 import { buscarSuscripcion } from '../empresas/empresas.repositorio.js';
 import { SIN_RESERVAS } from '../empresas/suscripcion.js';
 import type { Avisos } from '../notificaciones/notificaciones.servicio.js';
-import { aceptoAmbos, DEBE_ACEPTAR, NUEVA_VERSION, registrarAutorizacion, tieneAutorizacionVigente } from '../legal/legal.js';
+import { aceptoAmbos, type ContextoPeticion, DEBE_ACEPTAR, NUEVA_VERSION, registrarAutorizacion, tieneAutorizacionVigente } from '../legal/legal.js';
 import type { DatosNuevaCita } from './citas.esquemas.js';
 import * as repositorio from './citas.repositorio.js';
 import { DIAS_RESERVA } from './citas.repositorio.js';
@@ -33,7 +33,7 @@ const validarFecha = (fecha: string, { hoy, ultimo_dia }: { hoy: string; ultimo_
 // notificaciones: avisos push opcionales (nunca hacen fallar la reserva ni la cancelación)
 export const crearServicioCitas = ({ pool, notificaciones }: { pool: pg.Pool; notificaciones?: Avisos }) => ({
   // cuenta: cliente con sesión (usa su nombre y teléfono); null = reserva como invitado
-  async crear(datos: DatosNuevaCita, cuenta: FilaUsuario | null = null) {
+  async crear(datos: DatosNuevaCita, cuenta: FilaUsuario | null, contexto: ContextoPeticion) {
     const { empresaId, barberoId, servicioId, fecha, hora } = datos;
     // Los datos de la cuenta mandan; una cuenta antigua sin nombre o teléfono (o con un
     // teléfono que no se pudo pasar a E.164) usa los del cuerpo, ya normalizados
@@ -113,7 +113,8 @@ export const crearServicioCitas = ({ pool, notificaciones }: { pool: pg.Pool; no
         // Prueba de la autorización, junto con la cita
         if (debeAceptar) {
           await registrarAutorizacion(tx, {
-            origen: 'reserva',
+            canal: cuenta ? 'nueva_version' : 'reserva_invitado',
+            contexto,
             usuarioId: cuenta?.id ?? null,
             telefono: cuenta ? null : telefono,
             indicativo: cuenta ? null : indicativo,

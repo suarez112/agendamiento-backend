@@ -9,7 +9,7 @@ import { enlacePublico } from '../empresas/enlace.js';
 import { guardarHorario } from '../empresas/horario.js';
 import { DIAS_PRUEBA } from '../empresas/suscripcion.js';
 import type { ServicioCategorias } from '../categorias/categorias.servicio.js';
-import { registrarAutorizacion, tieneAutorizacionVigente } from '../legal/legal.js';
+import { type ContextoPeticion, registrarAutorizacion, tieneAutorizacionVigente } from '../legal/legal.js';
 import * as repositorio from './cuentas.repositorio.js';
 import type { FilaUsuario, Rol } from './cuentas.repositorio.js';
 
@@ -84,7 +84,10 @@ export const crearServicioCuentas = ({ pool, tokens, categorias, enlaceBase }: D
   return {
     // Crea la empresa (en prueba), su horario y su administradora en una sola
     // transacción: si algo falla, no queda nada guardado.
-    async registrarEmpresa({ clave, correo, usuario: nombreUsuario, horario, ...datosPerfil }: DatosRegistroEmpresa) {
+    async registrarEmpresa(
+      { clave, correo, usuario: nombreUsuario, horario, ...datosPerfil }: DatosRegistroEmpresa,
+      contexto: ContextoPeticion,
+    ) {
       // Solo categorías activas; se guarda el nombre oficial
       const perfil = { ...datosPerfil, categoria: await categorias.validarActiva(datosPerfil.categoria) };
       const passwordHash = await cifrarContrasena(clave);
@@ -101,7 +104,7 @@ export const crearServicioCuentas = ({ pool, tokens, categorias, enlaceBase }: D
           empresaId: empresa.id,
         });
         // Prueba de que aceptó la política y los términos (la ruta ya exigió la aceptación)
-        await registrarAutorizacion(cliente, { origen: 'registro_empresa', usuarioId: usuario.id, empresaId: empresa.id });
+        await registrarAutorizacion(cliente, { canal: 'registro_empresa', contexto, usuarioId: usuario.id, empresaId: empresa.id });
         return { empresa, usuario };
       }).catch(traducirDuplicado);
 
@@ -122,7 +125,10 @@ export const crearServicioCuentas = ({ pool, tokens, categorias, enlaceBase }: D
     },
 
     // Cuenta y prueba de la autorización juntas: o se guardan las dos, o ninguna
-    async registrarCliente({ clave, correo, usuario: nombreUsuario, ...datos }: DatosRegistroCliente) {
+    async registrarCliente(
+      { clave, correo, usuario: nombreUsuario, ...datos }: DatosRegistroCliente,
+      contexto: ContextoPeticion,
+    ) {
       const passwordHash = await cifrarContrasena(clave);
       const usuario = await enTransaccion(pool, async (tx) => {
         const usuario = await repositorio.insertarUsuario(tx, {
@@ -133,7 +139,7 @@ export const crearServicioCuentas = ({ pool, tokens, categorias, enlaceBase }: D
           rol: 'cliente',
           empresaId: null,
         });
-        await registrarAutorizacion(tx, { origen: 'registro_cliente', usuarioId: usuario.id });
+        await registrarAutorizacion(tx, { canal: 'registro_cliente', contexto, usuarioId: usuario.id });
         return usuario;
       }).catch(traducirDuplicado);
       return {

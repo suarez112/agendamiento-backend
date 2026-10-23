@@ -133,9 +133,9 @@ export const crearApp = ({
     '/api/v1/superadmin',
     crearRutasSuperadmin(crearServicioSuperadmin({ pool, tokens, secreto: entorno.JWT_SECRET }), categorias, limitadores),
   );
-  app.use('/api/v1/legal', crearRutasLegal({ pool }));
   // Celulares con sesión para recibir notificaciones push
   const titularDe = crearResolverTitular(auth, cuentas, tokens);
+  app.use('/api/v1/legal', crearRutasLegal({ pool, titularDe }));
   app.use('/api/v1/dispositivos', crearRutasDispositivos(notificaciones, titularDe));
   // Centro de notificaciones dentro de la app (cualquier sesión)
   app.use('/api/v1/notificaciones', crearRutasNotificaciones(notificaciones, titularDe));

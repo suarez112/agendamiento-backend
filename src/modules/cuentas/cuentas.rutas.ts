@@ -11,7 +11,7 @@ import {
 import { claveNueva, texto } from '../../shared/http/esquemas.js';
 import { esquemaIndicativo } from '../citas/citas.esquemas.js';
 import { conTelefonoNormalizado } from '../../shared/telefonos.js';
-import { aceptacionObligatoria } from '../legal/legal.js';
+import { aceptacionObligatoria, contextoDe } from '../legal/legal.js';
 import { cuentaDe, type GuardiasCuenta } from './cuentas.guardias.js';
 import type { ServicioCuentas } from './cuentas.servicio.js';
 import type { ServicioEliminacion } from './eliminacion.servicio.js';
@@ -93,11 +93,11 @@ export const crearRutasCuentas = (
   const rutas = Router();
 
   rutas.post('/registro/empresa', limitadores.registro, async (req, res) => {
-    res.status(201).json(await cuentas.registrarEmpresa(parsear(esquemaRegistroEmpresa, req.body)));
+    res.status(201).json(await cuentas.registrarEmpresa(parsear(esquemaRegistroEmpresa, req.body), contextoDe(req)));
   });
 
   rutas.post('/registro/cliente', limitadores.registro, async (req, res) => {
-    res.status(201).json(await cuentas.registrarCliente(parsear(esquemaRegistroCliente, req.body)));
+    res.status(201).json(await cuentas.registrarCliente(parsear(esquemaRegistroCliente, req.body), contextoDe(req)));
   });
 
   rutas.post('/login', limitadores.login, async (req, res) => {

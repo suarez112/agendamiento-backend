@@ -25,7 +25,7 @@ Se validan al arrancar (`src/config/entorno.ts`); si falta una, el servidor no i
 | `JWT_SECRET` | — | obligatoria; mínimo 32 caracteres en producción. Genera una con `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"` |
 | `JWT_EXPIRA_EN` | `12h` | formato `30m`, `12h`, `7d` |
 | `CORS_ORIGINS` | vacío | orígenes web permitidos, separados por comas. La app nativa no los necesita; fuera de producción se permite `http://localhost:<puerto>` |
-| `TRUST_PROXY` | `0` | número de proxies delante del servidor (afecta la IP de los límites) |
+| `TRUST_PROXY` | `0` | número de proxies delante del servidor (afecta la IP de los límites y la IP guardada en la auditoría de autorizaciones; con `0` se usa la IP directa y se ignoran `X-Forwarded-For` y `CF-Connecting-IP`) |
 
 | Script | Qué hace |
 | --- | --- |
