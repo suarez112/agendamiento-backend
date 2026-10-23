@@ -1,9 +1,9 @@
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 import pg from 'pg';
-import { cargarEntornoBaseDeDatos } from '../../src/config/entorno.js';
 import { aplicarMigraciones } from '../../src/db/migraciones.js';
 import { crearPool } from '../../src/db/pool.js';
+import { esBaseTemporalDePrueba, leerConfigPruebas } from './configuracionPruebas.js';
 
 dotenv.config({ quiet: true });
 process.env.NODE_ENV = 'test';
@@ -44,17 +44,18 @@ const VERSION_SEMILLA = '002';
 
 export type BaseDePrueba = { nombre: string; pool: pg.Pool; destruir: () => Promise<void> };
 
-// Crea una base temporal, la migra y la llena; destruir() la elimina
+// Crea una base temporal, la migra y la llena; destruir() la elimina. Nunca toca la base de
+// desarrollo: solo usa la base de pruebas de TEST_DB_NAME (y se niega a correr si falta).
 export const crearBaseDePrueba = async (opciones: { hasta?: string } = {}): Promise<BaseDePrueba> => {
-  const entornoDb = cargarEntornoBaseDeDatos();
-  const nombre = `agendamiento_prueba_${process.pid}_${Date.now().toString(36)}`;
+  const config = leerConfigPruebas();
+  const nombre = `${config.prefijo}${process.pid}_${Date.now().toString(36)}`;
   const conAdmin = async (sql: string) => {
     const cliente = new pg.Client({
-      host: entornoDb.DB_HOST,
-      port: entornoDb.DB_PORT,
-      user: entornoDb.DB_USER,
-      password: entornoDb.DB_PASSWORD,
-      database: 'postgres',
+      host: config.host,
+      port: config.port,
+      user: config.user,
+      password: config.password,
+      database: config.baseMantenimiento,
     });
     await cliente.connect();
     try {
@@ -65,7 +66,14 @@ export const crearBaseDePrueba = async (opciones: { hasta?: string } = {}): Prom
   };
 
   await conAdmin(`CREATE DATABASE "${nombre}"`);
-  const pool = crearPool({ ...entornoDb, DB_NAME: nombre });
+  const pool = crearPool({
+    DB_HOST: config.host,
+    DB_PORT: config.port,
+    DB_USER: config.user,
+    DB_PASSWORD: config.password,
+    DB_NAME: nombre,
+    DB_POOL_MAX: 10,
+  });
   // Los datos sembrados son negocios que ya existían antes del registro de
   // empresas (003): se insertan con el esquema 002 y luego se migra el resto.
   const hastaSemilla = opciones.hasta && opciones.hasta < VERSION_SEMILLA ? opciones.hasta : VERSION_SEMILLA;
@@ -78,6 +86,8 @@ export const crearBaseDePrueba = async (opciones: { hasta?: string } = {}): Prom
     pool,
     destruir: async () => {
       await pool.end();
+      // Última defensa: solo se borra una base que lleve el prefijo de las temporales de pruebas
+      if (!esBaseTemporalDePrueba(config, nombre)) throw new Error(`No se borra "${nombre}": no es una base temporal de pruebas`);
       await conAdmin(`DROP DATABASE IF EXISTS "${nombre}" WITH (FORCE)`);
     },
   };

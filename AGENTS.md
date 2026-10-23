@@ -60,8 +60,18 @@ npm install
 npm run db:migrate   # aplica migraciones pendientes (anotadas en schema_migrations)
 npm run dev          # http://localhost:4000  (salud: GET /api/saludo)
 npm run typecheck    # tipos de src/ y test/
-npm test             # integración; requiere PostgreSQL y permiso CREATEDB
+npm test             # integración; requiere PostgreSQL, TEST_DB_NAME en el .env y permiso CREATEDB
 ```
+
+### Base de datos de las pruebas
+
+Las pruebas **nunca** usan la base de desarrollo (`agendamiento_db`). Cada archivo de prueba crea una base temporal llamada `<TEST_DB_NAME>_<proceso>_<hora>`, la migra, la llena con datos falsos y la borra al terminar. Para crear y borrar esas bases se conectan a la base indicada en `TEST_DB_NAME`.
+
+1. En PostgreSQL crea una base vacía: `CREATE DATABASE agendamiento_test;`
+2. En el `.env` agrega: `TEST_DB_NAME=agendamiento_test`
+3. Opcional y recomendado: un usuario propio para las pruebas (`CREATE ROLE agendamiento_test LOGIN PASSWORD '…' CREATEDB;`, dueño de esa base) y en el `.env` `TEST_DB_USER` y `TEST_DB_PASSWORD`. También existen `TEST_DB_HOST` y `TEST_DB_PORT`. Lo que no se defina se toma de `DB_HOST`, `DB_PORT`, `DB_USER` y `DB_PASSWORD`.
+
+La suite **se niega a correr** si falta `TEST_DB_NAME`, si es `agendamiento_db` o igual a `DB_NAME`, o si no incluye "test" o "prueba" (`test/apoyo/configuracionPruebas.ts`; probado en `test/guardiaBaseDePrueba.test.ts`). Solo borra bases que empiecen con `<TEST_DB_NAME>_`.
 
 ### Comandos de desarrollador (suscripciones)
 

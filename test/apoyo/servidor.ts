@@ -6,6 +6,7 @@ import { crearApp } from '../../src/app.js';
 import { cargarEntorno, type Entorno } from '../../src/config/entorno.js';
 import type { ConfigLimites } from '../../src/shared/http/limitadores.js';
 import { type BaseDePrueba, crearBaseDePrueba, FECHA_FUTURA } from './baseDePrueba.js';
+import { leerConfigPruebas } from './configuracionPruebas.js';
 
 export const SECRETO_PRUEBAS = 'secreto-de-pruebas-con-mas-de-32-caracteres';
 
@@ -40,12 +41,15 @@ const puertoLibre = () =>
 export const iniciar = async (opciones: Opciones = {}): Promise<Contexto> => {
   const baselineDir = process.env.PRUEBA_BASELINE_DIR;
   const base: BaseDePrueba = await crearBaseDePrueba(baselineDir ? { hasta: '001' } : {});
+  // Servidor y credenciales de pruebas: nada de lo que se arma aquí apunta a la base de desarrollo
+  const prueba = leerConfigPruebas();
+  const datosDb = { DB_HOST: prueba.host, DB_PORT: String(prueba.port), DB_USER: prueba.user, DB_PASSWORD: prueba.password };
 
   if (baselineDir) {
     const puerto = await puertoLibre();
     const proceso: ChildProcess = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
       cwd: baselineDir,
-      env: { ...process.env, DB_NAME: base.nombre, PORT: String(puerto), JWT_SECRET: SECRETO_PRUEBAS },
+      env: { ...process.env, ...datosDb, DB_NAME: base.nombre, PORT: String(puerto), JWT_SECRET: SECRETO_PRUEBAS },
       stdio: 'ignore',
     });
     const url = `http://127.0.0.1:${puerto}`;
@@ -67,7 +71,7 @@ export const iniciar = async (opciones: Opciones = {}): Promise<Contexto> => {
   }
 
   const entorno: Entorno = {
-    ...cargarEntorno({ ...process.env, NODE_ENV: 'test', JWT_SECRET: SECRETO_PRUEBAS }),
+    ...cargarEntorno({ ...process.env, ...datosDb, DB_NAME: base.nombre, NODE_ENV: 'test', JWT_SECRET: SECRETO_PRUEBAS }),
     DB_NAME: base.nombre,
     ...opciones.entorno,
   };
