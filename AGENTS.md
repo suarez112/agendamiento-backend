@@ -35,7 +35,9 @@ src/
   modules/superadmin/             panel del dueño de la plataforma: login con TOTP, negocios, PQRS y registro de actividad (totp.ts: segundo paso)
   modules/empresas/activacion.ts  activar un plan a una empresa (lo usan dev:activar-plan y el panel) y anotarlo en el historial de ingresos (activaciones_plan)
   modules/cuentas/eliminacion.servicio.ts  eliminar la cuenta y los datos personales (Ley 1581)
-  modules/micuenta/               cuenta del cliente: negocios guardados y sus citas
+  modules/micuenta/               cuenta del cliente: negocios guardados, sus citas (cancelar, reprogramar e historial)
+  modules/reportes/               reportes de administrador: ocupación, servicios rentables y demanda
+  modules/citas/politica.ts       anticipación mínima para cancelar o reprogramar (mensajes)
   modules/cuentas/recuperacion.servicio.ts  recuperar la contraseña con un código por correo
   db/activarPlan.ts, db/simularVencimiento.ts, db/pqrs.ts, db/crearSuperadmin.ts, db/restablecerSuperadmin.ts, db/eliminarSuperadmin.ts   comandos de desarrollador (ver "Comandos de desarrollador")
 db/migraciones/      numeradas NNN_nombre.sql (o .ts si SQL no alcanza); cada archivo en su propia transacción
@@ -111,6 +113,7 @@ Puerto por defecto `4000` (`PORT`). Rutas bajo `/api/v1`.
 - Migración 022: tabla `categorias_negocio` (`nombre` único sin distinguir mayúsculas, `activa`; se cargan Barbería, Peluquería y Salón de belleza; `empresas.categoria` sigue guardando el nombre, así que los negocios que ya existían no cambian) y tabla `notificaciones` (centro de notificaciones: de una cuenta `usuario_id` o de un integrante `barbero_id`, nunca los dos; `tipo`, `titulo`, `texto`, `cita_id` que se desvincula si la cita se borra, `leida_en`).
 - Migración 023: tabla `auditoria_autorizaciones` (prueba de cada aceptación de la política y los términos; ver "Autorización de tratamiento de datos"). Sin llaves foráneas y **solo de inserción**: un trigger rechaza `UPDATE`, `DELETE` y `TRUNCATE`. Copió las filas de `autorizaciones_datos`, que quedó solo como historial (ya no se escribe ni se lee).
 - Migración 024: **zonas horarias**. `empresas.pais` (ISO alfa-2, por defecto `CO`) y `empresas.zona_horaria` (IANA, por defecto `America/Bogota`; las empresas existentes quedaron así). Las columnas `timestamp` sin zona (`created_at` de empresas, barberos, bloqueos, clientes, lista_negra, productos, servicios y citas; `citas.completada_en` y `cancelada_en`) pasaron a `timestamptz`, interpretando los valores viejos como hora de Bogotá (el servidor ya trabajaba en esa zona): los instantes no cambian. No hubo que migrar nada más.
+- Migración 025: `empresas.anticipacion_cancelacion_horas` (0 a 48, por defecto 3; los negocios existentes quedaron en 3), `empresas.whatsapp_contacto` (E.164, opcional) y tabla `citas_reprogramaciones` (historial de cambios de fecha y hora de una cita, con `ON DELETE CASCADE` desde la cita).
 - **Publicar una versión nueva de la política, los términos o el aviso**: una migración nueva que inserte filas en `documentos_legales` con otra `version` (nunca edites las filas publicadas). La más reciente de cada tipo es la vigente; los clientes con cuenta aceptan la política y los términos nuevos en su próxima reserva. Conviene publicar los tres tipos juntos con el mismo número.
 
 ## Endpoints
@@ -136,7 +139,9 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | GET | `/api/v1/notificaciones/no-leidas` | cualquier sesión. Cuántas tiene sin leer |
 | PATCH | `/api/v1/notificaciones/:id/leida` | cualquier sesión. Marca una como leída |
 | PATCH | `/api/v1/notificaciones/leidas` | cualquier sesión. Marca todas como leídas |
-| PATCH | `/api/v1/mi-cuenta/citas/:id/cancelar` | cuenta de cliente. Cancela una cita suya que aún no empezó |
+| PATCH | `/api/v1/mi-cuenta/citas/:id/cancelar` | cuenta de cliente. Cancela una cita suya con la anticipación mínima del negocio (ver "Política de cancelación y reprogramación") |
+| PATCH | `/api/v1/mi-cuenta/citas/:id/reprogramar` | cuenta de cliente. Cambia la fecha u hora de una cita pendiente |
+| GET | `/api/v1/mi-cuenta/citas/:id/historial` | cuenta de cliente. Cambios de fecha y hora de una cita suya |
 | GET | `/api/v1/empresas/codigo-disponible/:codigo` | público, limitado. ¿Algún negocio usa ya ese código? |
 | GET | `/api/v1/empresas/validar/:codigo` | público, limitado |
 | GET | `/api/v1/empresas/perfil/:codigo` | público, limitado. Información del negocio con su foto, para clientes |
@@ -211,6 +216,7 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | POST | `/api/v1/bloqueos` | personal admin, suscripción vigente |
 | DELETE | `/api/v1/bloqueos/:id` | personal admin, suscripción vigente |
 | GET | `/api/v1/cartera?desde=&hasta=&barberoId=` | personal (admin: todo el negocio o un integrante; empleado: lo suyo), suscripción vigente |
+| GET | `/api/v1/reportes/ocupacion`, `/servicios-rentables`, `/demanda` | personal admin, suscripción vigente. Mismos filtros de período que la cartera (ver "Reportes para administradores") |
 | GET | `/api/v1/cartera/resumen?periodo=&desde=&hasta=&barberoId=` | personal (igual que `/cartera`), suscripción vigente. Resumen por período: `hoy`, `semana`, `mes` o `rango` (el rango va del registro del negocio a hoy) |
 | GET | `/uploads/empresas/<archivo>`, `/uploads/barberos/<archivo>`, `/uploads/productos/<archivo>` | público. La imagen guardada (se usa la dirección que devuelve la API) |
 
@@ -700,6 +706,33 @@ Errores: **400** `El campo "desde" es obligatorio`, `El campo "desde" debe ser u
   - `clientes`: clientes con alguna cita no cancelada en el período. **Nuevos**: no tenían citas no canceladas antes de `desde`; **recurrentes**: sí. Con un profesional filtrado (o un empleado), se miran solo las citas de ese profesional.
 - Errores: **400** `Elige el período en "periodo": "hoy", "semana", "mes" o "rango" (con "desde" y "hasta")`, y con `rango` los mismos de `/cartera` (`El campo "desde" es obligatorio`, …), `La fecha "desde" no puede ser anterior a la fecha de registro del negocio (2026-10-05).` y `La fecha "hasta" no puede ser posterior a hoy (2026-10-20).` Por `comparar`: `Elige con qué comparar en "comparar": "anterior", "mes_pasado", "anio_pasado" o "personalizado" (con "compararDesde" y "compararHasta")`, `Envía "compararDesde" y "compararHasta" para comparar con un rango personalizado`, `El campo "compararDesde" debe ser una fecha real con el formato AAAA-MM-DD`, `La fecha "compararHasta" no puede ser anterior a "compararDesde"` y `El rango de comparación no puede ser mayor que 366 días`.
 
+### Política de cancelación y reprogramación
+
+- Cada negocio tiene `empresas.anticipacion_cancelacion_horas` (**0 a 48, por defecto 3**): con cuántas horas de anticipación mínima puede un **cliente con cuenta** cancelar o reprogramar su cita desde la app. Se edita en `PATCH /admin/empresa` con `anticipacionCancelacionHoras` (entero; si no, **400** `La anticipación para cancelar o reprogramar debe ser un número entero de horas entre 0 y 48`) y llega en `GET`/`PATCH /admin/empresa`, `GET /empresas/perfil/:codigo` y `/empresas/validar/:codigo` (`empresa`). Lógica en `src/modules/citas/politica.ts`.
+- Si la cita empieza en menos tiempo que ese límite, el backend la rechaza con **409** `Solo puedes cancelar con al menos 3 horas de anticipación. Esta cita empieza dentro de menos tiempo: comunícate con el negocio.` (o `… reprogramar …`; `1 hora` en singular). Si ya empezó: `No se pudo cancelar: …` / `Esta cita ya empezó y no se puede reprogramar.`
+- **El negocio siempre puede cancelar** (`PATCH /citas/:id/cancelar`, sin límite). La política no cambia citas ya agendadas.
+- `GET /mi-cuenta/citas` trae por cita `puedeCancelar` y `puedeReprogramar` (pendiente y dentro del plazo), `anticipacionCancelacionHoras` y `vecesReprogramada`.
+
+**PATCH `/api/v1/mi-cuenta/citas/:id/reprogramar`** (cuenta de cliente): cambia la fecha u hora de una cita suya `CONFIRMADA`. Cuerpo `{ "fecha": "2026-10-23", "hora": "10:00 AM" }`. Mismo servicio, profesional, **duración y precio** de la cita; mismas reglas que reservar (hoy a 14 días, horario del día, bloqueos, otras citas; revisión dentro de una transacción con el profesional bloqueado) y la anticipación mínima. La hora nueva no puede ser anterior a ahora.
+
+- **200** `{ "mensaje": "Cita reprogramada", "cita": { "id", "servicio", "barberoId", "barberoNombre", "empresaId", "fecha", "hora", "duracionMin", "estado": "CONFIRMADA", "zonaHoraria" } }`.
+- Errores: **400** `Envía la nueva fecha y hora de la cita`, `La hora elegida ya pasó. Elige una hora posterior.`, `Tu cita ya está en esa fecha y hora. Elige otra.` y los de reservar (fecha fuera de rango, negocio cerrado, fuera de horario); **404** `Cita no encontrada` (no existe o no es suya); **409** `Solo puedes reprogramar una cita pendiente: …`, el mensaje de anticipación, `El profesional no atiende en ese horario…`, `Esa hora ya está ocupada…` o `El servicio o el profesional de esta cita ya no está disponible. Comunícate con el negocio.`; **403** negocio sin suscripción vigente.
+- **Historial**: cada cambio queda en `citas_reprogramaciones` (fecha y hora anteriores y nuevas, cuenta que lo hizo, momento). **GET `/mi-cuenta/citas/:id/historial`** (cuenta de cliente): **200** `[{ "id", "fechaAnterior", "horaAnterior": "10:00 AM", "fechaNueva", "horaNueva", "creadaEn", "zonaHoraria" }]`, del más antiguo al más reciente; **404** `Cita no encontrada`. `GET /citas/agenda` trae `vecesReprogramada`.
+- Se vuelve a habilitar el recordatorio de 24 h de la cita. Avisa al profesional y a los administradores (`cita_reprogramada`, ver "Qué se avisa y a quién").
+
+### WhatsApp de contacto del negocio
+
+- `empresas.whatsapp_contacto` (opcional, E.164). Se envía como `whatsappContacto` en `POST /cuentas/registro/empresa` y en `PATCH /admin/empresa` (con `indicativoWhatsapp` opcional, por defecto 57), con las reglas de "Teléfonos (formato E.164)"; inválido → **400** `El número de teléfono no es válido…`. `""` o `null` lo quita.
+- Se devuelve como `whatsappContacto` y `whatsappUrl` (`https://wa.me/<número sin +>`, `null` si no hay) en `GET`/`PATCH /admin/empresa`, `GET /empresas/perfil/:codigo` y `empresa` de `/empresas/validar/:codigo`.
+
+### Reportes para administradores (`/api/v1/reportes`)
+
+Solo personal admin con suscripción vigente. Mismos filtros de período que la cartera (`periodo=hoy|semana|mes|rango` con `desde` y `hasta`, y `barberoId` opcional; mismos límites y errores del rango). Código en `src/modules/reportes/`.
+
+- **GET `/reportes/ocupacion`**: `{ desde, hasta, calculadoHasta, zonaHoraria, barberoId, total: { horasDisponibles, horasOcupadas, porcentajeOcupacion }, porProfesional: [{ barberoId, nombre, horasDisponibles, horasOcupadas, porcentajeOcupacion }] }`. Tiempo disponible = horario del negocio de cada día menos los bloqueos del profesional (sin contar dos veces los que se cruzan); ocupado = citas no canceladas. **Solo se mide hasta hoy** (`calculadoHasta`; `null` si el período aún no empieza). Entran los profesionales activos que atienden clientes. Porcentaje con un decimal, máximo 100.
+- **GET `/reportes/servicios-rentables`**: citas **completadas** por servicio: `{ total: { citas, ingresos, horasTrabajadas, ingresoPorHora }, servicioMayorIngreso, servicioMayorIngresoPorHora, servicios: [{ servicioId, nombre, citas, ingresos, horasTrabajadas, ingresoPorHora, ticketPromedio }] }`, de mayor a menor ingreso. Las horas son la duración de cada cita.
+- **GET `/reportes/demanda`**: citas no canceladas por día y hora de inicio: `{ totalCitas, porDiaSemana: [{ dia 0..6, citas }], porHora: [{ hora: "10:00", citas }], mapa: [{ dia, hora, citas }], diaMasDemandado, horaMasDemandada, pico }`.
+
 ### Recuperar contraseña (administradoras y clientes con correo)
 
 Para cuentas de la tabla `usuarios` con correo (administradoras y clientes). El personal (barberos) no se recupera aquí: la administradora le cambia la contraseña en `PATCH /equipo/:id`.
@@ -831,7 +864,7 @@ Forma de un negocio guardado: `{ "id", "nombre", "codigoAcceso", "categoria", "d
 - **POST `/mi-cuenta/negocios`**: recibe `{ "codigo": "central10" }`. **201** `{ "mensaje": "Negocio guardado", "negocio": { … } }` (si ya estaba, responde igual). Errores: **400** `Envía el código del negocio en "codigo"` o el mensaje del código inválido; **404** `Establecimiento no encontrado`; **429** (mismo límite que `/empresas/validar/:codigo`).
 - **DELETE `/mi-cuenta/negocios/:id`** (`:id` = `id` del negocio): **200** `{ "mensaje": "Negocio quitado de tu lista" }`. **404** `Ese negocio no está en tu lista`.
 - **GET `/mi-cuenta/citas`**: **200** citas que reservó con su sesión, de la más reciente a la más antigua: `[{ "id", "empresaId", "negocio", "codigoAcceso", "servicio", "barberoId", "barberoNombre", "fecha": "2026-10-21", "hora": "10:00 AM", "duracionMin": 30, "precio": 25000, "estado": "CONFIRMADA" }]`. Las reservas como invitado no aparecen.
-- **PATCH `/mi-cuenta/citas/:id/cancelar`**: el cliente cancela una cita **suya** (reservada con su sesión) que sigue `CONFIRMADA` y todavía no empezó (zona horaria del negocio). **200** `{ "mensaje": "Cita cancelada", "estado": "CANCELADA", "canceladaEn": "<fecha ISO>" }`. **409** `No se pudo cancelar: la cita no existe, no es tuya, ya fue atendida o cancelada, o ya empezó.`; **400** `Identificador de cita inválido`. No se llena `cancelada_por` (la agenda no muestra quién canceló). Avisa por push al profesional y a los administradores (ver "Notificaciones push").
+- **PATCH `/mi-cuenta/citas/:id/cancelar`**: el cliente cancela una cita **suya** (reservada con su sesión) que sigue `CONFIRMADA` y empieza con al menos la anticipación mínima del negocio (zona horaria del negocio; ver "Política de cancelación y reprogramación", que añade el **409** de anticipación). **200** `{ "mensaje": "Cita cancelada", "estado": "CANCELADA", "canceladaEn": "<fecha ISO>" }`. **409** `No se pudo cancelar: la cita no existe, no es tuya, ya fue atendida o cancelada, o ya empezó.`; **400** `Identificador de cita inválido`. No se llena `cancelada_por` (la agenda no muestra quién canceló). Avisa por push al profesional y a los administradores (ver "Notificaciones push").
 
 ### Notificaciones push (Expo Push)
 
@@ -858,6 +891,7 @@ Guardar la notificación y enviar la push son pasos independientes: sin token de
 | --- | --- | --- |
 | Cita nueva (invitado o cliente con cuenta) | El profesional de la cita y los administradores del negocio (integrantes con rol Administrador y cuentas admin) | `cita_nueva` |
 | El cliente cancela su cita (`PATCH /mi-cuenta/citas/:id/cancelar`) | El profesional y los administradores | `cita_cancelada_por_cliente` |
+| El cliente reprograma su cita (`PATCH /mi-cuenta/citas/:id/reprogramar`) | El profesional y los administradores | `cita_reprogramada` |
 | El negocio cancela (`PATCH /citas/:id/cancelar`) | El cliente, solo si reservó con su cuenta | `cita_cancelada` |
 | Recordatorio de 24 h | El cliente con cuenta | `recordatorio` |
 

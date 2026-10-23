@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { INTERVALOS_MINUTOS } from '../citas/disponibilidad.js';
 import { departamentoOficial, municipioOficial } from '../ubicaciones/ubicaciones.js';
 import { esZonaValida, zonaCanonica } from '../../shared/zonaHoraria.js';
+import { normalizarTelefono, TELEFONO_INVALIDO } from '../../shared/telefonos.js';
 import { esquemaHorario } from './horario.js';
 
 // Perfil de la empresa: lo usan el registro y la edición del administrador.
@@ -61,6 +62,10 @@ const perfil = {
   ciudad: texto('ciudad', 100),
   horario: esquemaHorario,
   nombreAdministradora: texto('nombre de la administradora', 120),
+  // WhatsApp de contacto (opcional). Se valida y se guarda en E.164 (ver conWhatsappNormalizado).
+  // Sin código de país se usa "indicativoWhatsapp" y, si tampoco llega, Colombia (57).
+  whatsappContacto: z.union([z.string().trim().max(30, TELEFONO_INVALIDO), z.null()]).optional(),
+  indicativoWhatsapp: z.union([z.string(), z.number()]).optional(),
   numeroEmpleados: z
     .number({ error: MENSAJE_EMPLEADOS })
     .int(MENSAJE_EMPLEADOS)
@@ -113,6 +118,24 @@ export const conUbicacionValida = <T extends z.ZodType<ConUbicacion>>(esquema: T
       return { ...d, ...(ubicacionOficial({ departamento: d.departamento, ciudad: d.ciudad }) as object) };
     });
 
+// Deja el WhatsApp de contacto en E.164 ('' o null = sin WhatsApp) o responde 400 si no es válido.
+// Quita "indicativoWhatsapp": solo sirve para convertir el número.
+export const conWhatsappNormalizado = <T extends z.ZodType<{ whatsappContacto?: string | null; indicativoWhatsapp?: string | number }>>(
+  esquema: T,
+) =>
+  esquema.transform((d, ctx) => {
+    const { indicativoWhatsapp, ...resto } = d;
+    if (resto.whatsappContacto === undefined) return resto;
+    if (resto.whatsappContacto === null || resto.whatsappContacto === '') return { ...resto, whatsappContacto: null };
+    const indicativo = String(indicativoWhatsapp ?? '57').replace(/\D/g, '');
+    const numero = /^\d{1,4}$/.test(indicativo) ? normalizarTelefono(resto.whatsappContacto, indicativo) : null;
+    if (!numero) {
+      ctx.addIssue({ code: 'custom', message: TELEFONO_INVALIDO, path: ['whatsappContacto'] });
+      return z.NEVER;
+    }
+    return { ...resto, whatsappContacto: numero.telefono };
+  });
+
 export const esquemaPerfilEmpresa = z.object(perfil, { error: 'Envía los datos de la empresa' });
 
 // Redondea a n decimales (el GPS del celular entrega muchos más)
@@ -141,14 +164,21 @@ const precisionUbicacion = z
   )
   .optional();
 
+const MENSAJE_ANTICIPACION = 'La anticipación para cancelar o reprogramar debe ser un número entero de horas entre 0 y 48';
+
 const COORDENADAS_JUNTAS = 'Envía la latitud y la longitud juntas (o las dos en null para quitarlas)';
 const PRECISION_CON_COORDENADAS = 'Envía la precisión de la ubicación junto con la latitud y la longitud';
 
 // Edición: todos los campos son opcionales, pero debe venir al menos uno.
 // Campos como id, estado de la suscripción o fin de la prueba se ignoran.
-export const esquemaActualizarEmpresa = conUbicacionValida(
+export const esquemaActualizarEmpresa = conWhatsappNormalizado(conUbicacionValida(
   esquemaPerfilEmpresa
     .extend({
+      anticipacionCancelacionHoras: z
+        .number({ error: MENSAJE_ANTICIPACION })
+        .int(MENSAJE_ANTICIPACION)
+        .min(0, MENSAJE_ANTICIPACION)
+        .max(48, MENSAJE_ANTICIPACION),
       latitud: coordenada('latitud', 90),
       longitud: coordenada('longitud', 180),
       precisionUbicacion,
@@ -168,7 +198,7 @@ export const esquemaActualizarEmpresa = conUbicacionValida(
     .transform((d) =>
       d.latitud === undefined ? d : { ...d, precisionUbicacion: d.latitud === null ? null : (d.precisionUbicacion ?? null) },
     ),
-);
+));
 
 export type PerfilEmpresa = z.output<typeof esquemaPerfilEmpresa>;
 export type CambiosEmpresa = z.output<typeof esquemaActualizarEmpresa>;

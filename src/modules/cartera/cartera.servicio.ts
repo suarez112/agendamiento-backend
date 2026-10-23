@@ -47,6 +47,25 @@ const periodoAnterior = (periodo: string, desde: string, hasta: string) => {
 // Suma con centavos sin errores de punto flotante
 const sumar = (valores: number[]) => Math.round(valores.reduce((a, b) => a + b * 100, 0)) / 100;
 
+// Fechas de una consulta por período (hoy, semana, mes o rango) en la zona del negocio. Un rango no puede
+// empezar antes del registro del negocio ni terminar después de hoy. Lo comparten la cartera y los reportes.
+export const resolverPeriodo = async (pool: pg.Pool, empresaId: string, consulta: ConsultaPeriodo) => {
+  const limites = await repositorio.limitesDeRango(pool, empresaId);
+  if (consulta.periodo === 'rango') {
+    if (limites?.fecha_registro && consulta.desde < limites.fecha_registro) {
+      throw errores.solicitudInvalida(
+        `La fecha "desde" no puede ser anterior a la fecha de registro del negocio (${limites.fecha_registro}).`,
+      );
+    }
+    if (limites && consulta.hasta > limites.hoy) {
+      throw errores.solicitudInvalida(`La fecha "hasta" no puede ser posterior a hoy (${limites.hoy}).`);
+    }
+  }
+  const { desde, hasta } =
+    consulta.periodo === 'rango' ? consulta : await repositorio.fechasDePeriodo(pool, empresaId, consulta.periodo);
+  return { desde, hasta, limites };
+};
+
 // Resumen de ganancias: un administrador ve todo el negocio y puede filtrar por un
 // integrante (también él mismo); un empleado solo ve lo suyo, aunque envíe otro barberoId
 export const crearServicioCartera = ({ pool }: { pool: pg.Pool }) => ({
@@ -55,19 +74,7 @@ export const crearServicioCartera = ({ pool }: { pool: pg.Pool }) => ({
   // Un rango no puede empezar antes del registro del negocio ni terminar después de hoy
   // (fechas en la zona del negocio). Las fechas AAAA-MM-DD se comparan bien como texto.
   async resumenPeriodo(sesion: Sesion, consulta: ConsultaPeriodo, comparar: Comparacion = { tipo: 'anterior' }) {
-    const limites = await repositorio.limitesDeRango(pool, sesion.empresaId);
-    if (consulta.periodo === 'rango') {
-      if (limites?.fecha_registro && consulta.desde < limites.fecha_registro) {
-        throw errores.solicitudInvalida(
-          `La fecha "desde" no puede ser anterior a la fecha de registro del negocio (${limites.fecha_registro}).`,
-        );
-      }
-      if (limites && consulta.hasta > limites.hoy) {
-        throw errores.solicitudInvalida(`La fecha "hasta" no puede ser posterior a hoy (${limites.hoy}).`);
-      }
-    }
-    const { desde, hasta } =
-      consulta.periodo === 'rango' ? consulta : await repositorio.fechasDePeriodo(pool, sesion.empresaId, consulta.periodo);
+    const { desde, hasta, limites } = await resolverPeriodo(pool, sesion.empresaId, consulta);
     const r = await this.resumen(sesion, desde, hasta, consulta.barberoId);
 
     // Mismo filtro que el resumen: un empleado solo ve lo suyo, aunque envíe otro barberoId

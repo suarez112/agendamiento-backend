@@ -118,19 +118,125 @@ export const bloquearProfesional = async (db: Consultable, empresaId: string, ba
   ).rowCount! > 0;
 
 // true si ya hay una cita (no cancelada) del profesional que se cruza con esas horas
+// excluirCitaId: una cita que se está moviendo no choca consigo misma
 export const chocaConCita = async (
   db: Consultable,
-  p: { barberoId: string; fecha: string; horaInicio: string; horaFin: string },
+  p: { barberoId: string; fecha: string; horaInicio: string; horaFin: string; excluirCitaId?: string },
 ) =>
   (
     await db.query(
       `SELECT 1 FROM citas
        WHERE barbero_id = $1 AND fecha = $2::date AND estado <> 'CANCELADA'
          AND hora_inicio < $4::time AND hora_fin > $3::time
+         AND ($5::varchar IS NULL OR id <> $5)
        LIMIT 1`,
-      [p.barberoId, p.fecha, p.horaInicio, p.horaFin],
+      [p.barberoId, p.fecha, p.horaInicio, p.horaFin, p.excluirCitaId ?? null],
     )
   ).rowCount! > 0;
+
+export type CitaDeCliente = {
+  id: string;
+  empresa_id: string;
+  barbero_id: string;
+  servicio_id: string;
+  cliente_id: string;
+  estado: string;
+  fecha: string;
+  hora_inicio: string;
+  hora_fin: string;
+  duracion_min: number;
+  // Fecha (DD/MM/AAAA) y hora (12 h) para los textos de los avisos
+  fecha_aviso: string;
+  hora_aviso: string;
+  anticipacion_horas: number;
+  // La cita ya empezó / empieza dentro de menos de la anticipación mínima del negocio
+  empezo: boolean;
+  fuera_de_plazo: boolean;
+};
+
+// Una cita reservada con la cuenta del cliente, con lo necesario para aplicar la política de
+// cancelación y reprogramación del negocio. bloquear = true la bloquea hasta terminar la transacción.
+export const buscarCitaDeCliente = async (db: Consultable, citaId: string, usuarioId: string, bloquear = false) =>
+  (
+    await db.query<CitaDeCliente>(
+      `SELECT c.id, c.empresa_id, c.barbero_id, c.servicio_id, c.cliente_id, c.estado,
+              to_char(c.fecha, 'YYYY-MM-DD') AS fecha, to_char(c.hora_inicio, 'HH24:MI') AS hora_inicio,
+              to_char(c.hora_fin, 'HH24:MI') AS hora_fin, ${DURACION} AS duracion_min,
+              to_char(c.fecha, 'DD/MM/YYYY') AS fecha_aviso, to_char(c.hora_inicio, 'HH12:MI AM') AS hora_aviso,
+              e.anticipacion_cancelacion_horas AS anticipacion_horas,
+              inicio.instante <= now() AS empezo,
+              inicio.instante <= now() + make_interval(hours => e.anticipacion_cancelacion_horas) AS fuera_de_plazo
+       FROM citas c
+       JOIN empresas e ON e.id = c.empresa_id
+       CROSS JOIN LATERAL (SELECT (c.fecha + c.hora_inicio) AT TIME ZONE e.zona_horaria AS instante) inicio
+       WHERE c.id = $1 AND c.usuario_id = $2
+       ${bloquear ? 'FOR UPDATE OF c' : ''}`,
+      [citaId, usuarioId],
+    )
+  ).rows[0];
+
+// Cambia la fecha y la hora de la cita (conserva su duración y precio) y vuelve a habilitar su recordatorio
+export const moverCita = (db: Consultable, p: { id: string; fecha: string; horaInicio: string; horaFin: string }) =>
+  db.query(`UPDATE citas SET fecha = $2, hora_inicio = $3, hora_fin = $4, recordatorio_enviado_en = NULL WHERE id = $1`, [
+    p.id,
+    p.fecha,
+    p.horaInicio,
+    p.horaFin,
+  ]);
+
+// La última cita del cliente en el negocio no retrocede
+export const avanzarUltimaCita = (db: Consultable, clienteId: string, fecha: string) =>
+  db.query('UPDATE clientes SET fecha_ultima_cita = GREATEST(fecha_ultima_cita, $2::date) WHERE id = $1', [
+    clienteId,
+    fecha,
+  ]);
+
+type Momento = { fecha: string; horaInicio: string; horaFin: string };
+
+// Historial de cambios de fecha u hora de la cita
+export const insertarReprogramacion = (db: Consultable, p: { citaId: string; usuarioId: string; anterior: Momento; nueva: Momento }) =>
+  db.query(
+    `INSERT INTO citas_reprogramaciones (cita_id, usuario_id, fecha_anterior, hora_inicio_anterior, hora_fin_anterior,
+       fecha_nueva, hora_inicio_nueva, hora_fin_nueva)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [
+      p.citaId,
+      p.usuarioId,
+      p.anterior.fecha,
+      p.anterior.horaInicio,
+      p.anterior.horaFin,
+      p.nueva.fecha,
+      p.nueva.horaInicio,
+      p.nueva.horaFin,
+    ],
+  );
+
+export type FilaReprogramacion = {
+  id: string;
+  fecha_anterior: string;
+  hora_anterior: string;
+  fecha_nueva: string;
+  hora_nueva: string;
+  creada_en: Date;
+  zona_horaria: string;
+};
+
+// Cambios de una cita de ese cliente, del más antiguo al más reciente
+export const listarReprogramaciones = async (db: Consultable, citaId: string, usuarioId: string) =>
+  (
+    await db.query<FilaReprogramacion>(
+      `SELECT r.id, to_char(r.fecha_anterior, 'YYYY-MM-DD') AS fecha_anterior,
+              to_char(r.hora_inicio_anterior, 'HH12:MI AM') AS hora_anterior,
+              to_char(r.fecha_nueva, 'YYYY-MM-DD') AS fecha_nueva, to_char(r.hora_inicio_nueva, 'HH12:MI AM') AS hora_nueva,
+              r.creada_en, e.zona_horaria
+       FROM citas_reprogramaciones r
+       JOIN citas c ON c.id = r.cita_id
+       JOIN empresas e ON e.id = c.empresa_id
+       WHERE r.cita_id = $1 AND c.usuario_id = $2
+       ORDER BY r.creada_en, r.id`,
+      [citaId, usuarioId],
+    )
+  ).rows;
 
 // Lo que ocupa un profesional un día, en minutos desde la medianoche: sus citas no
 // canceladas y sus bloqueos (semanales de ese día de la semana, o de esa fecha)
@@ -229,6 +335,7 @@ export type FilaAgenda = {
   telefono: string;
   servicio: string;
   barbero_nombre: string;
+  veces_reprogramada: number;
 };
 
 // barberoId null = todo el equipo del negocio
@@ -240,7 +347,8 @@ export const listarAgenda = async (db: Consultable, empresaId: string, barberoId
               ${QUIEN('bc', 'uc', 'e')} AS completada_por, c.completada_en,
               ${QUIEN('bx', 'ux', 'e')} AS cancelada_por, c.cancelada_en, e.zona_horaria,
               cl.nombre AS cliente, cl.telefono,
-              s.nombre AS servicio, b.nombre AS barbero_nombre
+              s.nombre AS servicio, b.nombre AS barbero_nombre,
+              (SELECT count(*)::int FROM citas_reprogramaciones r WHERE r.cita_id = c.id) AS veces_reprogramada
        FROM citas c
        JOIN empresas e ON e.id = c.empresa_id
        JOIN clientes cl ON cl.id = c.cliente_id

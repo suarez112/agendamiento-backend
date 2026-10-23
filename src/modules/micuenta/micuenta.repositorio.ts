@@ -71,6 +71,10 @@ export type FilaCitaCliente = {
   precio: string;
   estado: string;
   zona_horaria: string;
+  // Cumple la anticipación mínima del negocio: puede cancelarla o reprogramarla desde la app
+  modificable: boolean;
+  anticipacion_horas: number;
+  veces_reprogramada: number;
 };
 
 // Citas que el cliente reservó con su sesión, de la más reciente a la más antigua
@@ -81,7 +85,12 @@ export const listarCitasCliente = async (db: Consultable, usuarioId: string) =>
               c.barbero_id, b.nombre AS barbero_nombre,
               to_char(c.fecha, 'YYYY-MM-DD') AS fecha, to_char(c.hora_inicio, 'HH12:MI AM') AS hora,
               (EXTRACT(EPOCH FROM (c.hora_fin - c.hora_inicio)) / 60)::int AS duracion_min,
-              c.precio, c.estado, e.zona_horaria
+              c.precio, c.estado, e.zona_horaria,
+              (c.estado = 'CONFIRMADA'
+                 AND (c.fecha + c.hora_inicio) AT TIME ZONE e.zona_horaria
+                     > now() + make_interval(hours => e.anticipacion_cancelacion_horas)) AS modificable,
+              e.anticipacion_cancelacion_horas AS anticipacion_horas,
+              (SELECT count(*)::int FROM citas_reprogramaciones r WHERE r.cita_id = c.id) AS veces_reprogramada
        FROM citas c
        JOIN empresas e ON e.id = c.empresa_id
        JOIN servicios s ON s.id = c.servicio_id
@@ -92,14 +101,16 @@ export const listarCitasCliente = async (db: Consultable, usuarioId: string) =>
     )
   ).rows;
 
-// El cliente cancela una cita suya que sigue confirmada y todavía no empezó (en la zona del negocio).
+// El cliente cancela una cita suya que sigue confirmada y empieza dentro del plazo de la política del
+// negocio: con al menos su anticipación mínima (empresas.anticipacion_cancelacion_horas), en la zona del negocio.
 // No se llena cancelada_por: la agenda mostraría a la administradora como quien canceló.
 export const cancelarCitaCliente = async (db: Consultable, p: { id: string; usuarioId: string }) =>
   (
     await db.query<{ estado: string; cancelada_en: Date; zona_horaria: string }>(
       `UPDATE citas SET estado = 'CANCELADA', cancelada_en = NOW()
        WHERE id = $1 AND usuario_id = $2 AND estado = 'CONFIRMADA'
-         AND (fecha + hora_inicio) AT TIME ZONE (SELECT zona_horaria FROM empresas WHERE id = citas.empresa_id) > now()
+         AND (fecha + hora_inicio) AT TIME ZONE (SELECT zona_horaria FROM empresas WHERE id = citas.empresa_id)
+             > now() + make_interval(hours => (SELECT anticipacion_cancelacion_horas FROM empresas WHERE id = citas.empresa_id))
        RETURNING estado, cancelada_en, (SELECT zona_horaria FROM empresas WHERE id = citas.empresa_id) AS zona_horaria`,
       [p.id, p.usuarioId],
     )

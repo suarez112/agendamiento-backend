@@ -12,6 +12,8 @@ export type Avisos = {
   avisarCitaNueva(citaId: string): Promise<void>;
   avisarCancelacionPorNegocio(citaId: string): Promise<void>;
   avisarCancelacionPorCliente(citaId: string): Promise<void>;
+  // anterior: fecha (DD/MM/AAAA) y hora (12 h) que tenía la cita antes del cambio
+  avisarReprogramacion(citaId: string, anterior: { fecha: string; hora: string }): Promise<void>;
 };
 
 const armarNotificacion = (n: repositorio.FilaNotificacion) => ({
@@ -81,6 +83,15 @@ export const crearServicioNotificaciones = ({ pool, push }: { pool: pg.Pool; pus
         tipo: 'cita_cancelada_por_cliente',
         titulo: 'Cita cancelada por el cliente',
         texto: `${c.cliente} canceló ${c.servicio} del ${c.fecha} a las ${c.hora}.`,
+        citaId: c.id,
+      })),
+
+    // El cliente cambió la fecha u hora de su cita: al profesional y a los administradores
+    avisarReprogramacion: (citaId, anterior) =>
+      avisarAlNegocio('cita_reprogramada', citaId, (c) => ({
+        tipo: 'cita_reprogramada',
+        titulo: 'Cita reprogramada por el cliente',
+        texto: `${c.cliente} movió ${c.servicio} del ${anterior.fecha} a las ${anterior.hora} al ${c.fecha} a las ${c.hora}.`,
         citaId: c.id,
       })),
 

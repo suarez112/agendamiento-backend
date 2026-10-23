@@ -7,9 +7,12 @@ export type FilaEmpresa = {
   color_primario: string | null;
   color_secundario: string | null;
   zona_horaria: string;
+  whatsapp_contacto: string | null;
+  anticipacion_cancelacion_horas: number;
 };
 
-const COLUMNAS_EMPRESA = 'id, nombre, codigo_acceso, color_primario, color_secundario, zona_horaria';
+const COLUMNAS_EMPRESA =
+  'id, nombre, codigo_acceso, color_primario, color_secundario, zona_horaria, whatsapp_contacto, anticipacion_cancelacion_horas';
 
 export const buscarEmpresaPorCodigo = async (db: Consultable, codigo: string) =>
   (
@@ -78,12 +81,14 @@ export type FilaPerfilEmpresa = {
   intervalo_minutos: number;
   pais: string;
   zona_horaria: string;
+  whatsapp_contacto: string | null;
+  anticipacion_cancelacion_horas: number;
 };
 
 const COLUMNAS_PERFIL = `id, nombre, codigo_acceso, categoria, direccion, departamento, ciudad,
                          nombre_administradora, numero_empleados, logo_url, foto_url, color_primario, color_secundario,
                          latitud, longitud, precision_ubicacion, estado_suscripcion, trial_ends_at, created_at,
-                         intervalo_minutos, pais, zona_horaria`;
+                         intervalo_minutos, pais, zona_horaria, whatsapp_contacto, anticipacion_cancelacion_horas`;
 
 export const buscarPerfilEmpresa = async (db: Consultable, id: string) =>
   (await db.query<FilaPerfilEmpresa>(`SELECT ${COLUMNAS_PERFIL} FROM empresas WHERE id = $1`, [id])).rows[0];
@@ -156,6 +161,8 @@ const COLUMNA_EDITABLE = {
   longitud: 'longitud',
   precisionUbicacion: 'precision_ubicacion',
   zonaHoraria: 'zona_horaria',
+  whatsappContacto: 'whatsapp_contacto',
+  anticipacionCancelacionHoras: 'anticipacion_cancelacion_horas',
 } as const;
 
 export type CambiosPerfil = Partial<Record<keyof typeof COLUMNA_EDITABLE, unknown>>;

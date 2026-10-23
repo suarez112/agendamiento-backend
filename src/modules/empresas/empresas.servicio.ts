@@ -59,6 +59,9 @@ export const crearServicioEmpresas = ({
         // false si la suscripción venció: la app puede avisar antes de reservar
         recibiendoReservas: Boolean(suscripcion?.habilitada),
         zonaHoraria: empresa.zona_horaria,
+        whatsappContacto: empresa.whatsapp_contacto,
+        whatsappUrl: enlaceWhatsapp(empresa.whatsapp_contacto),
+        anticipacionCancelacionHoras: empresa.anticipacion_cancelacion_horas,
       },
       barberos: barberos.map((b) => ({
         id: b.id,
@@ -274,6 +277,9 @@ export const enlaceGoogleMaps = (p: FilaPerfilEmpresa) => {
   return consulta ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(consulta)}` : null;
 };
 
+// Enlace para abrir el chat de WhatsApp (el número en E.164 sin el "+"); null si no hay número
+export const enlaceWhatsapp = (telefono: string | null) => (telefono ? `https://wa.me/${telefono.replace(/\D/g, '')}` : null);
+
 const armarPerfilPublico = ({ perfil: p, horario: h }: PerfilConHorario, urlBase: string) => ({
   id: p.id,
   nombre: p.nombre,
@@ -292,6 +298,9 @@ const armarPerfilPublico = ({ perfil: p, horario: h }: PerfilConHorario, urlBase
   colorSecundario: p.color_secundario,
   googleMapsUrl: enlaceGoogleMaps(p),
   intervaloMinutos: p.intervalo_minutos,
+  whatsappContacto: p.whatsapp_contacto,
+  whatsappUrl: enlaceWhatsapp(p.whatsapp_contacto),
+  anticipacionCancelacionHoras: p.anticipacion_cancelacion_horas,
   pais: p.pais,
   zonaHoraria: p.zona_horaria,
 });

@@ -14,6 +14,8 @@ import { crearRutasCategorias } from './modules/categorias/categorias.rutas.js';
 import { crearServicioCategorias } from './modules/categorias/categorias.servicio.js';
 import { crearRutasCartera } from './modules/cartera/cartera.rutas.js';
 import { crearServicioCartera } from './modules/cartera/cartera.servicio.js';
+import { crearRutasReportes } from './modules/reportes/reportes.rutas.js';
+import { crearServicioReportes } from './modules/reportes/reportes.servicio.js';
 import { crearRutasCitas } from './modules/citas/citas.rutas.js';
 import { crearServicioCitas } from './modules/citas/citas.servicio.js';
 import { crearRutasClientes } from './modules/clientes/clientes.rutas.js';
@@ -140,10 +142,14 @@ export const crearApp = ({
   // Centro de notificaciones dentro de la app (cualquier sesión)
   app.use('/api/v1/notificaciones', crearRutasNotificaciones(notificaciones, titularDe));
   // Cuenta del cliente registrado: negocios guardados y sus citas
-  app.use('/api/v1/mi-cuenta', crearRutasMiCuenta(crearServicioMiCuenta({ pool, notificaciones }), guardiasCuenta, limitadores, urlBase));
+  const servicioCitas = crearServicioCitas({ pool, notificaciones });
+  app.use(
+    '/api/v1/mi-cuenta',
+    crearRutasMiCuenta(crearServicioMiCuenta({ pool, notificaciones, citas: servicioCitas }), guardiasCuenta, limitadores, urlBase),
+  );
   app.use('/api/v1/empresas', crearRutasEmpresas(empresas, guardias, limitadores, urlBase));
   app.use('/api/v1/admin/empresa', crearRutasAdminEmpresa(empresas, guardias, urlBase));
-  app.use('/api/v1/citas', crearRutasCitas(crearServicioCitas({ pool, notificaciones }), guardias, suscripcion, limitadores, cuentas));
+  app.use('/api/v1/citas', crearRutasCitas(servicioCitas, guardias, suscripcion, limitadores, cuentas));
   // Gestión del negocio: personal (barberos) o la cuenta del administrador de la empresa
   app.use('/api/v1/clientes', crearRutasClientes(crearServicioClientes({ pool }), permisos));
   app.use('/api/v1/equipo', crearRutasEquipo(crearServicioEquipo({ pool, fotos: fotos.barberos }), permisos, urlBase));
@@ -154,6 +160,8 @@ export const crearApp = ({
   );
   app.use('/api/v1/bloqueos', crearRutasBloqueos(crearServicioBloqueos({ pool }), permisos));
   app.use('/api/v1/cartera', crearRutasCartera(crearServicioCartera({ pool }), permisos));
+  // Reportes para administradores: ocupación, servicios más rentables y demanda
+  app.use('/api/v1/reportes', crearRutasReportes(crearServicioReportes({ pool }), permisos));
 
   app.use(rutaNoEncontrada);
   app.use(manejadorErrores);

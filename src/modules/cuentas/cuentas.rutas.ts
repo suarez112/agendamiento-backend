@@ -4,6 +4,7 @@ import type { Limitadores } from '../../shared/http/limitadores.js';
 import { parsear } from '../../shared/http/validacion.js';
 import {
   conUbicacionValida,
+  conWhatsappNormalizado,
   esquemaCorreo,
   esquemaPerfilEmpresa,
   esquemaUsuarioAdmin,
@@ -27,7 +28,7 @@ const MENSAJE_PAIS = 'El país debe ser un código de 2 letras (ej. CO para Colo
 
 // País (por defecto Colombia) y zona horaria del negocio. Si no llega la zona, se asigna
 // la del país; un país que no conocemos exige enviarla.
-const esquemaRegistroEmpresa = conUbicacionValida(
+const esquemaRegistroEmpresa = conWhatsappNormalizado(conUbicacionValida(
   esquemaPerfilEmpresa.extend({
     pais: z
       .string({ error: MENSAJE_PAIS })
@@ -41,7 +42,7 @@ const esquemaRegistroEmpresa = conUbicacionValida(
     clave: esquemaClave,
     ...aceptacionObligatoria,
   }),
-)
+))
   .refine((d) => d.zonaHoraria !== undefined || ZONA_POR_PAIS[d.pais] !== undefined, {
     error: 'No conocemos la zona horaria de ese país. Envía "zonaHoraria" (ej. America/Bogota)',
   })

@@ -38,9 +38,10 @@ export const insertarEmpresaEnPrueba = async (
   (
     await db.query<FilaEmpresaRegistrada>(
       `INSERT INTO empresas (id, nombre, codigo_acceso, categoria, direccion, departamento, ciudad,
-         nombre_administradora, numero_empleados, logo_url, estado_suscripcion, trial_ends_at, plan_equipo, pais, zona_horaria)
+         nombre_administradora, numero_empleados, logo_url, estado_suscripcion, trial_ends_at, plan_equipo, pais, zona_horaria,
+         whatsapp_contacto)
        VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9,
-         'trial', now() + make_interval(days => $10), $11, $12, $13)
+         'trial', now() + make_interval(days => $10), $11, $12, $13, $14)
        ON CONFLICT (codigo_acceso) DO NOTHING
        RETURNING id, nombre, codigo_acceso, estado_suscripcion, trial_ends_at`,
       [
@@ -58,6 +59,7 @@ export const insertarEmpresaEnPrueba = async (
         planParaPersonas(perfil.numeroEmpleados).id,
         perfil.pais,
         perfil.zonaHoraria,
+        perfil.whatsappContacto ?? null,
       ],
     )
   ).rows[0];

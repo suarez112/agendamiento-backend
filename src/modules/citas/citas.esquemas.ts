@@ -51,3 +51,14 @@ export const esquemaHorasDisponibles = z.object({
 export const esquemaIdCita = z.object({
   id: identificador('Identificador de cita inválido'),
 });
+
+// Nueva fecha y hora de una cita que el cliente reprograma (mismo formato que al reservar)
+const FALTA_NUEVA_HORA = 'Envía la nueva fecha y hora de la cita';
+
+export const esquemaReprogramarCita = z.object(
+  {
+    fecha: texto(FALTA_NUEVA_HORA).refine(esFechaReal, FORMATO_INCORRECTO),
+    hora: texto(FALTA_NUEVA_HORA).refine((h) => hora12AMinutos(h) !== null, FORMATO_INCORRECTO),
+  },
+  { error: FALTA_NUEVA_HORA },
+);

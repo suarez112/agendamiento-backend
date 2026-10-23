@@ -35,7 +35,8 @@ const esquemaRango = conRangoValido(z.object(camposRango, { error: 'Envía las f
 const MENSAJE_PERIODO = 'Elige el período en "periodo": "hoy", "semana", "mes" o "rango" (con "desde" y "hasta")';
 
 // Resumen por período: hoy, semana (lunes a domingo), mes, o rango con desde y hasta
-const esquemaPeriodo = z.discriminatedUnion(
+// (también lo usan los reportes: mismos filtros de período)
+export const esquemaPeriodo = z.discriminatedUnion(
   'periodo',
   [
     z.object({ periodo: z.enum(['hoy', 'semana', 'mes']), barberoId: esquemaBarbero }),

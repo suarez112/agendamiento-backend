@@ -15,6 +15,7 @@ import * as repositorio from './citas.repositorio.js';
 import { DIAS_RESERVA } from './citas.repositorio.js';
 import { esDiaCompleto } from '../bloqueos/bloqueos.servicio.js';
 import { calcularHoras } from './disponibilidad.js';
+import { mensajeFueraDePlazo } from './politica.js';
 import { hora12AMinutos, hora24AMinutos, minutosAHHMM, minutosAHora12 } from './horas.js';
 
 const HORA_OCUPADA = 'Esa hora ya está ocupada. Por favor elige otra.';
@@ -236,6 +237,7 @@ export const crearServicioCitas = ({ pool, notificaciones }: { pool: pg.Pool; no
       duracionMin: r.duracion_min,
       estado: r.estado,
       zonaHoraria: r.zona_horaria,
+      vecesReprogramada: r.veces_reprogramada,
       completadaEn: aIsoEnZona(r.completada_en, r.zona_horaria) ?? undefined,
       completadaPor: r.completada_por ?? undefined,
       canceladaEn: aIsoEnZona(r.cancelada_en, r.zona_horaria) ?? undefined,
@@ -256,6 +258,89 @@ export const crearServicioCitas = ({ pool, notificaciones }: { pool: pg.Pool; no
       completadaPor: r.completada_por,
       zonaHoraria: r.zona_horaria,
     };
+  },
+
+  // Un cliente con cuenta cambia la fecha u hora de su cita pendiente: mismo servicio y profesional,
+  // misma duración y precio, con las reglas de las reservas (días, horario, bloqueos, otras citas) y la
+  // anticipación mínima del negocio. Guarda el cambio en el historial y avisa al negocio.
+  async reprogramar(usuarioId: string, citaId: string, { fecha, hora }: { fecha: string; hora: string }) {
+    try {
+      const r = await enTransaccion(pool, async (tx) => {
+        const cita = await repositorio.buscarCitaDeCliente(tx, citaId, usuarioId, true);
+        if (!cita) throw errores.noEncontrado('Cita no encontrada');
+        if (cita.estado !== 'CONFIRMADA') {
+          throw errores.conflicto('Solo puedes reprogramar una cita pendiente: esta ya fue atendida o cancelada.');
+        }
+        if (cita.empezo) throw errores.conflicto('Esta cita ya empezó y no se puede reprogramar.');
+        if (cita.fuera_de_plazo) throw errores.conflicto(mensajeFueraDePlazo('reprogramar', cita.anticipacion_horas));
+
+        const suscripcion = await buscarSuscripcion(tx, cita.empresa_id);
+        if (suscripcion && !suscripcion.habilitada) throw errores.prohibido(SIN_RESERVAS);
+
+        // El servicio y el profesional deben seguir disponibles; la cita conserva su duración y precio
+        const reserva = await repositorio.buscarDatosReserva(tx, {
+          empresaId: cita.empresa_id,
+          barberoId: cita.barbero_id,
+          servicioId: cita.servicio_id,
+          fecha,
+        });
+        if (!reserva) {
+          throw errores.conflicto('El servicio o el profesional de esta cita ya no está disponible. Comunícate con el negocio.');
+        }
+        validarFecha(fecha, reserva);
+        if (!reserva.horario_apertura || !reserva.horario_cierre) {
+          throw errores.solicitudInvalida('El negocio no atiende ese día. Por favor elige otra fecha.');
+        }
+        const inicio = hora12AMinutos(hora) as number; // el esquema ya validó el formato
+        const fin = inicio + cita.duracion_min;
+        if (inicio < hora24AMinutos(reserva.horario_apertura) || fin > hora24AMinutos(reserva.horario_cierre)) {
+          throw errores.solicitudInvalida('La hora elegida está fuera del horario del negocio');
+        }
+        if (fecha === reserva.hoy && inicio < reserva.minutos_ahora) {
+          throw errores.solicitudInvalida('La hora elegida ya pasó. Elige una hora posterior.');
+        }
+        const nueva = { fecha, horaInicio: minutosAHHMM(inicio), horaFin: minutosAHHMM(fin) };
+        const anterior = { fecha: cita.fecha, horaInicio: cita.hora_inicio, horaFin: cita.hora_fin };
+        if (nueva.fecha === anterior.fecha && nueva.horaInicio === anterior.horaInicio) {
+          throw errores.solicitudInvalida('Tu cita ya está en esa fecha y hora. Elige otra.');
+        }
+
+        // Igual que al reservar: el profesional se bloquea y se revisa la hora dentro de la misma transacción
+        if (!(await repositorio.bloquearProfesional(tx, cita.empresa_id, cita.barbero_id))) {
+          throw errores.conflicto('El servicio o el profesional de esta cita ya no está disponible. Comunícate con el negocio.');
+        }
+        const franja = { barberoId: cita.barbero_id, ...nueva };
+        if (await repositorio.chocaConBloqueo(tx, franja)) throw errores.conflicto(HORA_BLOQUEADA);
+        if (await repositorio.chocaConCita(tx, { ...franja, excluirCitaId: cita.id })) throw errores.conflicto(HORA_OCUPADA);
+
+        await repositorio.moverCita(tx, { id: cita.id, ...nueva });
+        await repositorio.avanzarUltimaCita(tx, cita.cliente_id, fecha);
+        await repositorio.insertarReprogramacion(tx, { citaId: cita.id, usuarioId, anterior, nueva });
+        return { cita, reserva, nueva };
+      });
+
+      // Aviso al profesional y a los administradores, sin esperar a que termine el envío
+      void notificaciones?.avisarReprogramacion(citaId, { fecha: r.cita.fecha_aviso, hora: r.cita.hora_aviso });
+
+      return {
+        mensaje: 'Cita reprogramada',
+        cita: {
+          id: citaId,
+          servicio: r.reserva.servicio,
+          barberoId: r.cita.barbero_id,
+          barberoNombre: r.reserva.barbero,
+          empresaId: r.cita.empresa_id,
+          fecha: r.nueva.fecha,
+          hora: hora,
+          duracionMin: r.cita.duracion_min,
+          estado: 'CONFIRMADA',
+          zonaHoraria: r.reserva.zona_horaria,
+        },
+      };
+    } catch (error) {
+      if (esErrorPg(error, CODIGO_PG.violacionExclusion)) throw errores.conflicto(HORA_OCUPADA);
+      throw error;
+    }
   },
 
   async cancelar({ empresaId, barberoId, usuarioId }: Sesion, id: string) {
