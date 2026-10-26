@@ -6,8 +6,10 @@ import { type BaseDePrueba, crearBaseDePrueba } from './apoyo/baseDePrueba.js';
 describe('migración 003: registro de empresa', () => {
   let base: BaseDePrueba;
   before(async () => {
-    // Las empresas sembradas existen antes de la 003, como en producción
-    base = await crearBaseDePrueba();
+    // Las empresas sembradas existen antes de la 003, como en producción. La base se detiene en la 003:
+    // las migraciones siguientes (007 quita nit, telefono, correo y dias_atencion de empresas) cambiaron
+    // ese esquema a propósito, y aquí se comprueba lo que la 003 garantizaba.
+    base = await crearBaseDePrueba({ hasta: '003' });
   });
   after(() => base.destruir());
 

@@ -125,34 +125,68 @@ export const iniciarSesion = async (ctx: Contexto, usuario: string, clave: strin
   return r.json.token;
 };
 
-// Datos completos para registrar una empresa con su administrador
-export const empresaValida = (cambios: Record<string, unknown> = {}) => ({
-  nombre: 'Barbería Central',
-  categoria: 'Barbería',
-  nit: '900123456-7',
-  telefono: '3001234567',
-  correo: 'admin@central.co',
-  direccion: 'Calle 10 # 20-30',
-  ciudad: 'Bucaramanga',
-  diasAtencion: [1, 2, 3, 4, 5, 6],
-  horarioApertura: '08:00',
-  horarioCierre: '19:00',
-  nombreAdministradora: 'Ana Pérez',
-  numeroEmpleados: 4,
-  logoUrl: 'https://cdn.central.co/logo.png',
-  clave: 'clave-segura-123',
-  ...cambios,
-});
+// Contraseñas que cumplen la regla vigente (mayúscula, minúscula, número y carácter especial)
+export const CLAVE_ADMIN = 'Clave-segura-123';
+export const CLAVE_CLIENTE = 'Mi-clave-123';
+
+// Teléfono colombiano válido (E.164: +57310NNNNNNN) distinto para cada n
+export const telefonoValido = (n: number) => `310${String(n).padStart(7, '0')}`;
+export const e164 = (n: number) => `+57${telefonoValido(n)}`;
+
+// Horario de los 7 días: domingo cerrado y de lunes a sábado de apertura a cierre
+export const horarioValido = (apertura = '08:00', cierre = '19:00') =>
+  [0, 1, 2, 3, 4, 5, 6].map((dia) =>
+    dia === 0 ? { dia, abierto: false } : { dia, abierto: true, apertura, cierre },
+  );
+
+let secuencia = 0;
+
+// Datos completos para registrar una empresa con su administradora. El código del negocio y el
+// usuario cambian en cada llamada (son únicos); el correo es el mismo salvo que se indique otro.
+export const empresaValida = (cambios: Record<string, unknown> = {}) => {
+  const n = ++secuencia;
+  return {
+    nombre: 'Barbería Central',
+    categoria: 'Barbería',
+    codigoAcceso: `CENTRAL${n}`,
+    direccion: 'Calle 10 # 20-30',
+    departamento: 'Santander',
+    ciudad: 'Bucaramanga',
+    horario: horarioValido(),
+    nombreAdministradora: 'Ana Pérez',
+    numeroEmpleados: 4,
+    logoUrl: 'https://cdn.central.co/logo.png',
+    correo: 'admin@central.co',
+    usuario: `ana.perez${n}`,
+    clave: CLAVE_ADMIN,
+    aceptaPoliticaDatos: true,
+    aceptaTerminos: true,
+    ...cambios,
+  };
+};
 
 export const registrarEmpresa = (ctx: Contexto, cambios: Record<string, unknown> = {}) =>
   pedir(ctx, '/api/v1/cuentas/registro/empresa', { method: 'POST', body: empresaValida(cambios) });
 
-export const registrarCliente = (ctx: Contexto, correo: unknown, clave: unknown) =>
-  pedir(ctx, '/api/v1/cuentas/registro/cliente', { method: 'POST', body: { correo, clave } });
+// Cuenta de cliente. El teléfono cambia en cada llamada (es único entre las cuentas de cliente).
+export const registrarCliente = (ctx: Contexto, correo: unknown, clave: unknown, cambios: Record<string, unknown> = {}) =>
+  pedir(ctx, '/api/v1/cuentas/registro/cliente', {
+    method: 'POST',
+    body: {
+      nombre: 'Cliente Prueba',
+      telefono: telefonoValido(1000 + ++secuencia),
+      correo,
+      clave,
+      aceptaPoliticaDatos: true,
+      aceptaTerminos: true,
+      ...cambios,
+    },
+  });
 
 export const iniciarSesionCuenta = (ctx: Contexto, correo: unknown, clave: unknown) =>
   pedir(ctx, '/api/v1/cuentas/login', { method: 'POST', body: { correo, clave } });
 
+// Reserva de invitado en el negocio A: acepta la política y los términos, como exige la API
 export const reservaValida = (cambios: Record<string, unknown> = {}) => ({
   empresaId: 'emp_a',
   barberoId: 'barb_a',
@@ -162,5 +196,7 @@ export const reservaValida = (cambios: Record<string, unknown> = {}) => ({
   nombre: 'Cliente Prueba',
   telefono: '3001234567',
   indicativo: '57',
+  aceptaPoliticaDatos: true,
+  aceptaTerminos: true,
   ...cambios,
 });

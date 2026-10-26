@@ -2,18 +2,16 @@ import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 import pg from 'pg';
 import { aplicarMigraciones } from '../../src/db/migraciones.js';
+import { hoyEn, sumarDiasAFecha, ZONA_POR_DEFECTO } from '../../src/shared/zonaHoraria.js';
 import { crearPool } from '../../src/db/pool.js';
 import { esBaseTemporalDePrueba, leerConfigPruebas } from './configuracionPruebas.js';
 
 dotenv.config({ quiet: true });
 process.env.NODE_ENV = 'test';
 
-// Fecha local "YYYY-MM-DD" a N días de hoy
-export const fechaEnDias = (dias: number) => {
-  const d = new Date();
-  d.setDate(d.getDate() + dias);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-};
+// Fecha "YYYY-MM-DD" a N días de hoy en la zona del negocio de pruebas (Bogotá), no la del computador:
+// así las pruebas no fallan cerca de la medianoche ni en otra zona horaria.
+export const fechaEnDias = (dias: number) => sumarDiasAFecha(hoyEn(ZONA_POR_DEFECTO), dias);
 
 export const FECHA_FUTURA = fechaEnDias(7);
 
