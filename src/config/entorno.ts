@@ -77,3 +77,15 @@ export const cargarEntorno = (fuente: NodeJS.ProcessEnv = process.env): Entorno 
 export const cargarEntornoBaseDeDatos = (
   fuente: NodeJS.ProcessEnv = process.env,
 ): EntornoBaseDeDatos => leer(esquemaBaseDeDatos, fuente);
+
+// Las migraciones cambian la estructura, así que usan otro usuario (DB_MIGRACION_USER y
+// DB_MIGRACION_PASSWORD) con más permisos que el de la app (DB_USER). Si no se definen,
+// se usa DB_USER, como antes de separarlos.
+export const cargarEntornoMigraciones = (
+  fuente: NodeJS.ProcessEnv = process.env,
+): EntornoBaseDeDatos => {
+  const base = cargarEntornoBaseDeDatos(fuente);
+  const usuario = fuente.DB_MIGRACION_USER?.trim();
+  if (!usuario) return base;
+  return { ...base, DB_USER: usuario, DB_PASSWORD: fuente.DB_MIGRACION_PASSWORD ?? '' };
+};

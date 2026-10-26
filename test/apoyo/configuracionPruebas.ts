@@ -37,14 +37,16 @@ export const leerConfigPruebas = (env: NodeJS.ProcessEnv = process.env): ConfigP
     throw new Error(`TEST_DB_NAME ("${nombre}") debe incluir la palabra "test" o "prueba" para evitar confusiones.${PASOS}`);
   }
 
-  const user = env.TEST_DB_USER ?? env.DB_USER;
-  if (!user) throw new Error(`Faltan las credenciales: define TEST_DB_USER (o DB_USER).${PASOS}`);
+  // La suite crea y borra bases, así que no puede usar el usuario limitado de la app (DB_USER):
+  // sin TEST_DB_USER usa el de las migraciones.
+  const user = env.TEST_DB_USER ?? env.DB_MIGRACION_USER ?? env.DB_USER;
+  if (!user) throw new Error(`Faltan las credenciales: define TEST_DB_USER (o DB_MIGRACION_USER).${PASOS}`);
 
   return {
     host: env.TEST_DB_HOST ?? env.DB_HOST ?? 'localhost',
     port: Number(env.TEST_DB_PORT ?? env.DB_PORT ?? 5432),
     user,
-    password: env.TEST_DB_PASSWORD ?? env.DB_PASSWORD ?? '',
+    password: env.TEST_DB_PASSWORD ?? env.DB_MIGRACION_PASSWORD ?? env.DB_PASSWORD ?? '',
     baseMantenimiento: nombre,
     prefijo: `${nombre}_`,
   };
