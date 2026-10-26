@@ -24,6 +24,34 @@ describe('usuario de las migraciones separado del de la app', () => {
     assert.deepEqual([app.DB_USER, app.DB_PASSWORD], ['agendamiento_app', 'clave-app']);
   });
 
+  test('una contraseña de base de datos que falta o está vacía da un error claro', () => {
+    const { DB_PASSWORD: _omitida, ...sinClave } = BASE;
+    assert.throws(() => cargarEntornoBaseDeDatos(sinClave), /DB_PASSWORD: falta/);
+    assert.throws(() => cargarEntornoBaseDeDatos({ ...BASE, DB_PASSWORD: '' }), /DB_PASSWORD: está vacía/);
+    for (const clave of [undefined, '']) {
+      assert.throws(
+        () => cargarEntornoMigraciones({ ...BASE, DB_MIGRACION_USER: 'postgres', DB_MIGRACION_PASSWORD: clave }),
+        /DB_MIGRACION_PASSWORD: falta o está vacía/,
+      );
+    }
+  });
+
+  test('las pruebas no mezclan el usuario de un grupo con la contraseña de otro', () => {
+    const base = {
+      ...BASE,
+      TEST_DB_NAME: 'agendamiento_test',
+      DB_MIGRACION_USER: 'postgres',
+      DB_MIGRACION_PASSWORD: 'clave-migraciones',
+    };
+    assert.throws(() => leerConfigPruebas({ ...base, TEST_DB_USER: 'agendamiento_test' }), /TEST_DB_USER.*falta TEST_DB_PASSWORD/s);
+    assert.throws(
+      () => leerConfigPruebas({ ...base, DB_MIGRACION_PASSWORD: undefined }),
+      /DB_MIGRACION_USER.*falta DB_MIGRACION_PASSWORD/s,
+    );
+    const propio = leerConfigPruebas({ ...base, TEST_DB_USER: 'agendamiento_test', TEST_DB_PASSWORD: 'clave-pruebas' });
+    assert.deepEqual([propio.user, propio.password], ['agendamiento_test', 'clave-pruebas']);
+  });
+
   test('las pruebas no usan el usuario limitado de la app: toman el de las migraciones', () => {
     const config = leerConfigPruebas({
       ...BASE,

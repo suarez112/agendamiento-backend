@@ -22,6 +22,29 @@ Para preparar la base de pruebas:
   2. Agrega esta línea al archivo .env:  TEST_DB_NAME=agendamiento_test
   (Opcional, recomendado: TEST_DB_USER y TEST_DB_PASSWORD con un usuario que solo tenga permiso CREATEDB.)`;
 
+// La suite crea y borra bases, así que no puede usar el usuario limitado de la app (DB_USER):
+// toma el primer grupo que tenga usuario (TEST_DB_*, luego DB_MIGRACION_*, luego DB_*) y usa
+// la contraseña de ESE mismo grupo, nunca la de otro.
+const GRUPOS_DE_CREDENCIALES = [
+  ['TEST_DB_USER', 'TEST_DB_PASSWORD'],
+  ['DB_MIGRACION_USER', 'DB_MIGRACION_PASSWORD'],
+  ['DB_USER', 'DB_PASSWORD'],
+] as const;
+
+const leerCredenciales = (env: NodeJS.ProcessEnv) => {
+  const grupo = GRUPOS_DE_CREDENCIALES.find(([variableUsuario]) => env[variableUsuario]);
+  if (!grupo) throw new Error(`Faltan las credenciales: define TEST_DB_USER (o DB_MIGRACION_USER).${PASOS}`);
+  const [variableUsuario, variableClave] = grupo;
+  const password = env[variableClave];
+  if (!password) {
+    throw new Error(
+      `${variableUsuario} está definido pero falta ${variableClave} (o está vacía). ` +
+        `Cada usuario va con su propia contraseña: no se toma la de otro grupo.${PASOS}`,
+    );
+  }
+  return { user: env[variableUsuario] as string, password };
+};
+
 export const leerConfigPruebas = (env: NodeJS.ProcessEnv = process.env): ConfigPruebas => {
   const nombre = env.TEST_DB_NAME?.trim();
   if (!nombre) {
@@ -37,16 +60,13 @@ export const leerConfigPruebas = (env: NodeJS.ProcessEnv = process.env): ConfigP
     throw new Error(`TEST_DB_NAME ("${nombre}") debe incluir la palabra "test" o "prueba" para evitar confusiones.${PASOS}`);
   }
 
-  // La suite crea y borra bases, así que no puede usar el usuario limitado de la app (DB_USER):
-  // sin TEST_DB_USER usa el de las migraciones.
-  const user = env.TEST_DB_USER ?? env.DB_MIGRACION_USER ?? env.DB_USER;
-  if (!user) throw new Error(`Faltan las credenciales: define TEST_DB_USER (o DB_MIGRACION_USER).${PASOS}`);
+  const { user, password } = leerCredenciales(env);
 
   return {
     host: env.TEST_DB_HOST ?? env.DB_HOST ?? 'localhost',
     port: Number(env.TEST_DB_PORT ?? env.DB_PORT ?? 5432),
     user,
-    password: env.TEST_DB_PASSWORD ?? env.DB_MIGRACION_PASSWORD ?? env.DB_PASSWORD ?? '',
+    password,
     baseMantenimiento: nombre,
     prefijo: `${nombre}_`,
   };

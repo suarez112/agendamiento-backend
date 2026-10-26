@@ -311,7 +311,18 @@ Superadmin (2FA, bloqueo por intentos, cierre por inactividad, acciones sobre ne
 
 ## M-3. Contraseñas en texto plano
 
-1. **Cuántas había:** 0. En `barberos`, `usuarios` y `superadmins` todas las contraseñas guardadas son hashes bcrypt (el único valor vacío es el perfil de la administradora que atiende clientes, que no tiene login propio). `npm run db:cifrar-contrasenas` respondió `0 contraseña(s) cifrada(s)`.
+1. **Cuántas había:** 0. En `barberos`, `usuarios` y `superadmins` todas las contraseñas guardadas son hashes bcrypt (el único `NULL` es un perfil de equipo inactivo, sin usuario y sin cuenta vinculada, de un negocio de pruebas: no puede iniciar sesión). `npm run db:cifrar-contrasenas` respondió `0 contraseña(s) cifrada(s)`.
 2. **Código:** `verificarContrasena` (`src/modules/auth/contrasenas.ts`) ya no compara texto plano: un valor que no sea un hash bcrypt nunca es válido (y hace igual el trabajo de bcrypt para no cambiar el tiempo de respuesta). Se sigue subiendo el costo de los hashes bcrypt más débiles al iniciar sesión.
 3. **Comando ampliado:** `db:cifrar-contrasenas` ahora cubre `barberos`, `usuarios` y `superadmins` (antes solo `barberos`, aunque el login de las tres tablas aceptaba texto plano).
 4. **Pruebas:** las semillas (`test/apoyo/baseDePrueba.ts`) usan hashes bcrypt. Prueba nueva en `test/auth.test.ts`: con una contraseña guardada en texto plano (personal y cuenta de administradora), los tres logins (`/auth/login`, `/login`, `/cuentas/login`) responden 401 aunque la clave sea la correcta, y el valor guardado no se modifica.
+
+## Seguimiento de la revisión de la tanda 2 (2026-10-26)
+
+La revisión (lentes de riesgo y fiabilidad) aprobó los commits de A-3 y M-3. Se atendieron estas observaciones:
+
+1. **Contraseñas de base de datos obligatorias.** `DB_PASSWORD` ya no puede faltar ni estar vacía, y con `DB_MIGRACION_USER` la `DB_MIGRACION_PASSWORD` es obligatoria: el arranque falla nombrando la variable (nunca su valor) en vez de probar una contraseña vacía (`src/config/entorno.ts`).
+2. **Pruebas sin credenciales mezcladas.** `test/apoyo/configuracionPruebas.ts` elige el primer grupo con usuario (`TEST_DB_*`, `DB_MIGRACION_*`, `DB_*`) y usa la contraseña de ese mismo grupo; si falta, avisa con un error claro.
+3. **Registro de sentencias.** `SHOW log_statement` = `none` y ningún archivo del log del servidor contiene la contraseña del rol. Ojo: `log_min_error_statement` = `error` (valor por defecto) guarda el texto de las sentencias que fallan; se anotó en la cabecera del script.
+4. **Cuenta sin contraseña.** El único `password_hash` en `NULL` es un perfil de `barberos` inactivo, sin usuario ni cuenta vinculada, de un negocio de pruebas (`PRBPLAN1`): no puede iniciar sesión. `db:cifrar-contrasenas` ignora los `NULL` y ya no cifra una cadena vacía (eso la convertiría en un hash válido de la contraseña vacía): solo avisa.
+5. **`REVOKE CREATE ON SCHEMA public FROM PUBLIC`** quedó aplicado en `agendamiento_db` (ni `PUBLIC` ni `agendamiento_app` pueden crear objetos en `public`).
+6. **Contraseñas sin cifrar:** había 0 y quedan 0 (barberos, usuarios y superadmins).

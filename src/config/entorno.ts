@@ -7,7 +7,10 @@ const esquemaBaseDeDatos = z.object({
   DB_HOST: z.string().min(1),
   DB_PORT: z.coerce.number().int().positive().default(5432),
   DB_USER: z.string().min(1),
-  DB_PASSWORD: z.string(),
+  // Nunca se acepta vacía: una contraseña que falta no debe pasar por una sin contraseña
+  DB_PASSWORD: z
+    .string({ error: 'falta: escribe la contraseña del usuario de la base de datos' })
+    .min(1, 'está vacía: escribe la contraseña del usuario de la base de datos'),
   DB_NAME: z.string().min(1),
   DB_POOL_MAX: z.coerce.number().int().positive().default(10),
 });
@@ -87,5 +90,12 @@ export const cargarEntornoMigraciones = (
   const base = cargarEntornoBaseDeDatos(fuente);
   const usuario = fuente.DB_MIGRACION_USER?.trim();
   if (!usuario) return base;
-  return { ...base, DB_USER: usuario, DB_PASSWORD: fuente.DB_MIGRACION_PASSWORD ?? '' };
+  // Con usuario propio, su contraseña es obligatoria: nunca se prueba la de la app ni una vacía
+  if (!fuente.DB_MIGRACION_PASSWORD) {
+    throw new Error(
+      'Configuración inválida en las variables de entorno:\n' +
+        '  - DB_MIGRACION_PASSWORD: falta o está vacía; es obligatoria cuando se define DB_MIGRACION_USER',
+    );
+  }
+  return { ...base, DB_USER: usuario, DB_PASSWORD: fuente.DB_MIGRACION_PASSWORD };
 };

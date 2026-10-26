@@ -15,6 +15,11 @@
 --   4. Ejecuta (F5). Se puede repetir sin problema: es idempotente.
 --   5. BORRA la contraseña del script antes de guardarlo o compartirlo. Nunca lo subas a git con ella.
 --
+-- Antes de ejecutarlo, comprueba que el servidor no guarde las sentencias: SHOW log_statement;
+-- debe responder "none" (con "all" o "ddl" la contraseña quedaría escrita en el log). Aun con
+-- "none", una sentencia que FALLA se guarda con su texto (log_min_error_statement = error): si el
+-- script da un error con la contraseña puesta, cámbiala después con otra ejecución correcta.
+--
 -- Si el script se ejecuta con la contraseña vacía, se detiene sin cambiar nada.
 -- Una tabla nueva que deba ser "solo inserción" necesita su propio REVOKE UPDATE, DELETE
 -- en la migración que la crea (los permisos por defecto sí incluyen UPDATE y DELETE).
