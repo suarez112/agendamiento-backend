@@ -36,6 +36,7 @@
 ## ALTO
 
 ### A-1. Las pruebas que protegen lo más importante no están funcionando
+- **Estado: RESUELTO en la tanda 1 (2026-10-25).** Hoy corren las **211 pruebas y las 211 pasan**; ver "SEGUIMIENTO – TANDA 1" al final. Lo que sigue describe el problema original.
 - **Qué es:** corrí las 96 pruebas: **36 pasan, 30 fallan y 30 se cancelan**. No fallan porque el programa esté roto, sino porque **las pruebas quedaron viejas** frente a cambios posteriores de la API. En cada archivo, la preparación registra un negocio de prueba con datos antiguos y la API ahora responde 400 (falta el código del negocio, la aceptación de la política y los términos, o se envía el campo `nit`, que ya no existe). Al fallar la preparación, todas las pruebas de ese archivo se cancelan.
 - **Qué deja sin vigilancia:** aislamiento entre negocios y permisos (`permisos.test.ts`), 20 reservas simultáneas por la misma hora (`reservas.test.ts`), validación de reservas, suscripciones y prueba gratuita (`adminEmpresa.test.ts`), registro de empresa y de clientes (`cuentas.test.ts`, `registroEmpresa.test.ts`). Las que sí pasan: autenticación, límite de login, manejo de errores, CORS y conversión de horas.
 - **Causas concretas:**
@@ -220,7 +221,7 @@ Todos son comandos de consola (no están expuestos por HTTP), así que solo los 
 
 | # | Gravedad | Hallazgo | Dónde | Arreglo en una línea |
 | --- | --- | --- | --- | --- |
-| A-1 | **Alto** | 60 de 96 pruebas no corren; las de permisos, aislamiento y reservas simultáneas están entre ellas | `test/apoyo/servidor.ts:152`, `test/adminEmpresa.test.ts:29` | Actualizar los ayudantes de prueba y correr `npm test` en cada cambio |
+| A-1 | **Alto** (resuelto, tanda 1) | 60 de 96 pruebas no corren; las de permisos, aislamiento y reservas simultáneas están entre ellas | `test/apoyo/servidor.ts:152`, `test/adminEmpresa.test.ts:29` | Actualizar los ayudantes de prueba y correr `npm test` en cada cambio |
 | A-2 | **Alto** | Reservas falsas de invitados sin verificar el teléfono | `citas.rutas.ts:23`, `citas.servicio.ts:38` | Tope de citas pendientes por teléfono/negocio y confirmación del teléfono |
 | A-3 | **Alto** | La app usa el superusuario `postgres` | `.env` / `pool.ts` | Rol de aplicación limitado y rol aparte para migraciones |
 | M-1 | Medio | Límite de login solo por IP, compartido en 5 rutas y en memoria | `limitadores.ts:59-64` | Contador por cuenta en base y límites separados |
@@ -252,3 +253,41 @@ Todos son comandos de consola (no están expuestos por HTTP), así que solo los 
 3. A-2, M-1, M-2 y M-4 antes de publicar la app.
 4. M-6 y M-7 antes de usar la política de datos con usuarios reales.
 5. El resto, en el orden de la tabla.
+
+---
+
+# SEGUIMIENTO – TANDA 1 (hallazgo A-1: pruebas)
+
+**Fecha:** 2026-10-25 · **Rama:** `auditoria` · **Resultado:** `npm test` → **211 pruebas, 211 pasan, 0 fallan, 0 canceladas** (antes: 96, 36 pasaban) · `npm run typecheck` sin errores · en PostgreSQL no quedaron bases temporales.
+
+## Qué se hizo
+
+1. **Base de pruebas separada.** Las pruebas ya no leen `DB_NAME`. Usan `TEST_DB_NAME` (en este equipo, `agendamiento_test`) y se **niegan a correr** si falta, si es `agendamiento_db` o igual a `DB_NAME`, o si el nombre no contiene "test" o "prueba" (`test/apoyo/configuracionPruebas.ts`, probado en `test/guardiaBaseDePrueba.test.ts`). Cada archivo crea una base temporal `<TEST_DB_NAME>_<proceso>_<hora>` y solo puede borrar bases con ese prefijo. Instrucciones en `AGENTS.md`.
+2. **Ayudantes actualizados** (`test/apoyo/`): registro de empresa con el contrato actual (código del negocio, ubicación oficial, horario por día, usuario, aceptaciones), contraseñas que cumplen la regla, teléfonos válidos en E.164, reservas con aceptación de política y términos, fechas calculadas en la zona del negocio (no la del computador) y un superadmin de prueba con su segundo paso real.
+3. **Pruebas viejas actualizadas por reglas que cambiaron a propósito, sin quitarles fuerza** (cada una comprueba lo mismo o más): días de prueba contados como días de calendario en la zona del negocio; Mi negocio y la suscripción siguen disponibles con la suscripción vencida y la gestión y la agenda no; el NIT y los días de atención ya no existen (la prueba de la migración 003 corre ahora contra el esquema de la 003); los teléfonos se normalizan a E.164; las reservas llegan hasta hoy + 14 días; la cuenta de la administradora sí entra a los endpoints del personal de su negocio; la contraseña nueva exige mayúscula, minúscula, número y carácter especial.
+4. **Pruebas nuevas** (211 en total, 115 más que las 96 originales):
+
+| Archivo | Qué vigila |
+| --- | --- |
+| `aislamientoNegocios.test.ts` | El negocio A intenta leer y cambiar, por id, equipo, servicios, productos, clientes, lista negra, bloqueos, cartera, horas, reservas y notificaciones del negocio B; y un cliente con cuenta intenta tocar la cita de otro cliente. Todo responde 404 y los datos de B no cambian. |
+| `rolesPermisos.test.ts` | Matriz de 25 endpoints × 6 roles (anónimo, cliente, empleado, administrador del personal, cuenta de la administradora, superadmin), token falso, un empleado que intenta darse permisos y un administrador que intenta quitarse el rol. |
+| `disponibilidad.test.ts` | Cálculo de horas (ejemplo documentado, almuerzo de 12 a 13 con servicios de 30, 60 y 90 minutos, intervalos, horas pasadas) y por la API: el almuerzo semanal bloquea reservas, no afecta a otro profesional y no deja bloquear una hora con cita. |
+| `reservas.test.ts` (ampliado) | Dos reservas simultáneas a la misma hora (5 rondas) y una reserva contra un bloqueo a la vez (4 rondas): siempre se guarda una sola cosa. |
+| `cobro.test.ts` | Precios, niveles 1 / 2 a 5 / 6 a 10, tope de 10, funciones por nivel (403 con el nivel que la incluye), cargos proporcionales (mensual, anual, mínimo de $10.000, reemplazos sin costo, administradores que no atienden, "Yo también atiendo"), activación desde el panel y días de prueba sumados. |
+| `zonaHoraria.test.ts` | Funciones de zona con instantes fijos (incluido horario de verano) y un negocio en Nueva Zelanda frente a uno en Bogotá: "hoy", límite de 14 días, días de prueba, desfase en las respuestas, cambio de zona y anticipación de cancelación en la hora del negocio. |
+| `autorizaciones.test.ts` | La auditoría y el registro de actividad del superadmin no se pueden modificar ni borrar; prueba de cada aceptación; versión nueva de la política; IP y navegador solo de la petición; lectura de la IP con `TRUST_PROXY` 0 y 1; el límite de login no se evita inventando `X-Forwarded-For`; eliminar la cuenta (cliente, única administradora, administradora con otro administrador). |
+
+## Errores reales del código encontrados al escribir las pruebas
+
+**Ninguna prueba falló por un error real del código**: todos los fallos fueron de las pruebas (datos viejos) o reglas que cambiaron a propósito. Observaciones menores para la siguiente tanda (no se corrigió nada):
+
+| # | Gravedad | Observación | Dónde |
+| --- | --- | --- | --- |
+| T1-1 | Bajo | `GET /cartera?barberoId=<id de otro negocio>` responde 200 con ceros y repite ese id en `barberoId`. No filtra datos de B, pero lo correcto sería 404 "Profesional no encontrado", como el resto de los endpoints. | `src/modules/cartera/` |
+| T1-2 | Bajo | `AGENTS.md` se contradice: en "Eliminar la cuenta" dice que se borra "la prueba de autorizaciones de la cuenta", pero la auditoría es de solo inserción y se conserva a propósito (la prueba nueva lo fija). Corregir el texto. | `AGENTS.md` |
+| T1-3 | Informativo | La prueba "con un proxy de confianza (TRUST_PROXY=1)" fija el comportamiento actual de `CF-Connecting-IP` (se acepta de cualquiera si hay proxy). Es el hallazgo **M-2**: al corregirlo hay que actualizar esa prueba. | `test/autorizaciones.test.ts` |
+| T1-4 | Informativo (solo pruebas) | Las filas sembradas antes de la migración 024 (`created_at` sin zona) quedan 5 horas en el futuro en la base de pruebas, porque la migración las interpreta como hora de Bogotá y la base de pruebas siembra en UTC. En producción no pasa (el servidor trabajaba en Bogotá). No afecta a las pruebas actuales. | `test/apoyo/baseDePrueba.ts` |
+
+## Lo que sigue sin pruebas (para tandas siguientes)
+
+Superadmin (2FA, bloqueo por intentos, cierre por inactividad, acciones sobre negocios), recuperación de contraseña, PQRS (plazos y prioridades), reportes avanzados y exportación a Excel/PDF, subida de fotos, recordatorios y avisos push, límites de registro y de PQRS, y cartera/resumen con comparaciones. Los hallazgos M-1 a M-8 y B-1 a B-11 siguen abiertos: ninguno se corrigió en esta tanda.
