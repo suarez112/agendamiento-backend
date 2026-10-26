@@ -17,16 +17,19 @@ export const FECHA_FUTURA = fechaEnDias(7);
 
 // Datos conocidos: dos negocios para probar el aislamiento entre ellos
 const sembrar = async (pool: pg.Pool) => {
-  const hashSecreta = await bcrypt.hash('secreta', 4);
+  // Costo bajo para que las pruebas sean rápidas; el inicio de sesión lo sube al de producción
+  const [hashSecreta, hash1234, hashClaveA, hashClaveB] = await Promise.all(
+    ['secreta', '1234', 'clave-a', 'clave-b'].map((clave) => bcrypt.hash(clave, 4)),
+  );
   await pool.query(`
     INSERT INTO empresas (id, nombre, codigo_acceso, horario_apertura, horario_cierre) VALUES
       ('emp_a', 'Negocio A', 'NEGA', '08:00', '20:00'),
       ('emp_b', 'Negocio B', 'NEGB', '08:00', '20:00');
     INSERT INTO barberos (id, empresa_id, nombre, usuario, password_hash, es_admin) VALUES
-      ('admin_a', 'emp_a', 'Admin A', 'admin.a', '1234', true),
-      ('barb_a', 'emp_a', 'Barbero A', 'barbero.a', 'clave-a', false),
+      ('admin_a', 'emp_a', 'Admin A', 'admin.a', '${hash1234}', true),
+      ('barb_a', 'emp_a', 'Barbero A', 'barbero.a', '${hashClaveA}', false),
       ('barb_a2', 'emp_a', 'Barbero A2', 'barbero.a2', '${hashSecreta}', false),
-      ('admin_b', 'emp_b', 'Admin B', 'admin.b', 'clave-b', true);
+      ('admin_b', 'emp_b', 'Admin B', 'admin.b', '${hashClaveB}', true);
     INSERT INTO servicios (id, empresa_id, nombre, duracion_min, precio) VALUES
       ('serv_a', 'emp_a', 'Corte', 30, 20000),
       ('serv_a_largo', 'emp_a', 'Corte y barba', 60, 35000),

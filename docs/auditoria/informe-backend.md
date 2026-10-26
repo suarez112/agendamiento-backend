@@ -56,6 +56,7 @@
   4. Una verificación de aplicación legítima (por ejemplo App Attest / Play Integrity) o CAPTCHA en la versión web.
 
 ### A-3. La aplicación se conecta a PostgreSQL con el usuario `postgres`
+- **Estado: RESUELTO en la tanda 2 (2026-10-26).** La app usa el rol limitado `agendamiento_app`; ver "SEGUIMIENTO – TANDA 2" al final. Lo que sigue describe el problema original.
 - **Qué es:** `postgres` es el superusuario: puede leer, cambiar y borrar todo, crear bases y, en muchas instalaciones, ejecutar comandos en el servidor de la base. La app solo necesita leer y escribir en sus tablas. `AGENTS.md` ya lo reconoce.
 - **Por qué importa aquí:** si algún día aparece un fallo (por ejemplo una inyección SQL, que hoy no encontré), el daño sería total. Además, las tablas "solo de inserción" (`auditoria_autorizaciones`, `actividad_superadmin`) se protegen con disparadores que un superusuario puede desactivar; con un usuario limitado esa protección sí sería firme (Ley 1581: la prueba de las autorizaciones no debe poder alterarse).
 - **Dónde:** variables `DB_USER`/`DB_PASSWORD` del `.env` (no lo leí; ver "límites") y `src/db/pool.ts`.
@@ -78,6 +79,7 @@
 - **Cómo se arregla:** documentar el valor exacto de `TRUST_PROXY` para el hosting elegido; aceptar `CF-Connecting-IP` solo si existe una variable explícita que diga "detrás de Cloudflare"; y un test que cubra ambos casos (hoy `TRUST_PROXY` no tiene pruebas).
 
 ### M-3. Contraseñas heredadas en texto plano se siguen aceptando
+- **Estado: RESUELTO en la tanda 2 (2026-10-26).** En la base de desarrollo había 0 cuentas con contraseña sin cifrar y la rama de texto plano ya no existe; ver "SEGUIMIENTO – TANDA 2" al final. Lo que sigue describe el problema original.
 - **Qué es:** si el valor guardado no parece un hash bcrypt, el login lo compara como texto plano y luego lo convierte (`src/modules/auth/contrasenas.ts:35-37`). Era una migración de datos viejos. Si en la base quedan integrantes del personal que nunca volvieron a entrar, **su contraseña está en claro** y cualquier lectura de la base (copia de seguridad, error, empleado con acceso) la expone. El script `db:cifrar-contrasenas` existe pero es manual (`src/db/cifrarContrasenas.ts`).
 - **Cómo se comprueba (solo lectura):** `SELECT count(*) FROM barberos WHERE password_hash !~ '^\$2[aby]\$';`
 - **Cómo se arregla:** ejecutar `db:cifrar-contrasenas` en cada base real; después quitar la rama de texto plano de `verificarContrasena` (o una migración que obligue a restablecer). Las pruebas de siembra usan textos como `'1234'` (`test/apoyo/baseDePrueba.ts:28`) y habría que cambiarlas a hashes.
@@ -187,7 +189,7 @@ Todos son comandos de consola (no están expuestos por HTTP), así que solo los 
 
 # C. PROTECCIÓN DE DATOS (Ley 1581 de 2012)
 
-- **¿Se pueden alterar las autorizaciones?** Hay una tabla de solo inserción con disparadores que rechazan `UPDATE`, `DELETE` y `TRUNCATE` (migración 023) y sin llaves foráneas con borrado en cascada (la prueba sobrevive al borrado de la cuenta). **Pero** mientras la app se conecte como `postgres` (A-3), un superusuario puede desactivar el disparador. Con un usuario limitado quedaría firme. La IP que se guarda como prueba depende de `TRUST_PROXY` (M-2).
+- **¿Se pueden alterar las autorizaciones?** Hay una tabla de solo inserción con disparadores que rechazan `UPDATE`, `DELETE` y `TRUNCATE` (migración 023) y sin llaves foráneas con borrado en cascada (la prueba sobrevive al borrado de la cuenta). ~~Mientras la app se conectaba como `postgres` (A-3), un superusuario podía desactivar el disparador.~~ Resuelto en la tanda 2: la app usa un rol que no puede desactivarlo ni cambiar esas tablas (comprobado). La IP que se guarda como prueba depende de `TRUST_PROXY` (M-2).
 - **¿Eliminar la cuenta borra o anonimiza de verdad?** En gran parte sí (cuenta, cliente, PQRS, sesiones, tokens push); quedan los datos del equipo y fotos al cerrar un negocio, el nombre de la administradora y el nombre del cliente en notificaciones antiguas (M-6).
 - **¿Se guardan datos innecesarios?** En general no: el equipo no tiene teléfono, el negocio ya no guarda NIT ni correo. Para revisar: IP y User-Agent de la prueba sin plazo, nombre del cliente dentro de las notificaciones y en el contenido de las push (B-5), y textos legales aún **en borrador** con espacios por llenar (`[NOMBRE DEL RESPONSABLE]`, `[CORREO DE CONTACTO]`…) que deben revisarse con un abogado antes de publicar la app.
 
@@ -223,10 +225,10 @@ Todos son comandos de consola (no están expuestos por HTTP), así que solo los 
 | --- | --- | --- | --- | --- |
 | A-1 | **Alto** (resuelto, tanda 1) | 60 de 96 pruebas no corren; las de permisos, aislamiento y reservas simultáneas están entre ellas | `test/apoyo/servidor.ts:152`, `test/adminEmpresa.test.ts:29` | Actualizar los ayudantes de prueba y correr `npm test` en cada cambio |
 | A-2 | **Alto** | Reservas falsas de invitados sin verificar el teléfono | `citas.rutas.ts:23`, `citas.servicio.ts:38` | Tope de citas pendientes por teléfono/negocio y confirmación del teléfono |
-| A-3 | **Alto** | La app usa el superusuario `postgres` | `.env` / `pool.ts` | Rol de aplicación limitado y rol aparte para migraciones |
+| A-3 | **Alto** (resuelto, tanda 2) | La app usa el superusuario `postgres` | `.env` / `pool.ts` | Rol de aplicación limitado y rol aparte para migraciones |
 | M-1 | Medio | Límite de login solo por IP, compartido en 5 rutas y en memoria | `limitadores.ts:59-64` | Contador por cuenta en base y límites separados |
 | M-2 | Medio | `TRUST_PROXY` y lectura de IP (puede falsear límites y la IP legal) | `entorno.ts:31`, `legal.ts:51-57` | Fijar el valor según el hosting y confiar en `CF-Connecting-IP` solo si se declara |
-| M-3 | Medio | Contraseñas heredadas en texto plano aún aceptadas | `contrasenas.ts:35-37` | Ejecutar `db:cifrar-contrasenas` y quitar esa rama |
+| M-3 | Medio (resuelto, tanda 2) | Contraseñas heredadas en texto plano aún aceptadas | `contrasenas.ts:35-37` | Ejecutar `db:cifrar-contrasenas` y quitar esa rama |
 | M-4 | Medio | Sesiones de 12 h sin cierre en servidor; las del personal no se invalidan al cambiar la clave | `tokens.ts:38-39` | `version_sesion` en `barberos` y `POST /logout`; refresh tokens al ir a producción |
 | M-5 | Medio | Se puede bloquear al superadmin desde fuera | `superadmin.repositorio.ts:34-47` | Bloqueo por cuenta+IP y mensaje genérico |
 | M-6 | Medio | Eliminar cuenta deja datos del equipo, fotos y nombres | `eliminacion.servicio.ts:51-72` | Anonimizar equipo, borrar fotos y limpiar notificaciones |
@@ -291,3 +293,25 @@ Todos son comandos de consola (no están expuestos por HTTP), así que solo los 
 ## Lo que sigue sin pruebas (para tandas siguientes)
 
 Superadmin (2FA, bloqueo por intentos, cierre por inactividad, acciones sobre negocios), recuperación de contraseña, PQRS (plazos y prioridades), reportes avanzados y exportación a Excel/PDF, subida de fotos, recordatorios y avisos push, límites de registro y de PQRS, y cartera/resumen con comparaciones. Los hallazgos M-1 a M-8 y B-1 a B-11 siguen abiertos: ninguno se corrigió en esta tanda.
+
+---
+
+# SEGUIMIENTO – TANDA 2 (hallazgos A-3 y M-3: base de datos y contraseñas)
+
+**Fecha:** 2026-10-26 · **Rama:** `auditoria` · **Resultado:** `npm test` → **221 pruebas, 221 pasan, 0 fallan, 0 saltadas** (antes: 211) · `npm run typecheck` sin errores.
+
+## A-3. La app ya no usa el superusuario
+
+1. **Script** `db/mantenimiento/crear-rol-aplicacion.sql` (idempotente; la contraseña se escribe a mano y no se sube a git). Crea `agendamiento_app` sin superusuario, sin `CREATEDB`, sin `CREATEROLE`. Permisos: `SELECT/INSERT/UPDATE/DELETE` en las tablas, uso de las secuencias, sin crear objetos en el esquema `public`, y permisos por defecto para las tablas que cree el usuario de migraciones. `auditoria_autorizaciones` y `actividad_superadmin`: solo `SELECT` e `INSERT`. `schema_migrations`: sin acceso.
+2. **Dos usuarios en el `.env`:** `DB_USER`/`DB_PASSWORD` = rol limitado de la app; `DB_MIGRACION_USER`/`DB_MIGRACION_PASSWORD` = usuario con más permisos, usado solo por `npm run db:migrate` y por las pruebas (necesitan `CREATEDB`). Sin las variables nuevas todo funciona como antes (`cargarEntornoMigraciones`, `src/config/entorno.ts`).
+3. **Comprobado en `agendamiento_db` con el rol nuevo:** la app responde (`/api/saludo`, `/categorias`, `/planes` → 200); el rol puede leer y escribir en las tablas; `DROP TABLE`, `TRUNCATE`, `ALTER TABLE`, `CREATE TABLE`, `DISABLE TRIGGER` y `DROP TRIGGER` dan "permiso denegado" (42501); en `auditoria_autorizaciones` y `actividad_superadmin` `UPDATE`, `DELETE` y `TRUNCATE` también (solo se puede leer e insertar).
+4. **Prueba nueva** `test/rolAplicacion.test.ts`: aplica el script en una base temporal con otro nombre de rol (el rol real no se toca) y vigila lo anterior, además de que una tabla creada después tenga permisos y de que el script se detenga si la contraseña está en blanco.
+5. **Pendiente de producción:** repetir el script en cada base real y guardar las contraseñas en el gestor de secretos del hosting. Una tabla nueva que deba ser "solo inserción" necesita su propio `REVOKE UPDATE, DELETE` en su migración (anotado en `AGENTS.md`).
+6. **Incidente durante la puesta en marcha:** el script se ejecutó primero sobre `agendamiento_test` en vez de `agendamiento_db`; la app daba 500 en los endpoints con tablas (permiso denegado) hasta repetirlo sobre la base correcta. Lección: comprobar el nombre de la base en la pestaña de la Query Tool.
+
+## M-3. Contraseñas en texto plano
+
+1. **Cuántas había:** 0. En `barberos`, `usuarios` y `superadmins` todas las contraseñas guardadas son hashes bcrypt (el único valor vacío es el perfil de la administradora que atiende clientes, que no tiene login propio). `npm run db:cifrar-contrasenas` respondió `0 contraseña(s) cifrada(s)`.
+2. **Código:** `verificarContrasena` (`src/modules/auth/contrasenas.ts`) ya no compara texto plano: un valor que no sea un hash bcrypt nunca es válido (y hace igual el trabajo de bcrypt para no cambiar el tiempo de respuesta). Se sigue subiendo el costo de los hashes bcrypt más débiles al iniciar sesión.
+3. **Comando ampliado:** `db:cifrar-contrasenas` ahora cubre `barberos`, `usuarios` y `superadmins` (antes solo `barberos`, aunque el login de las tres tablas aceptaba texto plano).
+4. **Pruebas:** las semillas (`test/apoyo/baseDePrueba.ts`) usan hashes bcrypt. Prueba nueva en `test/auth.test.ts`: con una contraseña guardada en texto plano (personal y cuenta de administradora), los tres logins (`/auth/login`, `/login`, `/cuentas/login`) responden 401 aunque la clave sea la correcta, y el valor guardado no se modifica.

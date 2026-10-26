@@ -21,6 +21,7 @@ Se validan al arrancar (`src/config/entorno.ts`); si falta una, el servidor no i
 | `PORT` | `4000` | |
 | `DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` | — | obligatorias |
 | `DB_PORT` | `5432` | |
+| `DB_MIGRACION_USER`, `DB_MIGRACION_PASSWORD` | `DB_USER` | usuario con más permisos que solo usa `npm run db:migrate` (y, sin `TEST_DB_USER`, las pruebas). `DB_USER` es el rol limitado de la app: se crea con `db/mantenimiento/crear-rol-aplicacion.sql` |
 | `DB_POOL_MAX` | `10` | conexiones máximas del pool |
 | `JWT_SECRET` | — | obligatoria; mínimo 32 caracteres en producción. Genera una con `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"` |
 | `JWT_EXPIRA_EN` | `12h` | formato `30m`, `12h`, `7d` |
@@ -34,7 +35,7 @@ Se validan al arrancar (`src/config/entorno.ts`); si falta una, el servidor no i
 | `npm run typecheck` | Revisa tipos de `src/` y `test/` |
 | `npm test` | Pruebas de integración: crean y borran una base temporal en el PostgreSQL de `.env` (el usuario necesita permiso `CREATEDB`) |
 | `npm run db:migrate` | Aplica las migraciones pendientes de `db/migraciones` |
-| `npm run db:cifrar-contrasenas` | Cifra con bcrypt las contraseñas que aún estén en texto plano. **Haz un respaldo antes:** no se puede deshacer |
+| `npm run db:cifrar-contrasenas` | Cifra con bcrypt las contraseñas en texto plano de `barberos`, `usuarios` y `superadmins`. **Haz un respaldo antes:** no se puede deshacer |
 
 ## Estructura
 
@@ -59,7 +60,7 @@ Cada módulo separa **rutas** (HTTP y validación), **servicio** (reglas de nego
 ## Reglas de seguridad
 
 - **Negocio y rol salen de la sesión**, nunca del cuerpo de la solicitud. El token solo guarda `sub` (barbero) y `empresaId`; `es_admin` se lee de la base en cada solicitud, así que quitar un rol o eliminar a alguien aplica de inmediato.
-- **Contraseñas con bcrypt** (costo 12). Las heredadas en texto plano se aceptan una vez y se cifran al iniciar sesión.
+- **Contraseñas con bcrypt** (costo 12). Una contraseña guardada en texto plano **no se acepta**: si queda alguna, hay que cifrarla con `npm run db:cifrar-contrasenas`. Si el costo de un hash viejo es menor, se sube al iniciar sesión.
 - **Doble reserva imposible**: la restricción `citas_sin_solapamiento` (PostgreSQL, `btree_gist`) rechaza la segunda de dos reservas simultáneas que se solapen; la API responde 409.
 - **Aislamiento en la base**: llaves foráneas compuestas `(empresa_id, …)` impiden que una cita apunte a un profesional, servicio o cliente de otro negocio.
 - **Límites por IP** (en memoria): login 10 intentos fallidos / 15 min, código de negocio 60, reservas 20, registro 10, general 300. Con varias instancias usa un store compartido (Redis).
