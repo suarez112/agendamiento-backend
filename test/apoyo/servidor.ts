@@ -3,6 +3,8 @@ import type { AddressInfo } from 'node:net';
 import { createServer, type Server } from 'node:net';
 import type pg from 'pg';
 import { crearApp } from '../../src/app.js';
+import { cifrarContrasena } from '../../src/modules/auth/contrasenas.js';
+import { cifrarSecreto, codigoTotp, generarSecretoTotp } from '../../src/modules/superadmin/totp.js';
 import { cargarEntorno, type Entorno } from '../../src/config/entorno.js';
 import type { ConfigLimites } from '../../src/shared/http/limitadores.js';
 import { type BaseDePrueba, crearBaseDePrueba, FECHA_FUTURA } from './baseDePrueba.js';
@@ -200,3 +202,32 @@ export const reservaValida = (cambios: Record<string, unknown> = {}) => ({
   aceptaTerminos: true,
   ...cambios,
 });
+
+// Superadmin de prueba con su segundo paso (TOTP) real: lo crea directo en la base, igual que el comando de
+// desarrollador, y devuelve su token tras iniciar sesión por la API.
+export const crearSuperadmin = async (ctx: Contexto): Promise<string> => {
+  const correo = 'superadmin@plataforma.co';
+  const clave = 'Super-admin-123!';
+  const secreto = generarSecretoTotp();
+  await ctx.pool.query('INSERT INTO superadmins (correo, password_hash, totp_secreto) VALUES ($1, $2, $3)', [
+    correo,
+    await cifrarContrasena(clave),
+    cifrarSecreto(secreto, SECRETO_PRUEBAS),
+  ]);
+  const r = await pedir(ctx, '/api/v1/superadmin/login', {
+    method: 'POST',
+    body: { correo, clave, codigo: codigoTotp(secreto) },
+  });
+  if (r.estado !== 200) throw new Error(`Login del superadmin falló con ${r.estado}: ${r.texto}`);
+  return r.json.token;
+};
+
+// Espera a que se cumpla algo que ocurre sin esperar la respuesta (ej. los avisos que se guardan después de reservar)
+export const esperarHasta = async <T>(consulta: () => Promise<T | undefined | null | false>, intentos = 40): Promise<T> => {
+  for (let i = 0; i < intentos; i++) {
+    const valor = await consulta();
+    if (valor) return valor;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error('No ocurrió a tiempo lo que se esperaba');
+};

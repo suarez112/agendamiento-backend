@@ -39,6 +39,48 @@ describe('reservas simultáneas', () => {
     assert.ok(respuestas.every((r) => r.estado === 201 || r.estado === 409));
   });
 
+  test('dos reservas simultáneas a la misma hora: una se agenda y la otra recibe 409', async () => {
+    const fecha = fechaEnDias(6);
+    // Varias rondas, cada una en una hora distinta, para no depender de un golpe de suerte con el orden
+    for (const [ronda, hora] of ['08:00 AM', '09:00 AM', '10:00 AM', '11:00 AM', '12:00 PM'].entries()) {
+      const [a, b] = await Promise.all([
+        reservar(ctx, { fecha, hora, telefono: telefonoValido(10 + ronda * 2) }),
+        reservar(ctx, { fecha, hora, telefono: telefonoValido(11 + ronda * 2) }),
+      ]);
+      assert.deepEqual([a.estado, b.estado].sort(), [201, 409], `ronda ${ronda}: ${a.texto} ${b.texto}`);
+      const rechazada = a.estado === 409 ? a : b;
+      assert.deepEqual(rechazada.json, { error: 'Esa hora ya está ocupada. Por favor elige otra.' });
+      const { rows } = await ctx.pool.query(
+        "SELECT count(*)::int AS n FROM citas WHERE barbero_id = 'barb_a' AND fecha = $1 AND estado <> 'CANCELADA' AND hora_inicio = $2::time",
+        [fecha, `${String(8 + ronda).padStart(2, '0')}:00`],
+      );
+      assert.equal(rows[0].n, 1, `ronda ${ronda}: una sola cita en esa hora`);
+    }
+  });
+
+  test('una reserva y un bloqueo simultáneos sobre la misma hora: solo uno se guarda', async () => {
+    const fecha = fechaEnDias(6);
+    const token = await iniciarSesion(ctx, 'admin.a', '1234');
+    for (const [ronda, hora] of ['01:00 PM', '02:00 PM', '03:00 PM', '04:00 PM'].entries()) {
+      const inicio = `${13 + ronda}:00`;
+      const fin = `${14 + ronda}:00`;
+      const [cita, bloqueo] = await Promise.all([
+        reservar(ctx, { fecha, hora, telefono: telefonoValido(40 + ronda) }),
+        pedir(ctx, '/api/v1/bloqueos', { method: 'POST', token, body: { barberoId: 'barb_a', fecha, horaInicio: inicio, horaFin: fin } }),
+      ]);
+      const guardadas = [cita.estado === 201, bloqueo.estado === 201].filter(Boolean).length;
+      assert.equal(guardadas, 1, `ronda ${ronda}: cita ${cita.estado} ${cita.texto} / bloqueo ${bloqueo.estado} ${bloqueo.texto}`);
+      assert.ok([cita.estado, bloqueo.estado].every((e) => e === 201 || e === 409));
+      // Nunca quedan las dos cosas encima una de la otra
+      const { rows } = await ctx.pool.query(
+        `SELECT (SELECT count(*)::int FROM citas WHERE barbero_id = 'barb_a' AND fecha = $1 AND estado <> 'CANCELADA' AND hora_inicio = $2::time) AS citas,
+                (SELECT count(*)::int FROM bloqueos WHERE barbero_id = 'barb_a' AND fecha_especifica = $1 AND hora_inicio = $2::time) AS bloqueos`,
+        [fecha, inicio],
+      );
+      assert.equal(rows[0].citas + rows[0].bloqueos, 1, `ronda ${ronda}`);
+    }
+  });
+
   test('una reserva rechazada no suma citas al cliente', async () => {
     const fecha = fechaEnDias(12);
     assert.equal((await reservar(ctx, { fecha, telefono: telefonoValido(1) })).estado, 201);
