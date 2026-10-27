@@ -5,7 +5,7 @@ import { cifrarContrasena } from '../modules/auth/contrasenas.js';
 import * as repositorio from '../modules/superadmin/superadmin.repositorio.js';
 import { cifrarSecreto, generarSecretoTotp } from '../modules/superadmin/totp.js';
 import { generarContrasena, mostrarSegundoPaso } from './credencialesSuperadmin.js';
-import { negarEnProduccion, registrarComando } from './comandos.js';
+import { negarEnProduccion, registrarComandoSinFallar } from './comandos.js';
 import { crearPool } from './pool.js';
 
 // npm run dev:restablecer-superadmin -- correo [--totp]
@@ -41,11 +41,6 @@ try {
     console.error(`✖ No existe un superadmin con el correo ${correo.data}.`);
     process.exitCode = 1;
   } else {
-    await registrarComando(pool, {
-      comando: 'dev:restablecer-superadmin',
-      accion: 'restablecer_superadmin',
-      detalle: { correo: correo.data, segundoPaso: Boolean(secreto) },
-    });
     console.log(`✔ Contraseña restablecida: ${correo.data}. Las sesiones abiertas se cerraron.\n`);
     console.log(`Contraseña nueva: ${contrasena}\n`);
     if (secreto) {
@@ -56,6 +51,12 @@ try {
       console.log('Si también la perdiste, repite el comando con --totp.');
     }
     console.log('\nGuárdala ahora: no se vuelve a mostrar.');
+    // Después de mostrar la contraseña: si anotarlo falla, no se pierde
+    await registrarComandoSinFallar(pool, {
+      comando: 'dev:restablecer-superadmin',
+      accion: 'restablecer_superadmin',
+      detalle: { correo: correo.data, segundoPaso: Boolean(secreto) },
+    });
   }
 } catch (error) {
   console.error((error as Error).message);

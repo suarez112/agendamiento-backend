@@ -14,6 +14,7 @@ import {
   pedir,
   registrarCliente,
   SECRETO_PRUEBAS,
+  esperarHasta,
   SECRETO_RECUPERACION_PRUEBAS,
   SECRETO_TOTP_PRUEBAS,
 } from './apoyo/servidor.js';
@@ -90,14 +91,13 @@ describe('tres secretos independientes: cada uno protege solo lo suyo', () => {
     const correo = { enviar: async (m: { texto: string }) => void (texto = m.texto) };
     const conSecreto = (secreto: string) => crearServicioRecuperacion({ pool: ctx.pool, secreto, correo });
     await conSecreto(SECRETO_RECUPERACION_PRUEBAS).solicitar('recupera@correo.com');
-    await new Promise((r) => setTimeout(r, 50));
-    const codigo = texto.match(/\b(\d{6})\b/)![1];
+    const codigo = (await esperarHasta(async () => texto.match(/\b(\d{6})\b/)))[1];
     const datos = { correo: 'recupera@correo.com', codigo, clave: 'Nueva-clave-9!' };
     // Con el secreto de las sesiones el código no coincide
     await assert.rejects(conSecreto(SECRETO_PRUEBAS).restablecer(datos), { estado: 400 });
+    texto = '';
     await conSecreto(SECRETO_RECUPERACION_PRUEBAS).solicitar('recupera@correo.com');
-    await new Promise((r) => setTimeout(r, 50));
-    const nuevo = texto.match(/\b(\d{6})\b/)![1];
+    const nuevo = (await esperarHasta(async () => texto.match(/\b(\d{6})\b/)))[1];
     const ok = await conSecreto(SECRETO_RECUPERACION_PRUEBAS).restablecer({ ...datos, codigo: nuevo });
     assert.match(ok.mensaje, /Tu contraseña se cambió/);
   });

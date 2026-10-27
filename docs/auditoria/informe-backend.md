@@ -350,7 +350,7 @@ La revisión (lentes de riesgo y fiabilidad) aprobó los commits de A-3 y M-3. S
 
 # SEGUIMIENTO – TANDA 3 (hallazgos A-2, M-1, M-2, M-4, M-5, M-6, M-8, B-1 a B-7, B-9 a B-11 y pendientes menores)
 
-**Fecha:** 2026-10-26 · **Rama:** `auditoria` · **Resultado:** `npm test` → **317 pruebas, 317 pasan, 0 fallan** (antes: 221) · `npm run typecheck` sin errores · en PostgreSQL no quedaron bases temporales.
+**Fecha:** 2026-10-26 · **Rama:** `auditoria` · **Resultado:** `npm test` → **318 pruebas, 318 pasan, 0 fallan** (antes: 221) · `npm run typecheck` sin errores · en PostgreSQL no quedaron bases temporales.
 
 ## Qué se hizo
 
@@ -397,9 +397,24 @@ La revisión (lentes de riesgo y fiabilidad) aprobó los commits de A-3 y M-3. S
 ## Decisiones y cosas a tener en cuenta
 
 1. **Un bloqueo por intentos fallidos también rechaza la contraseña correcta** mientras dura (si no, no frenaría nada). Quien olvidó su contraseña la recupera por correo (que en producción aún no funciona: M-7). Un atacante que conozca un correo puede bloquear esa cuenta unos minutos; es el costo de frenar el ataque desde muchas IP.
-2. **Segundo paso (2FA) del superadmin de desarrollo:** al ejecutar `db:recifrar-2fa` la clave guardada no se pudo leer ni con `JWT_SECRET` ni con `TOTP_SECRET`: se cifró con un `JWT_SECRET` anterior que ya no está en el `.env`. Si se conserva ese valor viejo, se pone en `TOTP_SECRET_ANTERIOR` y se repite el comando (misma app autenticadora); si no, hay que reiniciar el segundo paso con `npm run dev:crear-superadmin -- correo --reiniciar` (QR nuevo).
+2. **Segundo paso (2FA) del superadmin de desarrollo:** al ejecutar `db:recifrar-2fa` la clave guardada no se pudo leer ni con `JWT_SECRET` ni con `TOTP_SECRET`: se había cifrado con un `JWT_SECRET` anterior que ya no estaba en el `.env`. No había copia del valor viejo, así que se reinició el segundo paso con `dev:crear-superadmin -- correo --reiniciar` (contraseña y QR nuevos, configurados por el dueño). Con la clave nueva ya cifrada con `TOTP_SECRET`, `db:recifrar-2fa` no necesita volver a usarse salvo que se cambie ese secreto.
 3. **Crear el primer superadmin en producción:** `dev:crear-superadmin` ya no corre con `NODE_ENV=production`; se ejecuta desde una máquina de confianza apuntando a esa base con `NODE_ENV=development`. Es un cinturón contra errores, no un candado contra quien ya controla el servidor.
-4. **`.env.example`:** el sistema bloqueó escribir ese archivo con las reglas de permisos; el contenido está en `docs/despliegue/env-ejemplo.txt` y se copia con `cp docs/despliegue/env-ejemplo.txt .env.example`.
-5. **Avisos nuevos de `npm audit`:** `body-parser` y `multer` (gravedad alta, denegación de servicio) tienen corrección sin cambios mayores con `npm audit fix` (sin `--force`). No se aplicó en esta tanda; conviene hacerlo y volver a correr las pruebas.
-6. **Revisión de los commits de riesgo alto** (límites y contador de login, sesiones, secretos): preparada y pendiente del consentimiento de quien administra el repositorio.
-7. **Siguen para cuando se publique:** M-7 (correo real), B-8 (`URL_PUBLICA`), HTTPS, integración continua, refresh tokens, Redis para los límites por IP con varias instancias y el valor final de `TRUST_PROXY`.
+4. **`.env.example`:** el sistema bloqueó escribirlo con las reglas de permisos; el dueño lo creó a partir de `docs/despliegue/env-ejemplo.txt` y se subió (idéntico a esa plantilla, sin valores reales).
+5. **Avisos nuevos de `npm audit`:** `body-parser` y `multer` (gravedad alta, denegación de servicio) se corrigieron con `npm audit fix` (sin `--force`): `body-parser` 2.4.0 y `multer` 2.5.0. `npm audit` ya reporta 0 vulnerabilidades.
+6. **Revisión nativa de los commits de riesgo alto** (con el consentimiento del dueño, cada una sobre su propio corte del cambio, en copias aparte del repositorio): **las tres quedaron aprobadas.** Detalle en "Resultado de las revisiones" más abajo.
+7. **Un comando que ya cambió la contraseña no pierde las credenciales:** `dev:crear-superadmin` y `dev:restablecer-superadmin` muestran primero la contraseña y el QR y después anotan en la actividad; si anotar falla, avisan en lugar de dejar a la persona sin acceso (observación de la revisión de secretos).
+8. **Siguen para cuando se publique:** M-7 (correo real), B-8 (`URL_PUBLICA`), HTTPS, integración continua, refresh tokens, Redis para los límites por IP con varias instancias y el valor final de `TRUST_PROXY`.
+
+## Resultado de las revisiones (2026-10-27)
+
+| Commit | Qué cubre | Resultado |
+| --- | --- | --- |
+| `52bc3e0` | Límites por ruta, contador por cuenta en la base y bloqueo del superadmin por cuenta + IP | **Aprobada** en la segunda ronda. La primera encontró un bloqueo: en ese corte las rutas pedían el contador `intentos`, pero la conexión en `app.ts` estaba en otro commit (efecto de dividir por temas; el código final sí la tiene). Se corrigió con 57 líneas. |
+| `19b2143` | `version_sesion` del personal, `POST /logout`, cierre de sesiones al cambiar la contraseña | **Aprobada** en la primera ronda. |
+| `3dcfede` | Tres secretos independientes y `db:recifrar-2fa` | **Aprobada** en la primera ronda. |
+
+Observaciones que **no bloquean** y quedan como trabajo aparte (las revisiones las listan como advertencias o sugerencias):
+
+- **Límites y contador:** si falla el borrado del contador tras un inicio de sesión correcto, la persona recibe un error 500 en vez de entrar; varios intentos a la vez pueden pasar el bloqueo antes de que se registre; la limpieza de filas viejas corre dentro de cada fallo y puede competir por bloqueos; el bloqueo de cuenta no se quita al recuperar la contraseña; un atacante que conozca un correo puede bloquear esa cuenta unos minutos, y uno con muchas IP puede seguir probando contra el superadmin.
+- **Sesiones:** `POST /logout` responde 200 aunque la cuenta ya no exista; al cambiar la contraseña de un integrante sus celulares registrados siguen recibiendo avisos; falta una prueba con un campo `ver` mal formado.
+- **Secretos:** la validación de `DETRAS_DE_CLOUDFLARE` sin proxy no tiene prueba propia (sí la tiene en `autorizaciones`); las pruebas dependen de módulos de otros commits (por el corte por temas).

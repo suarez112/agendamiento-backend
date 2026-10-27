@@ -58,6 +58,17 @@ export type RegistroDeComando = {
 
 export const SUPERADMIN_DE_SISTEMA = 'sistema';
 
+// Para los comandos que ya cambiaron algo y muestran credenciales una sola vez: si anotar el comando falla, el cambio
+// no se deshace, así que se avisa en lugar de lanzar el error (y dejar a la persona sin la contraseña nueva)
+export const registrarComandoSinFallar = async (db: Consultable, c: RegistroDeComando) => {
+  try {
+    await registrarComando(db, c);
+  } catch (error) {
+    console.error(`⚠ El cambio se hizo, pero no se pudo anotar en la actividad del superadmin: ${(error as Error).message}`);
+    process.exitCode = 1;
+  }
+};
+
 // Anota en actividad_superadmin que se ejecutó un comando. Los datos personales no van aquí: solo qué se hizo.
 export const registrarComando = async (db: Consultable, c: RegistroDeComando) => {
   await db.query(

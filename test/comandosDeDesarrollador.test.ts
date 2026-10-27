@@ -3,7 +3,8 @@ import { spawn } from 'node:child_process';
 import { rmSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
 import { after, before, describe, test } from 'node:test';
-import { confirmar, motivoDeNegacion } from '../src/db/comandos.js';
+import { confirmar, motivoDeNegacion, registrarComandoSinFallar } from '../src/db/comandos.js';
+import type { Consultable } from '../src/db/pool.js';
 import { cifrarContrasena } from '../src/modules/auth/contrasenas.js';
 import { leerConfigPruebas } from './apoyo/configuracionPruebas.js';
 import {
@@ -174,6 +175,21 @@ describe('comandos de desarrollador', () => {
       rmSync(`${carpeta}/totp-creado.por.comando_x.co.png`, { force: true });
       rmSync(`${carpeta}/totp-creado.por.comando@x.co.png`, { force: true });
     }
+  });
+
+  test('si anotar el comando falla, el cambio no se pierde: se avisa y no se lanza el error', async () => {
+    const caida = { query: async () => Promise.reject(new Error('base caída')) } as unknown as Consultable;
+    const original = console.error;
+    const lineas: string[] = [];
+    const codigoAntes = process.exitCode;
+    console.error = (...partes: unknown[]) => void lineas.push(partes.join(' '));
+    try {
+      await registrarComandoSinFallar(caida, { comando: 'dev:x', accion: 'x' });
+    } finally {
+      console.error = original;
+      process.exitCode = codigoAntes;
+    }
+    assert.match(lineas.join(' '), /El cambio se hizo, pero no se pudo anotar en la actividad del superadmin: base caída/);
   });
 
   test('confirmar() solo acepta s, si o sí, y cancela si no hay quien responda', async () => {
