@@ -27,18 +27,33 @@ export const borrarDispositivo = (db: Consultable, d: Titular & { token: string 
 export const borrarTokens = (db: Consultable, tokens: string[]) =>
   db.query('DELETE FROM dispositivos_push WHERE token = ANY($1::varchar[])', [tokens]);
 
-// Celulares de estos dueños (cuentas o integrantes del equipo)
+// Un celular que no se registra de nuevo (la app lo hace al iniciar sesión y cuando Expo cambia el token) en este
+// número de días deja de recibir avisos y se borra: si alguien cierra sesión sin que la app avise, o cambia de
+// celular, no se siguen enviando avisos de esa cuenta para siempre.
+export const DIAS_VIGENCIA_TOKEN_PUSH = 60;
+
+// Celulares de estos dueños (cuentas o integrantes del equipo) que se usaron hace poco
 export const tokensDe = async (db: Consultable, titulares: Titular[]) =>
   (
     await db.query<{ token: string }>(
       `SELECT token FROM dispositivos_push
-       WHERE usuario_id = ANY($1::varchar[]) OR barbero_id = ANY($2::varchar[])`,
+       WHERE (usuario_id = ANY($1::varchar[]) OR barbero_id = ANY($2::varchar[]))
+         AND actualizado_en > now() - make_interval(days => $3)`,
       [
         titulares.flatMap((t) => (t.usuarioId ? [t.usuarioId] : [])),
         titulares.flatMap((t) => (t.barberoId ? [t.barberoId] : [])),
+        DIAS_VIGENCIA_TOKEN_PUSH,
       ],
     )
   ).rows.map((f) => f.token);
+
+// Borra los celulares que no se registraron de nuevo en DIAS_VIGENCIA_TOKEN_PUSH días. Devuelve cuántos.
+export const borrarTokensVencidos = async (db: Consultable) =>
+  (
+    (await db.query('DELETE FROM dispositivos_push WHERE actualizado_en < now() - make_interval(days => $1)', [
+      DIAS_VIGENCIA_TOKEN_PUSH,
+    ])).rowCount ?? 0
+  );
 
 // El profesional de la cita y quienes administran el negocio: integrantes activos con rol
 // Administrador y cuentas admin de la empresa
@@ -130,7 +145,6 @@ export type DatosAviso = {
   empresa_id: string;
   barbero_id: string;
   usuario_id: string | null;
-  cliente: string;
   servicio: string;
   negocio: string;
   fecha: string;
@@ -144,10 +158,9 @@ const HORA_AVISO = `to_char(c.hora_inicio, 'HH12:MI AM')`;
 export const datosAviso = async (db: Consultable, citaId: string) =>
   (
     await db.query<DatosAviso>(
-      `SELECT c.id, c.empresa_id, c.barbero_id, c.usuario_id, cl.nombre AS cliente, s.nombre AS servicio,
+      `SELECT c.id, c.empresa_id, c.barbero_id, c.usuario_id, s.nombre AS servicio,
               e.nombre AS negocio, ${FECHA_AVISO} AS fecha, ${HORA_AVISO} AS hora
        FROM citas c
-       JOIN clientes cl ON cl.id = c.cliente_id
        JOIN servicios s ON s.id = c.servicio_id
        JOIN empresas e ON e.id = c.empresa_id
        WHERE c.id = $1`,
@@ -184,10 +197,9 @@ export const reclamarRecordatorios = async (db: Consultable, tipo: TipoRecordato
          )
          RETURNING id, empresa_id, barbero_id, usuario_id, cliente_id, servicio_id, fecha, hora_inicio
        )
-       SELECT c.id, c.empresa_id, c.barbero_id, c.usuario_id, cl.nombre AS cliente, s.nombre AS servicio,
+       SELECT c.id, c.empresa_id, c.barbero_id, c.usuario_id, s.nombre AS servicio,
               e.nombre AS negocio, ${FECHA_AVISO} AS fecha, ${HORA_AVISO} AS hora
        FROM marcadas c
-       JOIN clientes cl ON cl.id = c.cliente_id
        JOIN servicios s ON s.id = c.servicio_id
        JOIN empresas e ON e.id = c.empresa_id`,
       [desdeHoras, hastaHoras],

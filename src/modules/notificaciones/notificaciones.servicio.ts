@@ -73,7 +73,9 @@ export const crearServicioNotificaciones = ({ pool, push }: { pool: pg.Pool; pus
       avisarAlNegocio('cita_nueva', citaId, (c) => ({
         tipo: 'cita_nueva',
         titulo: 'Nueva cita',
-        texto: `${c.cliente} reservó ${c.servicio} para el ${c.fecha} a las ${c.hora}.`,
+        // Sin el nombre del cliente: la push pasa por Expo (un tercero) y la notificación se guarda tal cual.
+        // Quien la abre ve la cita completa.
+        texto: `Nueva reserva de ${c.servicio} para el ${c.fecha} a las ${c.hora}.`,
         citaId: c.id,
       })),
 
@@ -82,7 +84,7 @@ export const crearServicioNotificaciones = ({ pool, push }: { pool: pg.Pool; pus
       avisarAlNegocio('cita_cancelada_por_cliente', citaId, (c) => ({
         tipo: 'cita_cancelada_por_cliente',
         titulo: 'Cita cancelada por el cliente',
-        texto: `${c.cliente} canceló ${c.servicio} del ${c.fecha} a las ${c.hora}.`,
+        texto: `Un cliente canceló ${c.servicio} del ${c.fecha} a las ${c.hora}.`,
         citaId: c.id,
       })),
 
@@ -91,7 +93,7 @@ export const crearServicioNotificaciones = ({ pool, push }: { pool: pg.Pool; pus
       avisarAlNegocio('cita_reprogramada', citaId, (c) => ({
         tipo: 'cita_reprogramada',
         titulo: 'Cita reprogramada por el cliente',
-        texto: `${c.cliente} movió ${c.servicio} del ${anterior.fecha} a las ${anterior.hora} al ${c.fecha} a las ${c.hora}.`,
+        texto: `Un cliente movió ${c.servicio} del ${anterior.fecha} a las ${anterior.hora} al ${c.fecha} a las ${c.hora}.`,
         citaId: c.id,
       })),
 
@@ -144,6 +146,9 @@ export const crearServicioNotificaciones = ({ pool, push }: { pool: pg.Pool; pus
     async marcarTodasLeidas(titular: Titular) {
       return { mensaje: 'Notificaciones marcadas como leídas', marcadas: await repositorio.marcarTodasLeidas(pool, titular) };
     },
+
+    // Borra los celulares que no se registraron de nuevo en 60 días (lo llama la tarea programada)
+    borrarDispositivosVencidos: () => repositorio.borrarTokensVencidos(pool),
 
     registrarDispositivo: (titular: Titular, token: string, plataforma: string | null) =>
       repositorio.guardarDispositivo(pool, { ...titular, token, plataforma }),

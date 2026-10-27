@@ -9,7 +9,7 @@ const CADA_15_MINUTOS = 15 * 60_000;
 // haya varias instancias. Un fallo solo queda en el log y la tarea sigue con la siguiente vuelta.
 // Devuelve la función que la detiene.
 export const iniciarRecordatorios = (
-  notificaciones: Pick<ServicioNotificaciones, 'enviarRecordatorios' | 'enviarAvisosPrueba'>,
+  notificaciones: Pick<ServicioNotificaciones, 'enviarRecordatorios' | 'enviarAvisosPrueba' | 'borrarDispositivosVencidos'>,
   cadaMs = CADA_15_MINUTOS,
 ) => {
   let enCurso = false;
@@ -22,6 +22,9 @@ export const iniciarRecordatorios = (
       const horas = await notificaciones.enviarRecordatorios('2h');
       const pruebas = await notificaciones.enviarAvisosPrueba();
       if (dias + horas + pruebas > 0) registro.info('recordatorios_enviados', { citas24h: dias, citas2h: horas, avisosPrueba: pruebas });
+      // Celulares que llevan más de 60 días sin registrarse
+      const vencidos = await notificaciones.borrarDispositivosVencidos();
+      if (vencidos > 0) registro.info('dispositivos_push_vencidos', { borrados: vencidos });
     } catch (error) {
       registro.error('recordatorios_fallo', { mensaje: (error as Error).message });
     } finally {
