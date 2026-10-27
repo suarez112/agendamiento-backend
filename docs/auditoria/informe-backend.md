@@ -46,6 +46,7 @@
 - **Cómo se arregla:** actualizar los ayudantes de `test/apoyo/` y los datos de partida al contrato actual (código de negocio, usuario de la administradora, aceptaciones). Es un arreglo pequeño y de mucho valor. Después, que `npm test` corra en cada cambio (hoy no hay integración continua: no existe `.github/`).
 
 ### A-2. Reservas falsas de invitados: no hay verificación del teléfono
+- **Estado: RESUELTO en la tanda 3 (2026-10-26). Máximo de 3 citas pendientes por teléfono y negocio (invitados y clientes con cuenta; configurable con `MAX_CITAS_PENDIENTES`) y un tope de 15 reservas guardadas por hora y por conexión, sin SMS ni WhatsApp. Ver "SEGUIMIENTO – TANDA 3".**
 - **Qué es:** cualquiera puede reservar como invitado con **cualquier teléfono y cualquier nombre**, sin confirmar que el número sea suyo. El único freno es 20 reservas cada 15 minutos por IP. Con varias IP (o una red móvil) se puede ocupar la agenda completa de un profesional durante los 14 días permitidos, y cada reserva además dispara una notificación al administrador y crea filas de cliente y de auditoría (la base crece sin tope).
 - **Dónde:** `src/modules/citas/citas.rutas.ts:23`, `src/modules/citas/citas.servicio.ts:38-135` y `src/shared/http/limitadores.ts:30` (`reservas: 20`). No hay tope de citas pendientes por teléfono, por día ni por negocio.
 - **Impacto real:** el negocio no puede atender clientes de verdad y no tiene forma sencilla de saber cuáles reservas son falsas (solo puede cancelarlas una por una o poner el número en la lista negra).
@@ -65,6 +66,7 @@
 ## MEDIO
 
 ### M-1. Límites de intentos solo por IP, compartidos entre pantallas y en memoria (incluye el pendiente "contador compartido")
+- **Estado: RESUELTO en la tanda 3 (2026-10-26). Cada ruta de login tiene su propio límite por IP y hay un contador por cuenta guardado en la base de datos (tabla `intentos_login`). Queda pendiente solo el almacenamiento compartido de los límites por IP (Redis) para cuando haya más de una instancia.**
 - **Qué es:** el contador de intentos fallidos de login es **uno solo** y se comparte entre el login único (`acceso.ts:60`), el login del personal (`auth.rutas.ts:21`), el de cuentas (`cuentas.rutas.ts:121`), eliminar la cuenta (`cuentas.rutas.ts:137`) y el login del superadmin (`superadmin.rutas.ts:150`): todos usan el mismo `limitadores.login` (`limitadores.ts:59-64`), con 10 fallos por IP cada 15 minutos.
 - **Problemas:**
   1. **Falsos bloqueos:** en redes móviles (donde muchas personas comparten una IP pública) o en un local con una sola conexión, 10 fallos de cualquiera bloquean el login de todos por 15 minutos, incluido el personal de otro negocio.
@@ -73,6 +75,7 @@
 - **Cómo se arregla:** (a) un contador por cuenta (usuario/correo) guardado en la base, con espera creciente, además del de IP; (b) separar el límite del superadmin y el de eliminar cuenta del de login normal; (c) subir el límite por IP para IP compartidas; (d) un almacenamiento compartido (Redis o tabla) cuando haya más de una instancia.
 
 ### M-2. `TRUST_PROXY` y lectura de la IP: depende de cómo se despliegue
+- **Estado: RESUELTO EN EL CÓDIGO en la tanda 3 (2026-10-26). El valor por defecto es seguro (`0`), `CF-Connecting-IP` solo se acepta con `DETRAS_DE_CLOUDFLARE=true` y la guía por hosting está en `docs/despliegue/trust-proxy.md`. **Pendiente al publicar:** decidir y comprobar el valor final.**
 - **Qué es:** por defecto `TRUST_PROXY=0` (`entorno.ts:31`). Si el servidor queda detrás de un proxy o balanceador (casi seguro en producción) y no se configura, **todos los usuarios parecen tener la misma IP**: los límites se vuelven globales (10 fallos de cualquiera bloquean a todos) y la IP guardada como prueba legal es la del proxy. Si se configura con un número mayor al real, un atacante puede **inventar** su IP con `X-Forwarded-For` y saltarse los límites.
 - **Además:** cuando `TRUST_PROXY > 0`, el código confía en el encabezado `CF-Connecting-IP` aunque no se use Cloudflare (`src/modules/legal/legal.ts:51-57`). Detrás de otro proxy, cualquiera podría escribir ese encabezado y **falsear la IP de la prueba de autorización**.
 - **No pude confirmar** cómo se desplegará (no hay configuración de producción en el repositorio): queda por validar.
@@ -85,6 +88,7 @@
 - **Cómo se arregla:** ejecutar `db:cifrar-contrasenas` en cada base real; después quitar la rama de texto plano de `verificarContrasena` (o una migración que obligue a restablecer). Las pruebas de siembra usan textos como `'1234'` (`test/apoyo/baseDePrueba.ts:28`) y habría que cambiarlas a hashes.
 
 ### M-4. Sesiones: duran 12 horas, no se pueden cerrar y las del personal no se invalidan al cambiar la clave
+- **Estado: RESUELTO en la tanda 3 (2026-10-26). `version_sesion` también para el personal, `POST /api/v1/logout` y cierre de las demás sesiones al cambiar la contraseña. **Pendiente para cuando se publique:** refresh tokens.**
 - **Qué es:**
   - Los tokens del **personal** (`tokens.ts:38-39`) no llevan número de versión: si la administradora cambia la contraseña de un integrante (o este la cambia), el token anterior **sigue sirviendo hasta 12 horas** (`JWT_EXPIRA_EN`, `entorno.ts:20-23`). Un integrante eliminado sí pierde la sesión (se lee `activo` en cada solicitud, `auth.servicio.ts:77-81`).
   - **No existe "cerrar sesión" en el servidor** para personal ni cuentas (solo el superadmin lo tiene, `superadmin.rutas.ts:161`): al cerrar sesión en la app solo se borra el token del celular; si alguien lo copió, sigue valiendo.
@@ -92,11 +96,13 @@
 - **¿Refresh tokens?** Conviene **cuando la app esté en producción**, no antes: un token de acceso corto (15-60 min) más un token de renovación que se guarda en la base (como hash), rota en cada uso y se puede revocar con "cerrar sesión" y "cerrar todas mis sesiones". Costo: más piezas y más tablas. Mientras tanto, lo mínimo útil es: poner `version_sesion` también en `barberos` y subirla al cambiar la clave, y un `POST /logout` que la suba.
 
 ### M-5. Superadmin: se puede bloquear al dueño desde fuera
+- **Estado: RESUELTO en la tanda 3 (2026-10-26). El bloqueo es por cuenta + IP y el mensaje es el mismo exista o no la cuenta. Los fallos de login quedan en el registro del servidor.**
 - **Qué es:** la cuenta del superadmin se bloquea 15 minutos tras 5 fallos seguidos (`superadmin.repositorio.ts:34-47`). Quien conozca su correo puede enviar 5 intentos malos cada 15 minutos y mantenerlo **fuera del panel de forma indefinida** (el límite por IP de 10 fallos lo permite). Además, el mensaje de bloqueo (`superadmin.servicio.ts:127-131`) confirma que ese correo es de una cuenta.
 - **Lo que sí está bien en el superadmin:** 2FA por TOTP con códigos de un solo uso, clave del 2FA cifrada (AES-256-GCM), sesión de 1 hora, cierre a los 15 minutos de inactividad leído de la base, cierre de sesión que invalida el token, token de otro tipo que ninguna otra guardia acepta, y registro de actividad que la base no deja editar ni borrar.
 - **Cómo se arregla:** no contar como "fallo de cuenta" los intentos desde IP desconocidas, o aplicar el bloqueo por pareja (cuenta + IP); responder con el mismo mensaje exista o no la cuenta; avisar por correo cuando haya bloqueos repetidos; y registrar los intentos fallidos en `actividad_superadmin`.
 
 ### M-6. Eliminar la cuenta no borra todos los datos personales (Ley 1581)
+- **Estado: RESUELTO en la tanda 3 (2026-10-26). (puntos 1 a 3). Quedan por decidir con un abogado el plazo de conservación de IP y navegador de la prueba de autorizaciones (punto 4) y el aviso sobre el texto de las PQRS (punto 5).**
 - **Qué es:** lo que **sí** hace bien: borra la fila de la cuenta (correo, usuario, teléfono, nombre, contraseña), anonimiza al cliente en cada negocio, anonimiza las PQRS y cierra las sesiones. Lo que **queda** (`src/modules/cuentas/eliminacion.servicio.ts:51-72`):
   1. Al **cerrar un negocio**, no se borran los datos de su equipo: nombre, usuario de inicio de sesión y **fotos** de cada integrante siguen en la base y en disco (`AGENTS.md` lo dice: "No se borran el negocio ni sus fotos"). Lo mismo con los integrantes que la administradora ya "eliminó" del equipo (solo se desactivan).
   2. Si la administradora elimina su cuenta pero el negocio sigue, `empresas.nombre_administradora` conserva su nombre, y su perfil de profesional queda desactivado **con su nombre y foto**.
@@ -111,32 +117,39 @@
 - **Cómo se arregla:** conectar un proveedor (el código ya está preparado: `EnviadorCorreo`) y contar el límite por correo **y** por IP juntos.
 
 ### M-8. CORS no permite `PUT` ni `DELETE`
+- **Estado: RESUELTO en la tanda 3 (2026-10-26).**
 - **Qué es:** `src/shared/http/cors.ts:18` solo permite `GET`, `POST` y `PATCH`. Varias rutas usan `PUT` y `DELETE` (subir fotos, registrar o borrar el dispositivo de notificaciones, cambiar el intervalo, eliminar servicios/productos/bloqueos). En la **versión web** el navegador bloqueará esas llamadas; las apps nativas no se ven afectadas porque no usan CORS. Es un error de funcionamiento, no un agujero.
 - **Cómo se arregla:** agregar `'PUT'` y `'DELETE'` (y un test que haga la solicitud de verificación previa).
 
 ## BAJO
 
 ### B-1. El mensaje que revela si un correo (o teléfono, o usuario) ya existe — pendiente anotado
+- **Estado: RESUELTO en la tanda 3 (2026-10-26). Correo, usuario o teléfono repetidos responden el mismo mensaje. `GET /empresas/codigo-disponible` sigue igual a propósito (el código del negocio es público).**
 - **Qué es:** al registrarse, la API responde `Ya existe una cuenta con ese correo`, `Ese usuario ya está en uso` o `Ya existe una cuenta con ese número de teléfono` (`src/modules/cuentas/cuentas.servicio.ts:44-59`). Cualquiera puede comprobar si una persona tiene cuenta. También lo permite `GET /empresas/codigo-disponible/:codigo` (esto último es deliberado para el formulario). La recuperación de contraseña y el login **sí** están bien: responden igual exista o no la cuenta.
 - **Cómo se arregla:** es un equilibrio entre comodidad y privacidad. Opciones: dejarlo (limitado a 10 registros por IP cada 15 minutos) o responder genérico y confirmar por correo. Mientras se deje, el límite de registros debe seguir activo.
 
 ### B-2. El límite de registros cuenta también los intentos con errores y los exitosos — pendiente anotado
+- **Estado: RESUELTO en la tanda 3 (2026-10-26). Los errores de validación (400) ya no cuentan.**
 - **Qué es:** `limitadores.registro` (`limitadores.ts:67`) cuenta **todos** los intentos: una persona que se equivoca en el formulario varias veces o varias personas detrás de la misma IP pueden gastar los 10 y quedar bloqueadas 15 minutos. Pasa lo contrario con el login (que solo cuenta fallos).
 - **Cómo se arregla:** no contar los 400 de validación; contar solo los registros que llegan a crear algo, o subir el tope y añadir un límite diario por IP.
 
 ### B-3. Cancelar una cita inexistente: respuestas distintas e incoherentes — pendiente anotado
+- **Estado: RESUELTO en la tanda 3 (2026-10-26). Cita inexistente o de otro negocio: 404; el 409 queda solo para "ya estaba atendida o cancelada".**
 - **Qué es:** `PATCH /citas/:id/cancelar` revisa la suscripción **antes** de mirar si la cita existe (`src/modules/citas/citas.rutas.ts:56-65`, `suscripcion.ts:49-55`). Con la suscripción vencida, cualquier id (existente o no) devuelve **402**; con la suscripción vigente, una cita inexistente o de otro negocio devuelve **409** *«No se pudo cancelar: la cita no existe o ya fue atendida o cancelada»* (`citas.servicio.ts:349`) en lugar de un 404. No filtra datos de otros negocios (el mensaje es el mismo), pero es confuso para la app.
 - **Cómo se arregla:** decidir el orden (primero existencia → 404, luego suscripción → 402) y dejar el 409 solo para "ya estaba cancelada o atendida".
 
 ### B-4. Un solo secreto (`JWT_SECRET`) para tres usos
+- **Estado: RESUELTO en la tanda 3 (2026-10-26). Tres secretos independientes (`JWT_SECRET`, `RECUPERACION_SECRET`, `TOTP_SECRET`) y el comando `db:recifrar-2fa`. Ver las notas del segundo paso en "SEGUIMIENTO – TANDA 3".**
 - **Qué es:** el mismo `JWT_SECRET` firma las sesiones, calcula los códigos de recuperación y deriva la llave que cifra el 2FA del superadmin (`totp.ts:83`). Si se filtra, se pueden falsificar sesiones y descifrar el segundo paso. Rotarlo obliga a reiniciar el 2FA del superadmin.
 - **Cómo se arregla:** tres variables independientes (firma de sesiones, HMAC de códigos, llave del 2FA).
 
 ### B-5. Notificaciones push
+- **Estado: RESUELTO en la tanda 3 (2026-10-26). Los textos no llevan el nombre del cliente y los celulares que no se registran en 60 días se borran.**
 - **Qué es:** el token de Expo se valida con formato estricto y el dueño sale de la sesión, no del cuerpo (`dispositivos.rutas.ts`): bien. Riesgos menores: (1) el **texto de la notificación lleva el nombre del cliente** y se envía a Expo (un tercero, posiblemente fuera de Colombia): debe mencionarse en la política de datos; (2) si alguien cierra sesión sin que la app llame a `DELETE /dispositivos` (cierre forzado, token caducado), el celular **sigue recibiendo avisos** de esa cuenta hasta que otra persona registre ese token.
 - **Cómo se arregla:** textos sin nombre (o solo el nombre de pila) en la push, y vencer los tokens inactivos (por ejemplo tras 60 días sin uso).
 
 ### B-6. Comandos de desarrollador (`npm run dev:*`) en producción
+- **Estado: RESUELTO en la tanda 3 (2026-10-26). Todos los que cambian algo quedan en la actividad del superadmin; los peligrosos se niegan en producción y `dev:activar-plan` pide confirmación. No se cambió el nombre `dev:`.**
 Todos son comandos de consola (no están expuestos por HTTP), así que solo los puede usar quien tenga acceso al servidor y a su `.env`. Solo uno está bloqueado en producción.
 
 | Comando | ¿Funciona con `NODE_ENV=production`? | Riesgo |
@@ -153,6 +166,7 @@ Todos son comandos de consola (no están expuestos por HTTP), así que solo los 
 - **Cómo se arregla:** que los comandos que cambian dinero o accesos escriban en el registro de actividad (con un "usuario" de sistema), que el nombre `dev:` no engañe (por ejemplo prefijo `admin:`), y que en producción se ejecuten solo desde un entorno controlado. Guardar el código QR del superadmin (`secretos-superadmin/`, ya ignorado por git) solo en una carpeta cifrada y borrarlo después de configurar la app.
 
 ### B-7. Registros (logs)
+- **Estado: RESUELTO en la tanda 3 (2026-10-26). Los mensajes de la base se limpian antes de registrarse y los inicios de sesión fallidos quedan registrados (sin contraseñas ni usuarios).**
 - **Qué es:** el registro es JSON estructurado y **no guarda contraseñas, tokens, correos ni teléfonos**; el comentario de `registro.ts` lo exige y se cumple (solo ids internos, mensajes de error y rutas). Detalles: (1) `error_no_controlado` guarda el mensaje y la pila del error (`manejadorErrores.ts:36-41`); el mensaje de algunos errores de PostgreSQL (por ejemplo un texto con formato de fecha inválido) puede incluir el valor que envió el usuario; (2) en desarrollo el correo con el código de recuperación se imprime en consola (`correo.ts:13`; no ocurre en producción); (3) no se registran los intentos de login fallidos, así que no habría forma de detectar un ataque a tiempo.
 - **Cómo se arregla:** recortar o limpiar el mensaje de errores de la base, y registrar (sin la contraseña) los fallos de login con IP y momento.
 
@@ -161,15 +175,18 @@ Todos son comandos de consola (no están expuestos por HTTP), así que solo los 
 - **Detalles:** (1) las fotos son públicas por diseño (quien tenga el enlace la ve; el enlace es un UUID, no adivinable); (2) si `URL_PUBLICA` no está configurada, el enlace de la foto se arma con el encabezado `Host` de cada solicitud (`fotos.ts:139-140`): hay que configurarla en producción para que nadie pueda hacer que la API devuelva enlaces a otro dominio.
 
 ### B-9. Dependencias (`npm audit`)
+- **Estado: RESUELTO en la tanda 3 (2026-10-26). `uuid` fijado en 11.1.1 con `overrides` (sin `audit fix --force`); la exportación a Excel y PDF tiene prueba. **Aparecieron dos avisos nuevos de gravedad alta** (`body-parser` y `multer`) que se corrigen con `npm audit fix` sin cambios mayores: ver "SEGUIMIENTO – TANDA 3".**
 - **Resultado:** 2 avisos de gravedad **moderada**, ambos del mismo origen: `exceljs` usa `uuid` con un fallo de comprobación de límites del buffer (GHSA-w5hq-g745-h8pq) que solo aplica a `uuid` v3/v5/v6 usado con un buffer propio. No encontré que el código lo use así (los reportes solo exportan). Riesgo práctico bajo.
 - **Cuidado:** `npm audit fix --force` **bajaría `exceljs` a la versión 3.4.0**, que es peor. No lo ejecutes. Lo correcto es esperar una versión de `exceljs` que actualice `uuid`, o fijar `uuid` ≥ 11.1.1 con `overrides` en `package.json` y probar la exportación a Excel.
 
 ### B-10. Defensa en profundidad en consultas (aislamiento entre negocios)
+- **Estado: RESUELTO en la tanda 3 (2026-10-26). Los tres UPDATE llevan `AND empresa_id`.**
 - **Conclusión del aislamiento:** **no encontré ningún endpoint por el que un negocio vea o modifique datos de otro.** El negocio sale siempre de la sesión; las consultas del personal filtran por `empresa_id`; las de los clientes con cuenta filtran por `usuario_id`; las llaves foráneas compuestas de la base impiden mezclar negocios aunque el código fallara. El rol de administrador se lee de la base en cada solicitud, así que un cambio de rol aplica de inmediato.
 - **Detalle menor:** tres consultas actualizan solo por `id` después de haber comprobado la propiedad en la misma transacción (`citas.repositorio.ts:180` mover cita, `:189` avanzar última cita, `equipo.repositorio.ts:169`). Son seguras hoy, pero el filtro por negocio no está en la propia sentencia; si alguien reutiliza esas funciones sin la comprobación previa, la protección se pierde. Conviene agregar `AND empresa_id = $n`.
 - **Importante:** esta conclusión hoy **no la respalda ninguna prueba que funcione** (ver A-1).
 
 ### B-11. Otros detalles menores
+- **Estado: RESUELTO EN PARTE en la tanda 3 (2026-10-26): `/api/saludo` eliminado (nadie lo usaba) y el contenido de `.env.example` está listo en `docs/despliegue/env-ejemplo.txt` (falta copiarlo, ver abajo). Siguen pendientes HTTPS, integración continua y los topes por negocio de PQRS y clientes de invitado.**
 - `GET /api/saludo` es público y devuelve la hora de la base y un mensaje distinto si la base cae. Útil para monitoreo; si no se necesita desde fuera, limitar a la red interna.
 - El `.gitignore` menciona `.env.example`, pero ese archivo **no existe**: faltaría para documentar las variables necesarias (sin valores).
 - HTTPS y redirección: el servidor usa `helmet` (incluye HSTS) pero no fuerza HTTPS; eso debe resolverlo el hosting/proxy.
@@ -224,29 +241,31 @@ Todos son comandos de consola (no están expuestos por HTTP), así que solo los 
 | # | Gravedad | Hallazgo | Dónde | Arreglo en una línea |
 | --- | --- | --- | --- | --- |
 | A-1 | **Alto** (resuelto, tanda 1) | 60 de 96 pruebas no corren; las de permisos, aislamiento y reservas simultáneas están entre ellas | `test/apoyo/servidor.ts:152`, `test/adminEmpresa.test.ts:29` | Actualizar los ayudantes de prueba y correr `npm test` en cada cambio |
-| A-2 | **Alto** | Reservas falsas de invitados sin verificar el teléfono | `citas.rutas.ts:23`, `citas.servicio.ts:38` | Tope de citas pendientes por teléfono/negocio y confirmación del teléfono |
+| A-2 | **Alto** (resuelto, tanda 3) | Reservas falsas de invitados sin verificar el teléfono | `citas.rutas.ts:23`, `citas.servicio.ts:38` | Tope de citas pendientes por teléfono/negocio y confirmación del teléfono |
 | A-3 | **Alto** (resuelto, tanda 2) | La app usa el superusuario `postgres` | `.env` / `pool.ts` | Rol de aplicación limitado y rol aparte para migraciones |
-| M-1 | Medio | Límite de login solo por IP, compartido en 5 rutas y en memoria | `limitadores.ts:59-64` | Contador por cuenta en base y límites separados |
-| M-2 | Medio | `TRUST_PROXY` y lectura de IP (puede falsear límites y la IP legal) | `entorno.ts:31`, `legal.ts:51-57` | Fijar el valor según el hosting y confiar en `CF-Connecting-IP` solo si se declara |
+| M-1 | Medio (resuelto, tanda 3) | Límite de login solo por IP, compartido en 5 rutas y en memoria | `limitadores.ts:59-64` | Contador por cuenta en base y límites separados |
+| M-2 | Medio (resuelto en código, tanda 3; valor final al publicar) | `TRUST_PROXY` y lectura de IP (puede falsear límites y la IP legal) | `entorno.ts:31`, `legal.ts:51-57` | Fijar el valor según el hosting y confiar en `CF-Connecting-IP` solo si se declara |
 | M-3 | Medio (resuelto, tanda 2) | Contraseñas heredadas en texto plano aún aceptadas | `contrasenas.ts:35-37` | Ejecutar `db:cifrar-contrasenas` y quitar esa rama |
-| M-4 | Medio | Sesiones de 12 h sin cierre en servidor; las del personal no se invalidan al cambiar la clave | `tokens.ts:38-39` | `version_sesion` en `barberos` y `POST /logout`; refresh tokens al ir a producción |
-| M-5 | Medio | Se puede bloquear al superadmin desde fuera | `superadmin.repositorio.ts:34-47` | Bloqueo por cuenta+IP y mensaje genérico |
-| M-6 | Medio | Eliminar cuenta deja datos del equipo, fotos y nombres | `eliminacion.servicio.ts:51-72` | Anonimizar equipo, borrar fotos y limpiar notificaciones |
+| M-4 | Medio (resuelto, tanda 3; refresh tokens al publicar) | Sesiones de 12 h sin cierre en servidor; las del personal no se invalidan al cambiar la clave | `tokens.ts:38-39` | `version_sesion` en `barberos` y `POST /logout`; refresh tokens al ir a producción |
+| M-5 | Medio (resuelto, tanda 3) | Se puede bloquear al superadmin desde fuera | `superadmin.repositorio.ts:34-47` | Bloqueo por cuenta+IP y mensaje genérico |
+| M-6 | Medio (resuelto, tanda 3) | Eliminar cuenta deja datos del equipo, fotos y nombres | `eliminacion.servicio.ts:51-72` | Anonimizar equipo, borrar fotos y limpiar notificaciones |
 | M-7 | Medio | Recuperar contraseña no funciona en producción (sin correo) | `correo.ts:25-26` | Conectar un proveedor de correo |
-| M-8 | Medio | CORS no permite PUT ni DELETE (web) | `cors.ts:18` | Agregar `PUT` y `DELETE` |
-| B-1 | Bajo | Mensaje que revela si correo/usuario/teléfono ya existen | `cuentas.servicio.ts:44-59` | Mensaje genérico o confirmación por correo |
-| B-2 | Bajo | Límite de registros cuenta intentos con errores | `limitadores.ts:67` | No contar los 400 de validación |
-| B-3 | Bajo | Cancelar cita inexistente: 402/409 en vez de 404 | `citas.rutas.ts:56-65` | Revisar existencia antes que suscripción |
-| B-4 | Bajo | Un solo secreto para sesiones, códigos y 2FA | `totp.ts:83` | Tres secretos independientes |
-| B-5 | Bajo | Push con nombre del cliente y tokens que no vencen | `notificaciones.servicio.ts:75-94` | Textos sin nombre y vencimiento de tokens |
-| B-6 | Bajo | Solo 1 de 8 comandos `dev:*` se bloquea en producción; varios sin registro | `src/db/*.ts` | Registrar en actividad y renombrar |
-| B-7 | Bajo | Logs: sin datos sensibles, pero sin registro de logins fallidos y mensajes de BD sin limpiar | `manejadorErrores.ts:36-41` | Limpiar mensajes y registrar fallos de login |
+| M-8 | Medio (resuelto, tanda 3) | CORS no permite PUT ni DELETE (web) | `cors.ts:18` | Agregar `PUT` y `DELETE` |
+| B-1 | Bajo (resuelto, tanda 3) | Mensaje que revela si correo/usuario/teléfono ya existen | `cuentas.servicio.ts:44-59` | Mensaje genérico o confirmación por correo |
+| B-2 | Bajo (resuelto, tanda 3) | Límite de registros cuenta intentos con errores | `limitadores.ts:67` | No contar los 400 de validación |
+| B-3 | Bajo (resuelto, tanda 3) | Cancelar cita inexistente: 402/409 en vez de 404 | `citas.rutas.ts:56-65` | Revisar existencia antes que suscripción |
+| B-4 | Bajo (resuelto, tanda 3) | Un solo secreto para sesiones, códigos y 2FA | `totp.ts:83` | Tres secretos independientes |
+| B-5 | Bajo (resuelto, tanda 3) | Push con nombre del cliente y tokens que no vencen | `notificaciones.servicio.ts:75-94` | Textos sin nombre y vencimiento de tokens |
+| B-6 | Bajo (resuelto, tanda 3) | Solo 1 de 8 comandos `dev:*` se bloquea en producción; varios sin registro | `src/db/*.ts` | Registrar en actividad y renombrar |
+| B-7 | Bajo (resuelto, tanda 3) | Logs: sin datos sensibles, pero sin registro de logins fallidos y mensajes de BD sin limpiar | `manejadorErrores.ts:36-41` | Limpiar mensajes y registrar fallos de login |
 | B-8 | Bajo | Fotos bien protegidas; falta fijar `URL_PUBLICA` | `fotos.ts:139-140` | Configurar `URL_PUBLICA` en producción |
-| B-9 | Bajo | `npm audit`: 2 avisos moderados (`exceljs` → `uuid`) | `package.json` | `overrides` de `uuid`; **no** usar `audit fix --force` |
-| B-10 | Bajo | Tres UPDATE por `id` sin filtro de negocio en la propia sentencia | `citas.repositorio.ts:180,189`, `equipo.repositorio.ts:169` | Agregar `AND empresa_id` |
-| B-11 | Bajo | `/api/saludo` público, falta `.env.example`, sin HTTPS forzado, sin CI | varios | Limpiezas menores |
+| B-9 | Bajo (resuelto, tanda 3; 2 avisos altos nuevos) | `npm audit`: 2 avisos moderados (`exceljs` → `uuid`) | `package.json` | `overrides` de `uuid`; **no** usar `audit fix --force` |
+| B-10 | Bajo (resuelto, tanda 3) | Tres UPDATE por `id` sin filtro de negocio en la propia sentencia | `citas.repositorio.ts:180,189`, `equipo.repositorio.ts:169` | Agregar `AND empresa_id` |
+| B-11 | Bajo (parcial, tanda 3) | `/api/saludo` público, falta `.env.example`, sin HTTPS forzado, sin CI | varios | Limpiezas menores |
 
 **Totales:** 0 Críticos · 3 Altos · 8 Medios · 11 Bajos.
+
+**Estado tras la tanda 3:** resueltos A-1, A-2, A-3, M-1, M-2 (en el código), M-3, M-4, M-5, M-6, M-8, B-1, B-2, B-3, B-4, B-5, B-6, B-7, B-9, B-10 y B-11 (en parte). **Quedan para cuando se publique:** M-7 (correo real), B-8 (`URL_PUBLICA`), HTTPS, integración continua y el valor final de `TRUST_PROXY`.
 
 ## Orden sugerido para arreglar
 
@@ -326,3 +345,61 @@ La revisión (lentes de riesgo y fiabilidad) aprobó los commits de A-3 y M-3. S
 4. **Cuenta sin contraseña.** El único `password_hash` en `NULL` es un perfil de `barberos` inactivo, sin usuario ni cuenta vinculada, de un negocio de pruebas (`PRBPLAN1`): no puede iniciar sesión. `db:cifrar-contrasenas` ignora los `NULL` y ya no cifra una cadena vacía (eso la convertiría en un hash válido de la contraseña vacía): solo avisa.
 5. **`REVOKE CREATE ON SCHEMA public FROM PUBLIC`** quedó aplicado en `agendamiento_db` (ni `PUBLIC` ni `agendamiento_app` pueden crear objetos en `public`).
 6. **Contraseñas sin cifrar:** había 0 y quedan 0 (barberos, usuarios y superadmins).
+
+---
+
+# SEGUIMIENTO – TANDA 3 (hallazgos A-2, M-1, M-2, M-4, M-5, M-6, M-8, B-1 a B-7, B-9 a B-11 y pendientes menores)
+
+**Fecha:** 2026-10-26 · **Rama:** `auditoria` · **Resultado:** `npm test` → **317 pruebas, 317 pasan, 0 fallan** (antes: 221) · `npm run typecheck` sin errores · en PostgreSQL no quedaron bases temporales.
+
+## Qué se hizo
+
+| Hallazgo | Qué cambió | Dónde |
+| --- | --- | --- |
+| **A-2** reservas falsas | Máximo de **3 citas pendientes por teléfono y negocio** (invitados y clientes con cuenta; el número está en la configuración, `MAX_CITAS_PENDIENTES`) con el mensaje «Ya tienes 3 citas pendientes en este negocio. Cancela una o espera a que se complete para reservar otra.». Cuenta las confirmadas que aún no terminan; cancelar o completar una libera un lugar. La revisión va dentro de la transacción de la reserva con un bloqueo por negocio y teléfono, así dos reservas a la vez no la saltan. Además, **15 reservas guardadas por hora y por conexión** (los intentos con error no cuentan). Sin SMS ni WhatsApp. | `src/config/reservas.ts`, `citas.servicio.ts`, `citas.repositorio.ts`, `limitadores.ts` |
+| **M-1** límites | **Un límite por ruta** (login único, personal, cuentas, eliminar cuenta y superadmin) y un **contador por cuenta en la base de datos** (`intentos_login`, migración 029): 10 fallos seguidos bloquean la cuenta 15 minutos, el doble en cada bloqueo seguido (tope 4 horas), también para identificadores que no existen (la respuesta no revela qué cuentas hay). Sobrevive a un reinicio. | `src/modules/auth/intentos.ts`, `limitadores.ts` |
+| **M-2** `TRUST_PROXY` | Por defecto `0` (no se cree ningún encabezado de proxy). `CF-Connecting-IP` solo se acepta con `DETRAS_DE_CLOUDFLARE=true`. La IP se lee en un solo sitio, que también usan los límites. Guía por hosting: `docs/despliegue/trust-proxy.md`. El servidor avisa en el registro si arranca en producción con `TRUST_PROXY=0`. | `src/shared/http/ip.ts`, `legal.ts`, `entorno.ts` |
+| **M-4** sesiones | `version_sesion` también para el personal, `POST /api/v1/logout` (cierra todas las sesiones de esa persona y borra sus celulares de notificaciones) y, al cambiar una contraseña con `PATCH /equipo/:id`, se cierran las sesiones de ese integrante (si la cambia él mismo recibe un `token` nuevo). Refresh tokens: para cuando se publique. | `tokens.ts`, `auth.servicio.ts`, `logout.ts`, `equipo.servicio.ts` |
+| **M-5** superadmin | El bloqueo es por **cuenta + IP** y el mensaje es el mismo exista o no la cuenta: quien conozca el correo no puede dejar fuera al dueño desde otra conexión. La cuenta ya no se bloquea de forma global. | `superadmin.servicio.ts` |
+| **M-6** eliminar cuenta | Al cerrar un negocio, todo el equipo (también quien ya había salido) queda anónimo (`Profesional eliminado`), sus fotos se borran del servidor y también sus celulares y notificaciones. Si el negocio sigue, el perfil de quien se va queda anónimo y `nombre_administradora` pasa a `Cuenta eliminada`. Al borrar a un cliente, su nombre desaparece de las notificaciones antiguas del personal. Citas y cartera se conservan sin datos personales. | `eliminacion.servicio.ts` |
+| **M-8** CORS | Permite `PUT` y `DELETE` (con prueba de la verificación previa). | `cors.ts` |
+| **B-1** mensajes | Correo, usuario o teléfono repetidos: «No pudimos crear la cuenta con esos datos. Si ya tienes una, inicia sesión o recupera tu contraseña.» | `cuentas.servicio.ts` |
+| **B-2** registros | El límite de registros no cuenta los errores de validación. | `limitadores.ts` |
+| **B-3** cancelar | Cita inexistente o de otro negocio: **404**, antes de revisar la suscripción. | `citas.rutas.ts` |
+| **B-4** secretos | Tres secretos independientes: `JWT_SECRET` (sesiones), `RECUPERACION_SECRET` y `TOTP_SECRET`, obligatorios y distintos entre sí. `npm run db:recifrar-2fa` vuelve a cifrar el segundo paso del superadmin con la llave nueva sin que nadie configure de nuevo su app autenticadora. | `entorno.ts`, `recifrado.ts` |
+| **B-5** push | Los textos no llevan el nombre del cliente; los celulares que no se registran en 60 días se borran. | `notificaciones.servicio.ts`, `.repositorio.ts`, `recordatorios.ts` |
+| **B-6** comandos | Todo comando que cambia algo queda en la actividad del superadmin (`comando:dev:<nombre>`). En producción se niegan `dev:cargos pagar`, `dev:pqrs responder`, `dev:simular-vencimiento` y los tres de superadmin; `dev:activar-plan` sigue funcionando y **pide confirmación**. | `src/db/comandos.ts` y cada comando |
+| **B-7** registros | Lo que va entre comillas en un mensaje de error (el valor que causó un fallo de la base) se reemplaza antes de escribirlo; de un error de PostgreSQL solo se guarda código, tabla, columna y restricción. Los inicios de sesión fallidos quedan registrados (ruta, IP y un hash corto de la cuenta; nunca contraseña ni usuario). | `registro.ts`, `manejadorErrores.ts` |
+| **B-9** dependencias | `uuid` fijado en 11.1.1 con `overrides` (sin `audit fix --force`). El aviso moderado desapareció y la exportación a Excel y PDF ahora tiene prueba. | `package.json` |
+| **B-10** consultas | Los tres `UPDATE` llevan `AND empresa_id` en la propia sentencia. | `citas.repositorio.ts`, `equipo.repositorio.ts` |
+| **B-11** otros | `/api/saludo` eliminado (el frontend no lo usaba). El contenido de `.env.example` quedó listo en `docs/despliegue/env-ejemplo.txt`. | `app.ts`, `docs/despliegue/` |
+
+**Observaciones de la tanda 1:** T1-1 (`GET /cartera?barberoId=` de otro negocio → **404**, también en `/cartera/resumen` y los reportes) y T1-3 (la prueba de `TRUST_PROXY` ya refleja la regla nueva) resueltas; T1-2 (`AGENTS.md` se contradecía: la prueba de autorizaciones **se conserva**) corregido; T1-4 (filas sembradas 5 horas en el futuro en la base de pruebas) resuelto sembrando con la zona de Bogotá.
+
+**Pendientes menores de la tanda 2:** `db:cifrar-contrasenas` tiene prueba propia (cifra, no toca hashes ni `NULL`, no cifra la vacía, no pisa un cambio hecho en medio). `configuracionPruebas.ts` ya no cuenta como definido un valor con solo espacios (usuario ni contraseña), recorta el usuario y respeta la contraseña tal cual; `DB_USER`, `DB_PASSWORD` y `DB_MIGRACION_PASSWORD` aplican la misma regla.
+
+## Pruebas nuevas (resumen)
+
+| Archivo | Qué vigila |
+| --- | --- |
+| `topeCitasPendientes.test.ts` | El tope de 3 (invitado y cuenta, mismo número escrito distinto, por negocio, simultáneas con distintos profesionales, cancelar/completar liberan, citas ya pasadas no cuentan, configurable) y el límite por conexión. |
+| `intentosDeLogin.test.ts` | Límites separados por ruta; contador por cuenta en la base (bloquea en todas las rutas, no revela qué cuentas existen, se reinicia, sobrevive a un reinicio, bloqueos que se duplican, limpieza, registro sin contraseña); bloqueo del superadmin por cuenta + IP. |
+| `sesiones.test.ts` | `POST /logout` (personal, cuenta, cliente, otros celulares, celulares de notificaciones), tokens sin versión, cambio de contraseña propia y ajena. |
+| `reglasMenores.test.ts` | Límite de registros (B-2), cancelar 404 (B-3) y los tres `UPDATE` con filtro de negocio (B-10). |
+| `secretos.test.ts` | Los tres secretos (obligatorios, distintos, cada uno protege solo lo suyo) y `db:recifrar-2fa`. |
+| `eliminacionEquipo.test.ts` | Equipo anónimo, fotos borradas del disco, celulares y notificaciones, negocio que sigue y nombre del cliente en notificaciones antiguas. |
+| `notificacionesPush.test.ts` | Push y notificación sin nombre, celulares que vencen, tarea que los borra. |
+| `comandosDeDesarrollador.test.ts` | Los scripts reales: negación en producción, confirmación de `dev:activar-plan`, registro en la actividad. |
+| `registroDeErrores.test.ts` | Limpieza de mensajes de la base. |
+| `cifrarContrasenas.test.ts`, `exportacion.test.ts`, `semillaDeHora.test.ts` | `db:cifrar-contrasenas`, Excel/PDF y la hora de la semilla. |
+| Ampliadas | `http` (verificación previa de CORS), `autorizaciones` (`CF-Connecting-IP`), `cuentas`, `aislamientoNegocios`, `guardiaBaseDePrueba`, `rolAplicacion`. |
+
+## Decisiones y cosas a tener en cuenta
+
+1. **Un bloqueo por intentos fallidos también rechaza la contraseña correcta** mientras dura (si no, no frenaría nada). Quien olvidó su contraseña la recupera por correo (que en producción aún no funciona: M-7). Un atacante que conozca un correo puede bloquear esa cuenta unos minutos; es el costo de frenar el ataque desde muchas IP.
+2. **Segundo paso (2FA) del superadmin de desarrollo:** al ejecutar `db:recifrar-2fa` la clave guardada no se pudo leer ni con `JWT_SECRET` ni con `TOTP_SECRET`: se cifró con un `JWT_SECRET` anterior que ya no está en el `.env`. Si se conserva ese valor viejo, se pone en `TOTP_SECRET_ANTERIOR` y se repite el comando (misma app autenticadora); si no, hay que reiniciar el segundo paso con `npm run dev:crear-superadmin -- correo --reiniciar` (QR nuevo).
+3. **Crear el primer superadmin en producción:** `dev:crear-superadmin` ya no corre con `NODE_ENV=production`; se ejecuta desde una máquina de confianza apuntando a esa base con `NODE_ENV=development`. Es un cinturón contra errores, no un candado contra quien ya controla el servidor.
+4. **`.env.example`:** el sistema bloqueó escribir ese archivo con las reglas de permisos; el contenido está en `docs/despliegue/env-ejemplo.txt` y se copia con `cp docs/despliegue/env-ejemplo.txt .env.example`.
+5. **Avisos nuevos de `npm audit`:** `body-parser` y `multer` (gravedad alta, denegación de servicio) tienen corrección sin cambios mayores con `npm audit fix` (sin `--force`). No se aplicó en esta tanda; conviene hacerlo y volver a correr las pruebas.
+6. **Revisión de los commits de riesgo alto** (límites y contador de login, sesiones, secretos): preparada y pendiente del consentimiento de quien administra el repositorio.
+7. **Siguen para cuando se publique:** M-7 (correo real), B-8 (`URL_PUBLICA`), HTTPS, integración continua, refresh tokens, Redis para los límites por IP con varias instancias y el valor final de `TRUST_PROXY`.

@@ -1,0 +1,64 @@
+# Copia este archivo como ".env" y llena los valores. El ".env" real NUNCA se sube a git (está en .gitignore).
+# Aquí no hay valores reales: son ejemplos o espacios por llenar. Las variables se validan al arrancar
+# (src/config/entorno.ts): si falta algo, el servidor no inicia y dice qué variable revisar (sin mostrar su valor).
+# (Este contenido es el de ".env.example": para crearlo ejecuta  cp docs/despliegue/env-ejemplo.txt .env.example )
+
+# --- Servidor ---
+NODE_ENV=development            # development | test | production
+PORT=4000
+
+# --- Base de datos (rol limitado de la aplicación; ver db/mantenimiento/crear-rol-aplicacion.sql) ---
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=agendamiento_app
+DB_PASSWORD=                    # obligatoria, nunca vacía
+DB_NAME=agendamiento_db
+DB_POOL_MAX=10
+
+# Usuario con más permisos, solo para "npm run db:migrate" (opcional; si falta se usa DB_USER).
+# Con DB_MIGRACION_USER la contraseña es obligatoria.
+# DB_MIGRACION_USER=
+# DB_MIGRACION_PASSWORD=
+
+# --- Pruebas (npm test): base y usuario PROPIOS, nunca la base de desarrollo ---
+# El nombre debe incluir "test" o "prueba". Cada archivo de prueba crea y borra su propia base temporal.
+TEST_DB_NAME=agendamiento_test
+TEST_DB_USER=                   # opcional: usuario con permiso CREATEDB
+TEST_DB_PASSWORD=
+# TEST_DB_HOST=
+# TEST_DB_PORT=
+
+# --- Secretos: tres, distintos entre sí y de al menos 32 caracteres ---
+# Genera cada uno con:  node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
+JWT_SECRET=                     # firma las sesiones. Cambiarlo cierra todas las sesiones abiertas.
+RECUPERACION_SECRET=            # protege los códigos para recuperar la contraseña.
+TOTP_SECRET=                    # cifra la clave de la verificación en dos pasos del superadmin.
+# Si cambias TOTP_SECRET, pon aquí el valor que tenía antes y ejecuta "npm run db:recifrar-2fa" (así nadie
+# tiene que configurar de nuevo su app autenticadora). Si no, se usa JWT_SECRET como llave anterior.
+# TOTP_SECRET_ANTERIOR=
+JWT_EXPIRA_EN=12h               # duración de una sesión (ej. 30m, 12h, 7d)
+
+# --- Red ---
+# Orígenes web permitidos, separados por comas (las apps nativas no usan CORS). Fuera de producción también
+# se acepta localhost.
+CORS_ORIGINS=
+# Cuántos proxies de confianza hay delante del servidor (0 = conexión directa). Un número mayor al real deja que
+# un atacante invente su IP. Qué valor usar según el hosting: docs/despliegue/trust-proxy.md
+TRUST_PROXY=0
+# true solo si el servidor está detrás de Cloudflare (requiere TRUST_PROXY mayor que 0)
+DETRAS_DE_CLOUDFLARE=false
+
+# --- Negocio ---
+# Máximo de citas pendientes por teléfono en cada negocio (frena las reservas falsas)
+MAX_CITAS_PENDIENTES=3
+# Dirección base de los enlaces públicos de los negocios (el enlace de cada uno es <base>/<CÓDIGO>)
+ENLACE_PUBLICO_BASE=agendaya.app
+
+# --- Fotos ---
+CARPETA_SUBIDAS=uploads
+# Dirección pública del servidor para armar las URL de las fotos (ej. https://api.mibarberia.co).
+# En producción debe estar definida; si falta se usa la dirección de cada solicitud.
+# URL_PUBLICA=https://api.tudominio.co
+
+# --- Notificaciones push (opcional: sin el token también se envían) ---
+# EXPO_ACCESS_TOKEN=
