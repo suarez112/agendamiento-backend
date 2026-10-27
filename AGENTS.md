@@ -6,6 +6,8 @@ API REST (Express 5 + TypeScript + PostgreSQL) para agendar citas en barberías.
 
 **Servidor durante el desarrollo:** el backend ya está encendido en el puerto 4000 con `npm run dev` (se recarga solo al guardar). **No lo inicies ni lo apagues.** Para comprobar un cambio, llama a los endpoints (`http://localhost:4000`). No hay emulador: lo visual lo prueba el usuario en su celular.
 
+**Ramas:** `main` es la rama principal y la única que se mantiene. **Todo cambio nuevo se hace en una rama nueva creada desde `main`** (`git checkout main && git pull && git checkout -b tipo/nombre-corto`, por ejemplo `fix/limite-login` o `feat/pagos`), nunca directamente en `main` ni sobre una rama vieja. Antes de crearla, `main` debe estar al día (`git pull`). La rama se sube a GitHub, se une a `main` con un Pull Request cuando las pruebas pasan (`npm run typecheck` y `npm test`) y, una vez unida, se borra en local y en GitHub.
+
 ## Estructura
 
 ```
