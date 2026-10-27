@@ -13,7 +13,11 @@ import {
   registrarCliente,
   registrarEmpresa,
   reservaValida,
+  SECRETO_PRUEBAS,
+  SECRETO_RECUPERACION_PRUEBAS,
+  SECRETO_TOTP_PRUEBAS,
 } from './apoyo/servidor.js';
+import { cargarEntorno } from '../src/config/entorno.js';
 
 const DEBE_ACEPTAR = 'Debes aceptar la Política de Tratamiento de Datos y los Términos y Condiciones';
 const NUEVA_VERSION =
@@ -195,20 +199,61 @@ describe('lectura de la IP según TRUST_PROXY', () => {
     }
   });
 
-  test('con un proxy de confianza (TRUST_PROXY=1) se usa la IP que informa el proxy', async () => {
+  test('con un proxy de confianza (TRUST_PROXY=1) se usa la IP que informa el proxy, pero CF-Connecting-IP se ignora (M-2)', async () => {
     const ctx = await iniciar({ entorno: { TRUST_PROXY: 1 } });
     try {
       assert.equal(await ipDeLaPrueba(ctx, { 'X-Forwarded-For': '203.0.113.9' }, '3100000031'), '203.0.113.9');
-      // Con un proxy de Cloudflare viene en CF-Connecting-IP; si no es una IP válida, se usa la del proxy
-      assert.equal(await ipDeLaPrueba(ctx, { 'X-Forwarded-For': '203.0.113.9', 'CF-Connecting-IP': '198.51.100.7' }, '3100000032', '11:00 AM'), '198.51.100.7');
-      assert.equal(await ipDeLaPrueba(ctx, { 'X-Forwarded-For': '203.0.113.9', 'CF-Connecting-IP': 'no-es-una-ip' }, '3100000033', '12:00 PM'), '203.0.113.9');
+      // Sin declarar Cloudflare, cualquiera puede escribir CF-Connecting-IP: no se usa
+      assert.equal(
+        await ipDeLaPrueba(ctx, { 'X-Forwarded-For': '203.0.113.9', 'CF-Connecting-IP': '198.51.100.7' }, '3100000032', '11:00 AM'),
+        '203.0.113.9',
+      );
     } finally {
       await ctx.cerrar();
     }
   });
 
+  test('con DETRAS_DE_CLOUDFLARE=true se usa CF-Connecting-IP; si no es una IP válida, la del proxy', async () => {
+    const ctx = await iniciar({ entorno: { TRUST_PROXY: 1, DETRAS_DE_CLOUDFLARE: true } });
+    try {
+      assert.equal(await ipDeLaPrueba(ctx, { 'X-Forwarded-For': '203.0.113.9', 'CF-Connecting-IP': '198.51.100.7' }, '3100000034'), '198.51.100.7');
+      assert.equal(await ipDeLaPrueba(ctx, { 'X-Forwarded-For': '203.0.113.9', 'CF-Connecting-IP': 'no-es-una-ip' }, '3100000035', '11:00 AM'), '203.0.113.9');
+    } finally {
+      await ctx.cerrar();
+    }
+  });
+
+  test('DETRAS_DE_CLOUDFLARE sin proxy de confianza no hace que se crea el encabezado', async () => {
+    const ctx = await iniciar({ entorno: { TRUST_PROXY: 0, DETRAS_DE_CLOUDFLARE: true } });
+    try {
+      const ip = await ipDeLaPrueba(ctx, { 'CF-Connecting-IP': '198.51.100.7' }, '3100000036');
+      assert.ok(['127.0.0.1', '::1'].includes(ip), `ip=${ip}`);
+    } finally {
+      await ctx.cerrar();
+    }
+  });
+
+  test('el valor por defecto de TRUST_PROXY es 0 y DETRAS_DE_CLOUDFLARE exige un proxy de confianza', () => {
+    const base: NodeJS.ProcessEnv = {
+      ...process.env,
+      JWT_SECRET: SECRETO_PRUEBAS,
+      RECUPERACION_SECRET: SECRETO_RECUPERACION_PRUEBAS,
+      TOTP_SECRET: SECRETO_TOTP_PRUEBAS,
+      NODE_ENV: 'test',
+    };
+    delete base.TRUST_PROXY;
+    delete base.DETRAS_DE_CLOUDFLARE;
+    const porDefecto = cargarEntorno(base);
+    assert.equal(porDefecto.TRUST_PROXY, 0);
+    assert.equal(porDefecto.DETRAS_DE_CLOUDFLARE, false);
+    assert.throws(() => cargarEntorno({ ...base, DETRAS_DE_CLOUDFLARE: 'true' }), /DETRAS_DE_CLOUDFLARE.*TRUST_PROXY/);
+    assert.equal(cargarEntorno({ ...base, DETRAS_DE_CLOUDFLARE: 'true', TRUST_PROXY: '1' }).DETRAS_DE_CLOUDFLARE, true);
+    assert.throws(() => cargarEntorno({ ...base, TRUST_PROXY: '-1' }), /TRUST_PROXY/);
+    assert.throws(() => cargarEntorno({ ...base, TRUST_PROXY: '99' }), /TRUST_PROXY/);
+  });
+
   test('el límite de intentos de login no se evita inventando X-Forwarded-For cuando no hay proxy de confianza', async () => {
-    const ctx = await iniciar({ entorno: { TRUST_PROXY: 0 }, limites: { login: 3 } });
+    const ctx = await iniciar({ entorno: { TRUST_PROXY: 0 }, limites: { loginUnico: 3 } });
     try {
       const intentar = (ip: string) =>
         pedir(ctx, '/api/v1/login', { method: 'POST', body: { usuario: 'nadie', clave: 'x' }, headers: { 'X-Forwarded-For': ip, 'CF-Connecting-IP': ip } });

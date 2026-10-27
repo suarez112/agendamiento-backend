@@ -1,10 +1,10 @@
 import { ZONA_PLATAFORMA } from '../../config/plataforma.js';
 import { aIsoEnZona } from '../../shared/zonaHoraria.js';
-import { isIP } from 'node:net';
 import { Router, type Request } from 'express';
 import type pg from 'pg';
 import { z } from 'zod';
 import type { Consultable } from '../../db/pool.js';
+import { ipDe } from '../../shared/http/ip.js';
 import { parsear } from '../../shared/http/validacion.js';
 import { errores } from '../../shared/errores.js';
 import { tokenDe } from '../auth/guardias.js';
@@ -45,16 +45,11 @@ const VIGENTE = (tipo: TipoDocumento) =>
 // Datos de la conexión que hace la petición. Salen SOLO de la petición HTTP, nunca del cuerpo.
 export type ContextoPeticion = { ip: string | null; userAgent: string | null };
 
-// IP directa de la conexión. Solo si TRUST_PROXY > 0 (hay un proxy de confianza delante) se aceptan
-// CF-Connecting-IP y X-Forwarded-For (esta última la resuelve Express con el número de proxies).
-// Sin proxy de confianza esos encabezados se ignoran: cualquiera podría escribirlos y falsear la prueba.
-export const contextoDe = (req: Request): ContextoPeticion => {
-  const hayProxy = Number(req.app.get('trust proxy')) > 0;
-  const cf = hayProxy ? req.get('cf-connecting-ip')?.trim() : undefined;
-  const bruta = cf && isIP(cf) ? cf : hayProxy ? req.ip : req.socket.remoteAddress;
-  const ip = bruta ? bruta.replace(/^::ffff:/i, '') : null;
-  return { ip: ip && isIP(ip) ? ip : null, userAgent: req.get('user-agent')?.slice(0, 500) || null };
-};
+// La IP sale de ipDe (shared/http/ip.ts): sin proxy de confianza se ignoran los encabezados que cualquiera puede escribir.
+export const contextoDe = (req: Request): ContextoPeticion => ({
+  ip: ipDe(req),
+  userAgent: req.get('user-agent')?.slice(0, 500) || null,
+});
 
 // Zona del negocio donde se aceptó; la de la plataforma si la aceptación no tiene negocio
 const ZONA_DE_ACEPTACION = (empresaId: string) =>
