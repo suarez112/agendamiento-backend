@@ -124,14 +124,18 @@ describe('reservas simultáneas', () => {
 
   test('el mismo número escrito de otra forma es el mismo cliente', async () => {
     const fecha = fechaEnDias(8);
-    const formas = ['3100000004', '310 000 0004', '+57 310-000-0004', '573100000004'];
+    // Tres formas de escribir el mismo número (el tope de citas pendientes por teléfono es 3)
+    const formas = ['3100000004', '310 000 0004', '+57 310-000-0004'];
     for (const [i, telefono] of formas.entries()) {
       const r = await reservar(ctx, { fecha, hora: `0${i + 1}:00 PM`, telefono });
       assert.equal(r.estado, 201, `${telefono}: ${r.texto}`);
       assert.equal(r.json.cita.telefono, e164(4), 'la respuesta trae el teléfono en E.164');
     }
     const { rows } = await ctx.pool.query('SELECT total_citas FROM clientes WHERE telefono = $1', [e164(4)]);
-    assert.deepEqual(rows, [{ total_citas: 4 }]);
+    assert.deepEqual(rows, [{ total_citas: 3 }]);
+    // Una cuarta forma del mismo número es la misma persona: topa en las 3 citas pendientes
+    const cuarta = await reservar(ctx, { fecha, hora: '04:00 PM', telefono: '573100000004' });
+    assert.equal(cuarta.estado, 409);
   });
 
   test('la base rechaza estados y horarios inválidos', async () => {

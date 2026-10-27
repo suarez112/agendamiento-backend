@@ -117,6 +117,26 @@ export const bloquearProfesional = async (db: Consultable, empresaId: string, ba
     )
   ).rowCount! > 0;
 
+// Las reservas de un mismo teléfono en un negocio se hacen de una en una (dura hasta el fin de la transacción):
+// así dos reservas a la vez, con profesionales distintos, no pasan juntas el tope de citas pendientes
+export const bloquearTelefono = (db: Consultable, empresaId: string, telefono: string) =>
+  db.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`citas-pendientes:${empresaId}:${telefono}`]);
+
+// Citas pendientes de ese teléfono en el negocio: confirmadas y que aún no terminan (en la hora del negocio).
+// Una cita confirmada que ya pasó sin marcarse como atendida no cuenta.
+export const contarCitasPendientesDeTelefono = async (db: Consultable, empresaId: string, telefono: string) =>
+  (
+    await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n
+       FROM citas c
+       JOIN clientes cl ON cl.id = c.cliente_id AND cl.empresa_id = c.empresa_id
+       JOIN empresas e ON e.id = c.empresa_id
+       WHERE c.empresa_id = $1 AND cl.telefono = $2 AND c.estado = 'CONFIRMADA'
+         AND (c.fecha + c.hora_fin) AT TIME ZONE e.zona_horaria > now()`,
+      [empresaId, telefono],
+    )
+  ).rows[0].n;
+
 // true si ya hay una cita (no cancelada) del profesional que se cruza con esas horas
 // excluirCitaId: una cita que se está moviendo no choca consigo misma
 export const chocaConCita = async (
@@ -176,18 +196,18 @@ export const buscarCitaDeCliente = async (db: Consultable, citaId: string, usuar
   ).rows[0];
 
 // Cambia la fecha y la hora de la cita (conserva su duración y precio) y vuelve a habilitar su recordatorio
-export const moverCita = (db: Consultable, p: { id: string; fecha: string; horaInicio: string; horaFin: string }) =>
-  db.query(`UPDATE citas SET fecha = $2, hora_inicio = $3, hora_fin = $4, recordatorio_enviado_en = NULL, recordatorio_2h_enviado_en = NULL WHERE id = $1`, [
-    p.id,
-    p.fecha,
-    p.horaInicio,
-    p.horaFin,
-  ]);
+export const moverCita = (db: Consultable, p: { id: string; empresaId: string; fecha: string; horaInicio: string; horaFin: string }) =>
+  db.query(
+    `UPDATE citas SET fecha = $3, hora_inicio = $4, hora_fin = $5, recordatorio_enviado_en = NULL, recordatorio_2h_enviado_en = NULL
+     WHERE id = $1 AND empresa_id = $2`,
+    [p.id, p.empresaId, p.fecha, p.horaInicio, p.horaFin],
+  );
 
 // La última cita del cliente en el negocio no retrocede
-export const avanzarUltimaCita = (db: Consultable, clienteId: string, fecha: string) =>
-  db.query('UPDATE clientes SET fecha_ultima_cita = GREATEST(fecha_ultima_cita, $2::date) WHERE id = $1', [
+export const avanzarUltimaCita = (db: Consultable, empresaId: string, clienteId: string, fecha: string) =>
+  db.query('UPDATE clientes SET fecha_ultima_cita = GREATEST(fecha_ultima_cita, $3::date) WHERE id = $1 AND empresa_id = $2', [
     clienteId,
+    empresaId,
     fecha,
   ]);
 
@@ -405,3 +425,7 @@ export const cancelarCita = async (db: Consultable, p: { id: string; empresaId: 
       [p.id, p.empresaId, p.barberoId, p.usuarioId],
     )
   ).rows[0];
+
+// ¿La cita es de este negocio? (cualquier estado)
+export const existeCitaDelNegocio = async (db: Consultable, id: string, empresaId: string) =>
+  (await db.query('SELECT 1 FROM citas WHERE id = $1 AND empresa_id = $2', [id, empresaId])).rowCount! > 0;

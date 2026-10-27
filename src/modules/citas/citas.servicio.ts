@@ -13,6 +13,7 @@ import { aceptoAmbos, type ContextoPeticion, DEBE_ACEPTAR, NUEVA_VERSION, regist
 import type { DatosNuevaCita } from './citas.esquemas.js';
 import * as repositorio from './citas.repositorio.js';
 import { DIAS_RESERVA } from './citas.repositorio.js';
+import { MAX_CITAS_PENDIENTES_POR_TELEFONO, mensajeTopeCitasPendientes } from '../../config/reservas.js';
 import { esDiaCompleto } from '../bloqueos/bloqueos.servicio.js';
 import { calcularHoras } from './disponibilidad.js';
 import { mensajeFueraDePlazo } from './politica.js';
@@ -33,7 +34,16 @@ const validarFecha = (fecha: string, { hoy, ultimo_dia }: { hoy: string; ultimo_
 };
 
 // notificaciones: avisos push opcionales (nunca hacen fallar la reserva ni la cancelación)
-export const crearServicioCitas = ({ pool, notificaciones }: { pool: pg.Pool; notificaciones?: Avisos }) => ({
+export const crearServicioCitas = ({
+  pool,
+  notificaciones,
+  maxPendientes = MAX_CITAS_PENDIENTES_POR_TELEFONO,
+}: {
+  pool: pg.Pool;
+  notificaciones?: Avisos;
+  // Citas pendientes que puede tener un teléfono en un negocio
+  maxPendientes?: number;
+}) => ({
   // cuenta: cliente con sesión (usa su nombre y teléfono); null = reserva como invitado
   async crear(datos: DatosNuevaCita, cuenta: FilaUsuario | null, contexto: ContextoPeticion) {
     const { empresaId, barberoId, servicioId, fecha, hora } = datos;
@@ -86,6 +96,11 @@ export const crearServicioCitas = ({ pool, notificaciones }: { pool: pg.Pool; no
       await enTransaccion(pool, async (tx) => {
         if (!(await repositorio.bloquearProfesional(tx, empresaId, barberoId))) {
           throw errores.noEncontrado('Servicio o profesional no encontrado');
+        }
+        // Tope de citas pendientes por teléfono en este negocio (invitados y clientes con cuenta)
+        await repositorio.bloquearTelefono(tx, empresaId, telefono);
+        if ((await repositorio.contarCitasPendientesDeTelefono(tx, empresaId, telefono)) >= maxPendientes) {
+          throw errores.conflicto(mensajeTopeCitasPendientes(maxPendientes));
         }
         if (await repositorio.chocaConBloqueo(tx, { barberoId, fecha, ...horario })) {
           throw errores.conflicto(HORA_BLOQUEADA);
@@ -313,8 +328,8 @@ export const crearServicioCitas = ({ pool, notificaciones }: { pool: pg.Pool; no
         if (await repositorio.chocaConBloqueo(tx, franja)) throw errores.conflicto(HORA_BLOQUEADA);
         if (await repositorio.chocaConCita(tx, { ...franja, excluirCitaId: cita.id })) throw errores.conflicto(HORA_OCUPADA);
 
-        await repositorio.moverCita(tx, { id: cita.id, ...nueva });
-        await repositorio.avanzarUltimaCita(tx, cita.cliente_id, fecha);
+        await repositorio.moverCita(tx, { id: cita.id, empresaId: cita.empresa_id, ...nueva });
+        await repositorio.avanzarUltimaCita(tx, cita.empresa_id, cita.cliente_id, fecha);
         await repositorio.insertarReprogramacion(tx, { citaId: cita.id, usuarioId, anterior, nueva });
         return { cita, reserva, nueva };
       });
@@ -343,11 +358,15 @@ export const crearServicioCitas = ({ pool, notificaciones }: { pool: pg.Pool; no
     }
   },
 
+  // 404 si la cita no existe o es de otro negocio. Se revisa antes que la suscripción.
+  async exigirCita({ empresaId }: Sesion, id: string) {
+    if (!(await repositorio.existeCitaDelNegocio(pool, id, empresaId))) throw errores.noEncontrado('Cita no encontrada');
+  },
+
   async cancelar({ empresaId, barberoId, usuarioId }: Sesion, id: string) {
     const r = await repositorio.cancelarCita(pool, { id, empresaId, barberoId, usuarioId });
-    if (!r) {
-      throw errores.conflicto('No se pudo cancelar: la cita no existe o ya fue atendida o cancelada.');
-    }
+    // La cita existe (la ruta ya lo comprobó): solo falla si ya estaba atendida o cancelada
+    if (!r) throw errores.conflicto('No se pudo cancelar: la cita ya fue atendida o cancelada.');
     // Si la cita era de un cliente con cuenta, se le avisa que el negocio la canceló
     void notificaciones?.avisarCancelacionPorNegocio(id);
     return {

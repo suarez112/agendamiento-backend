@@ -20,7 +20,7 @@ export const crearRutasCitas = (
 
   // Públicas: las usan los clientes que reservan. Con el token de una cuenta de
   // cliente se usan su nombre y teléfono; sin token (o con otro) es una reserva de invitado.
-  rutas.post('/', limitadores.reservas, async (req, res) => {
+  rutas.post('/', limitadores.reservas, limitadores.reservasCreadas, async (req, res) => {
     const datos = parsear(esquemaCrearCita, req.body);
     res.status(201).json(await citas.crear(datos, await cuentas.clienteDeToken(tokenDe(req)), contextoDe(req)));
   });
@@ -57,6 +57,11 @@ export const crearRutasCitas = (
     '/:id/cancelar',
     requerirSesion,
     requerirAdmin('Solo el administrador puede cancelar citas.'),
+    // Primero la existencia (404) y luego la suscripción (402)
+    async (req, res, next) => {
+      await citas.exigirCita(sesionDe(res), parsear(esquemaIdCita, req.params).id);
+      next();
+    },
     suscripcion.requerirSuscripcionVigente,
     async (req, res) => {
       const { id } = parsear(esquemaIdCita, req.params);
