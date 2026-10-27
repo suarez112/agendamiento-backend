@@ -350,7 +350,7 @@ La revisión (lentes de riesgo y fiabilidad) aprobó los commits de A-3 y M-3. S
 
 # SEGUIMIENTO – TANDA 3 (hallazgos A-2, M-1, M-2, M-4, M-5, M-6, M-8, B-1 a B-7, B-9 a B-11 y pendientes menores)
 
-**Fecha:** 2026-10-26 · **Rama:** `auditoria` · **Resultado:** `npm test` → **323 pruebas, 323 pasan, 0 fallan** (antes: 221) · `npm run typecheck` sin errores · en PostgreSQL no quedaron bases temporales.
+**Fecha:** 2026-10-26 · **Rama:** `auditoria` · **Resultado:** `npm test` → **325 pruebas, 325 pasan, 0 fallan** (antes: 221) · `npm run typecheck` sin errores · en PostgreSQL no quedaron bases temporales.
 
 ## Qué se hizo
 
@@ -423,5 +423,6 @@ Observaciones que **no bloquean** y quedan como trabajo aparte (las revisiones l
 - **Aceptadas (decisión del dueño, 2026-10-27):**
   - Quien conozca un correo o usuario puede bloquear esa cuenta unos minutos con intentos fallidos. Es el costo de tener bloqueo por cuenta; el bloqueo es corto, crece solo si se repite y se puede salir de él recuperando la contraseña por correo.
   - Quien pruebe contraseñas del superadmin desde muchas IP distintas sigue pudiendo intentarlo, aunque el bloqueo por cuenta + IP y el segundo paso (código de la app autenticadora) lo frenan; un límite global exigiría Redis o un servicio de borde (queda para cuando se publique).
-- **Siguen pendientes, de bajo riesgo:** el bloqueo de cuenta no se quita al recuperar la contraseña; `POST /logout` responde 200 aunque la cuenta ya no exista; falta una prueba con un campo `ver` mal formado.
+- **Corregidas en una segunda ronda (2026-10-27):** al restablecer la contraseña con el código se quita el bloqueo y se reinician los contadores de esa cuenta (por correo, por usuario y el de eliminar la cuenta; un código equivocado no desbloquea nada); y si falla la comprobación extra del bloqueo tras una contraseña correcta, no da 500: no deja entrar, responde 429 y lo registra (`intentos_login_fallo`). Pruebas en `test/intentosDeLogin.test.ts`.
+- **Siguen pendientes, de bajo riesgo (menores):** `POST /logout` responde 200 aunque la cuenta ya no exista; falta una prueba con un campo `ver` mal formado; el valor que devuelve `registrarFallo` con la cuenta ya bloqueada pasó de `0` a `max` y no tiene una aserción propia; una aserción de la prueba de intentos simultáneos podría comprobar que el bloqueo sigue activo; la limpieza de filas viejas sigue corriendo (aparte) en cada fallo y podría muestrearse o pasar a una tarea periódica; la prueba de recuperación no comprueba que otras cuentas bloqueadas antes de restablecer sigan bloqueadas, ni hay prueba de que un fallo al reiniciar los contadores al restablecer se registre sin cambiar la respuesta (la segunda revisión los aprobó como sugerencias).
 - **Secretos:** la validación de `DETRAS_DE_CLOUDFLARE` sin proxy no tiene prueba propia (sí la tiene en `autorizaciones`); las pruebas dependen de módulos de otros commits (por el corte por temas).

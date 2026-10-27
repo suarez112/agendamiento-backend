@@ -111,7 +111,8 @@ export type OrigenLogin = { ruta: string; ip: string | null };
 // 2. Un 401 (credenciales incorrectas) suma un fallo y queda en el registro del servidor (sin contraseña ni
 //    correo: solo la ruta, la IP y un hash corto de la cuenta, para detectar un ataque).
 // 3. Un inicio correcto reinicia el contador (si eso falla, entra igual y se registra) y se vuelve a revisar el
-//    bloqueo, por si otros intentos simultáneos lo activaron mientras se probaba la contraseña.
+//    bloqueo, por si otros intentos simultáneos lo activaron mientras se probaba la contraseña (si esa revisión
+//    falla, no entra: responde 429 y se registra).
 export const conContadorDeCuenta = async <T>(
   intentos: ServicioIntentos,
   clave: string,
@@ -124,7 +125,15 @@ export const conContadorDeCuenta = async <T>(
     const resultado = await intento();
     // Varios intentos pueden estar probando contraseñas a la vez: si mientras tanto la cuenta se bloqueó, ni siquiera
     // la contraseña correcta entra (si no, el bloqueo se saltaría con intentos simultáneos)
-    await intentos.exigirSinBloqueo(clave);
+    try {
+      await intentos.exigirSinBloqueo(clave);
+    } catch (e) {
+      if (e instanceof ErrorApp) throw e;
+      // No se pudo comprobar el bloqueo: no se sabe si la cuenta está bloqueada, así que no se deja entrar (responde
+      // como una cuenta bloqueada, no con un error 500) y el fallo queda en el registro
+      registro.error('intentos_login_fallo', { mensaje: (e as Error).message });
+      throw errores.demasiadosIntentos(MENSAJE_BLOQUEO_LOGIN);
+    }
     // La contraseña ya era correcta: si el contador no se puede reiniciar, la persona entra igual y el fallo se registra
     try {
       await intentos.limpiar(clave);

@@ -3,6 +3,7 @@ import { after, before, describe, test } from 'node:test';
 import jwt from 'jsonwebtoken';
 import { cargarEntorno } from '../src/config/entorno.js';
 import { cifrarContrasena } from '../src/modules/auth/contrasenas.js';
+import { crearServicioIntentos } from '../src/modules/auth/intentos.js';
 import { crearServicioRecuperacion } from '../src/modules/cuentas/recuperacion.servicio.js';
 import { recifrarSegundosPasos } from '../src/modules/superadmin/recifrado.js';
 import { cifrarSecreto, codigoTotp, generarSecretoTotp } from '../src/modules/superadmin/totp.js';
@@ -89,7 +90,7 @@ describe('tres secretos independientes: cada uno protege solo lo suyo', () => {
     assert.equal(registro.estado, 201, registro.texto);
     let texto = '';
     const correo = { enviar: async (m: { texto: string }) => void (texto = m.texto) };
-    const conSecreto = (secreto: string) => crearServicioRecuperacion({ pool: ctx.pool, secreto, correo });
+    const conSecreto = (secreto: string) => crearServicioRecuperacion({ pool: ctx.pool, secreto, correo, intentos: crearServicioIntentos(ctx.pool, { max: 10, ventanaMs: 60_000, bloqueoBaseMs: 1_000, bloqueoMaxMs: 4_000 }) });
     await conSecreto(SECRETO_RECUPERACION_PRUEBAS).solicitar('recupera@correo.com');
     const codigo = (await esperarHasta(async () => texto.match(/\b(\d{6})\b/)))[1];
     const datos = { correo: 'recupera@correo.com', codigo, clave: 'Nueva-clave-9!' };

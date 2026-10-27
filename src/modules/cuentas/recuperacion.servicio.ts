@@ -5,6 +5,7 @@ import type { EnviadorCorreo } from '../../shared/correo.js';
 import { errores } from '../../shared/errores.js';
 import { registro } from '../../shared/registro.js';
 import { cifrarContrasena } from '../auth/contrasenas.js';
+import type { ServicioIntentos } from '../auth/intentos.js';
 import * as repositorio from './cuentas.repositorio.js';
 
 // Recuperar la contraseña de una cuenta (administradora o cliente) con su correo:
@@ -22,11 +23,11 @@ const MENSAJE_SOLICITUD = `Si el correo pertenece a una cuenta, te enviamos un c
 // usado o bloqueado): así tampoco se revela si la cuenta existe
 const CODIGO_INVALIDO = 'El código no es válido, ya venció o se bloqueó por demasiados intentos. Solicita uno nuevo.';
 
-type Dependencias = { pool: pg.Pool; secreto: string; correo: EnviadorCorreo };
+type Dependencias = { pool: pg.Pool; secreto: string; correo: EnviadorCorreo; intentos: ServicioIntentos };
 
 export type DatosRestablecer = { correo: string; codigo: string; clave: string };
 
-export const crearServicioRecuperacion = ({ pool, secreto, correo }: Dependencias) => {
+export const crearServicioRecuperacion = ({ pool, secreto, correo, intentos }: Dependencias) => {
   // Ligado a la cuenta: el mismo código de otra cuenta da otro HMAC
   const hmac = (usuarioId: string, codigo: string) =>
     createHmac('sha256', secreto).update(`recuperacion:${usuarioId}:${codigo}`).digest();
@@ -58,7 +59,8 @@ export const crearServicioRecuperacion = ({ pool, secreto, correo }: Dependencia
       return { mensaje: MENSAJE_SOLICITUD };
     },
 
-    // Cambia la contraseña y cierra todas las sesiones abiertas de la cuenta
+    // Cambia la contraseña, cierra todas las sesiones abiertas de la cuenta y le quita el bloqueo por intentos fallidos
+    // (quien recupera su contraseña no tiene por qué seguir bloqueado)
     async restablecer({ correo: correoCuenta, codigo, clave }: DatosRestablecer) {
       const passwordHash = await cifrarContrasena(clave);
       const usuario = await repositorio.buscarUsuarioPorCorreo(pool, correoCuenta);
@@ -78,6 +80,13 @@ export const crearServicioRecuperacion = ({ pool, secreto, correo }: Dependencia
           return true;
         }));
       if (!cambiada) throw errores.solicitudInvalida(CODIGO_INVALIDO);
+      // Las claves del contador son las de cada forma de entrar: por correo, por usuario y la de eliminar la cuenta.
+      // La contraseña ya cambió: si el contador no se puede reiniciar, se registra y la respuesta no cambia.
+      const claves = [intentos.claveDe('cuenta', correoCuenta), intentos.claveDe('eliminar', usuario!.id)];
+      if (usuario!.usuario) claves.push(intentos.claveDe('cuenta', usuario!.usuario));
+      for (const clave of claves) {
+        await intentos.limpiar(clave).catch((e: Error) => registro.error('intentos_login_fallo', { mensaje: e.message }));
+      }
       return { mensaje: 'Tu contraseña se cambió. Inicia sesión con tu nueva contraseña.' };
     },
   };

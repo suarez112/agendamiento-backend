@@ -86,7 +86,6 @@ export const crearApp = ({
   const categorias = crearServicioCategorias({ pool });
   const cuentas = crearServicioCuentas({ pool, tokens, categorias, enlaceBase: entorno.ENLACE_PUBLICO_BASE });
   const guardiasCuenta = crearGuardiasCuenta(cuentas);
-  const recuperacion = crearServicioRecuperacion({ pool, secreto: entorno.RECUPERACION_SECRET, correo });
   const suscripcion = crearGuardiaSuscripcion({ pool });
   const permisos = crearPermisos(guardias, suscripcion);
   const fotos = crearAlmacenesFotos(entorno.CARPETA_SUBIDAS);
@@ -101,6 +100,7 @@ export const crearApp = ({
     bloqueoBaseMs: limites.bloqueoCuentaMs,
     bloqueoMaxMs: TOPE_BLOQUEO_CUENTA_MS,
   });
+  const recuperacion = crearServicioRecuperacion({ pool, secreto: entorno.RECUPERACION_SECRET, correo, intentos: intentosPorCuenta });
   const intentosSuperadmin = crearServicioIntentos(pool, {
     max: limites.fallosSuperadmin,
     ventanaMs: limites.ventanaMs,

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 import { conContadorDeCuenta, crearServicioIntentos } from '../src/modules/auth/intentos.js';
+import { crearServicioRecuperacion } from '../src/modules/cuentas/recuperacion.servicio.js';
 import { codigoTotp, cifrarSecreto, generarSecretoTotp } from '../src/modules/superadmin/totp.js';
 import { cifrarContrasena } from '../src/modules/auth/contrasenas.js';
 import {
@@ -9,6 +10,8 @@ import {
   iniciar,
   pedir,
   registrarCliente,
+  esperarHasta,
+  SECRETO_RECUPERACION_PRUEBAS,
   SECRETO_TOTP_PRUEBAS,
 } from './apoyo/servidor.js';
 
@@ -187,6 +190,79 @@ describe('contador de intentos por cuenta (en la base de datos)', () => {
     const evento = lineas.map((l) => JSON.parse(l)).find((l) => l.evento === 'intentos_login_fallo');
     assert.ok(evento, lineas.join(' | '));
     assert.match(evento.mensaje, /base caída/);
+  });
+
+  test('si falla la comprobación extra del bloqueo tras una contraseña correcta, no da 500: responde 429 y se registra', async () => {
+    await limpiar();
+    const servicio = crearServicioIntentos(ctx.pool, { max: 3, ventanaMs: 60_000, bloqueoBaseMs: 1_000, bloqueoMaxMs: 4_000 });
+    let llamadas = 0;
+    let reiniciado = false;
+    const roto = {
+      ...servicio,
+      // La primera comprobación (antes de probar la contraseña) funciona; la segunda (después) falla
+      exigirSinBloqueo: async () => {
+        if (++llamadas === 2) throw new Error('base caída');
+      },
+      limpiar: async () => void (reiniciado = true),
+    };
+    const original = console.error;
+    const lineas: string[] = [];
+    console.error = (...partes: unknown[]) => void lineas.push(partes.join(' '));
+    try {
+      await assert.rejects(conContadorDeCuenta(roto, servicio.claveDe('cuenta', 'duda'), { ruta: '/login', ip: null }, async () => 'dentro'), {
+        estado: 429,
+        message: MENSAJE_BLOQUEO,
+      });
+    } finally {
+      console.error = original;
+    }
+    assert.equal(reiniciado, false, 'sin saber si estaba bloqueada, no se reinicia nada');
+    const evento = lineas.map((l) => JSON.parse(l)).find((l) => l.evento === 'intentos_login_fallo');
+    assert.ok(evento, lineas.join(' | '));
+    assert.match(evento.mensaje, /base caída/);
+  });
+
+  test('al recuperar la contraseña con el código se quita el bloqueo de la cuenta, por correo, por usuario y al eliminarla', async () => {
+    await limpiar();
+    const correo = 'recupera.bloqueada@correo.com';
+    const registro = await registrarCliente(ctx, correo, CLAVE_CLIENTE);
+    assert.equal(registro.estado, 201, registro.texto);
+    const token = registro.json.token as string;
+    await ctx.pool.query("UPDATE usuarios SET usuario = 'recupera.usuario' WHERE lower(correo) = $1", [correo]);
+    const eliminar = (clave: string) => pedir(ctx, '/api/v1/cuentas/eliminar', { method: 'POST', token, body: { clave } });
+    const bloquear = async () => {
+      for (let i = 0; i < 3; i++) {
+        assert.equal((await loginCuentas(ctx, correo, 'mal')).estado, 401);
+        assert.equal((await loginUnico(ctx, 'recupera.usuario', 'mal')).estado, 401);
+        assert.equal((await eliminar('mal')).estado, 401);
+      }
+      assert.equal((await loginCuentas(ctx, correo, CLAVE_CLIENTE)).estado, 429);
+      assert.equal((await loginUnico(ctx, 'recupera.usuario', CLAVE_CLIENTE)).estado, 429);
+    };
+    await bloquear();
+
+    let texto = '';
+    const recuperacion = crearServicioRecuperacion({
+      pool: ctx.pool,
+      secreto: SECRETO_RECUPERACION_PRUEBAS,
+      correo: { enviar: async (m: { texto: string }) => void (texto = m.texto) },
+      intentos: crearServicioIntentos(ctx.pool, { max: 3, ventanaMs: 60_000, bloqueoBaseMs: 60_000, bloqueoMaxMs: 240_000 }),
+    });
+    await recuperacion.solicitar(correo);
+    const codigo = (await esperarHasta(async () => texto.match(/\b(\d{6})\b/)))[1];
+
+    // Un código equivocado no desbloquea nada
+    const equivocado = codigo === '000000' ? '000001' : '000000';
+    await assert.rejects(recuperacion.restablecer({ correo, codigo: equivocado, clave: 'Nueva-clave-9!' }), { estado: 400 });
+    assert.equal((await filas()).length, 3, 'siguen las tres cuentas bloqueadas');
+
+    await recuperacion.restablecer({ correo, codigo, clave: 'Nueva-clave-9!' });
+    assert.deepEqual(await filas(), [], 'se reiniciaron los tres contadores');
+    assert.equal((await loginCuentas(ctx, correo, 'Nueva-clave-9!')).estado, 200);
+    assert.equal((await loginUnico(ctx, 'recupera.usuario', 'Nueva-clave-9!')).estado, 200);
+    // Otras cuentas bloqueadas siguen bloqueadas
+    for (let i = 0; i < 3; i++) await loginPersonal(ctx, 'barbero.a', 'mal');
+    assert.equal((await loginPersonal(ctx, 'barbero.a', 'clave-a')).estado, 429);
   });
 
   test('varios fallos simultáneos se cuentan todos y producen un solo bloqueo', async () => {
