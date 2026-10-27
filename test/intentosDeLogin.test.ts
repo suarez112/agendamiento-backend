@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
-import { crearServicioIntentos } from '../src/modules/auth/intentos.js';
+import { conContadorDeCuenta, crearServicioIntentos } from '../src/modules/auth/intentos.js';
 import { codigoTotp, cifrarSecreto, generarSecretoTotp } from '../src/modules/superadmin/totp.js';
 import { cifrarContrasena } from '../src/modules/auth/contrasenas.js';
 import {
@@ -169,6 +169,61 @@ describe('contador de intentos por cuenta (en la base de datos)', () => {
     assert.ok(primero > 0 && primero <= 1_000, `primero=${primero}`);
     assert.ok(segundo > 1_000 && segundo <= 2_000, `segundo=${segundo}`);
     assert.ok(tercero > 2_000 && tercero <= 3_000, `tercero=${tercero} (tope 3 s en lugar de 4 s)`);
+  });
+
+  test('si falla el borrado del contador tras un inicio correcto, la persona entra y el fallo se registra', async () => {
+    await limpiar();
+    const servicio = crearServicioIntentos(ctx.pool, { max: 3, ventanaMs: 60_000, bloqueoBaseMs: 1_000, bloqueoMaxMs: 4_000 });
+    const roto = { ...servicio, limpiar: async () => Promise.reject(new Error('base caída')) };
+    const original = console.error;
+    const lineas: string[] = [];
+    console.error = (...partes: unknown[]) => void lineas.push(partes.join(' '));
+    try {
+      const resultado = await conContadorDeCuenta(roto, servicio.claveDe('cuenta', 'entra'), { ruta: '/login', ip: null }, async () => 'dentro');
+      assert.equal(resultado, 'dentro');
+    } finally {
+      console.error = original;
+    }
+    const evento = lineas.map((l) => JSON.parse(l)).find((l) => l.evento === 'intentos_login_fallo');
+    assert.ok(evento, lineas.join(' | '));
+    assert.match(evento.mensaje, /base caída/);
+  });
+
+  test('varios fallos simultáneos se cuentan todos y producen un solo bloqueo', async () => {
+    await limpiar();
+    const servicio = crearServicioIntentos(ctx.pool, { max: 3, ventanaMs: 60_000, bloqueoBaseMs: 60_000, bloqueoMaxMs: 240_000 });
+    const clave = servicio.claveDe('cuenta', 'a.la.vez');
+    const resultados = await Promise.all(Array.from({ length: 12 }, () => servicio.registrarFallo(clave)));
+    assert.equal(resultados.length, 12);
+    const [fila, ...otras] = await filas();
+    assert.equal(otras.length, 0);
+    assert.equal(fila.bloqueos, 1, 'el bloqueo se aplica una vez: los fallos que llegan con la cuenta bloqueada no cambian nada');
+    assert.equal(fila.intentos, 0);
+    assert.ok(fila.bloqueado_hasta > new Date());
+    await assert.rejects(servicio.exigirSinBloqueo(clave), { estado: 429 });
+
+    // Con contraseñas incorrectas en paralelo por HTTP pasa lo mismo, y la correcta ya no entra
+    await limpiar();
+    const intentos = await Promise.all(Array.from({ length: 8 }, () => loginPersonal(ctx, 'barbero.a', 'mal')));
+    assert.ok(intentos.every((r) => r.estado === 401 || r.estado === 429));
+    assert.equal(intentos.filter((r) => r.estado === 401).length >= 3, true, 'los tres primeros fallos cuentan');
+    assert.equal((await filas())[0].bloqueos, 1);
+    assert.equal((await loginPersonal(ctx, 'barbero.a', 'clave-a')).estado, 429);
+  });
+
+  test('una contraseña correcta que termina de probarse con la cuenta ya bloqueada no entra', async () => {
+    await limpiar();
+    const servicio = crearServicioIntentos(ctx.pool, { max: 2, ventanaMs: 60_000, bloqueoBaseMs: 60_000, bloqueoMaxMs: 240_000 });
+    const clave = servicio.claveDe('cuenta', 'carrera');
+    await assert.rejects(
+      conContadorDeCuenta(servicio, clave, { ruta: '/login', ip: null }, async () => {
+        // Mientras se comprueba la contraseña, otros intentos fallidos bloquean la cuenta
+        await Promise.all([servicio.registrarFallo(clave), servicio.registrarFallo(clave)]);
+        return 'dentro';
+      }),
+      { estado: 429 },
+    );
+    assert.equal((await filas()).length, 1, 'el bloqueo sigue en pie: no se reinició el contador');
   });
 
   test('las filas viejas se limpian solas', async () => {

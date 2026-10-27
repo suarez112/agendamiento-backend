@@ -121,6 +121,35 @@ describe('sesiones del personal y POST /logout', () => {
     assert.equal((await iniciarSesion(ctx, 'admin.a', 'Otra-clave-2!')).length > 0, true);
   });
 
+  test('cambiar la contraseña de un integrante borra los tokens de notificaciones de sus celulares, y solo los suyos', async () => {
+    const admin = await iniciarSesion(ctx, 'admin.a', 'Otra-clave-2!');
+    const barbero = await iniciarSesion(ctx, 'barbero.a', 'Nueva-clave-1!');
+    await ctx.pool.query('DELETE FROM dispositivos_push');
+    const registrar = async (token: string, tokenExpo: string) =>
+      assert.equal((await pedir(ctx, '/api/v1/dispositivos', { method: 'PUT', token, body: { token: tokenExpo } })).estado, 200);
+    await registrar(barbero, 'ExponentPushToken[celular_uno]');
+    await registrar(barbero, 'ExponentPushToken[celular_dos]');
+    await registrar(admin, 'ExponentPushToken[celular_admin]');
+    const tokens = async () => (await ctx.pool.query('SELECT token FROM dispositivos_push ORDER BY token')).rows.map((f) => f.token);
+
+    // Editar otros datos no toca los celulares
+    const sinClave = await pedir(ctx, '/api/v1/equipo/barb_a', { method: 'PATCH', token: admin, body: { especialidad: 'Barbero' } });
+    assert.equal(sinClave.estado, 200, sinClave.texto);
+    assert.equal((await tokens()).length, 3);
+
+    const cambio = await pedir(ctx, '/api/v1/equipo/barb_a', { method: 'PATCH', token: admin, body: { clave: 'Tercera-clave-3!' } });
+    assert.equal(cambio.estado, 200, cambio.texto);
+    assert.deepEqual(await tokens(), ['ExponentPushToken[celular_admin]'], 'solo quedan los de otras personas');
+  });
+
+  test('si el integrante cambia su propia contraseña, también se borran sus celulares', async () => {
+    const admin = await iniciarSesion(ctx, 'admin.a', 'Otra-clave-2!');
+    assert.equal((await pedir(ctx, '/api/v1/dispositivos', { method: 'PUT', token: admin, body: { token: TOKEN_EXPO } })).estado, 200);
+    const propio = await pedir(ctx, '/api/v1/equipo/admin_a', { method: 'PATCH', token: admin, body: { clave: 'Quinta-clave-5!' } });
+    assert.equal(propio.estado, 200, propio.texto);
+    assert.equal((await ctx.pool.query("SELECT count(*)::int AS n FROM dispositivos_push WHERE barbero_id = 'admin_a'")).rows[0].n, 0);
+  });
+
   test('editar otros datos (sin contraseña) no cierra sesiones', async () => {
     const admin = await iniciarSesion(ctx, 'admin.b', 'clave-b');
     const cambio = await pedir(ctx, '/api/v1/equipo/admin_b', { method: 'PATCH', token: admin, body: { especialidad: 'Barbero' } });

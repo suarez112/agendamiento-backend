@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
 import type pg from 'pg';
-import { enTransaccion } from '../../db/pool.js';
 import { ErrorApp, errores } from '../../shared/errores.js';
 import { registro } from '../../shared/registro.js';
 
@@ -22,17 +21,49 @@ export type ConfigIntentos = {
   bloqueoMaxMs: number;
 };
 
-const UN_DIA_MS = 24 * 60 * 60_000;
-
 export const MENSAJE_BLOQUEO_LOGIN = 'Demasiados intentos de inicio de sesión. Intenta de nuevo en unos minutos.';
 
-type FilaIntentos = {
-  intentos: number;
-  primer_intento: Date;
-  bloqueos: number;
-  bloqueado_hasta: Date | null;
-  actualizado_en: Date;
-  ahora: Date;
+// Suma un fallo en UNA sola sentencia: la base bloquea la fila, así que varios fallos a la vez se cuentan uno tras
+// otro sin perder ninguno (si se leyera y se escribiera aparte, dos fallos simultáneos podrían contarse como uno).
+// Todo se calcula con los valores de la fila ya bloqueada:
+// - una ventana nueva empieza de cero; tras un día sin intentos también se olvidan los bloqueos;
+// - al llegar al máximo se bloquea, y cada bloqueo seguido dura el doble (con tope);
+// - si la cuenta ya está bloqueada no se cambia nada (el WHERE no deja actualizar y no se devuelve fila).
+const VENTANA_VENCIDA = "(now() - intentos_login.primer_intento > $3::bigint * interval '1 millisecond')";
+const INTENTOS_NUEVOS = `(CASE WHEN ${VENTANA_VENCIDA} THEN 0 ELSE intentos_login.intentos END + 1)`;
+const BLOQUEOS_PREVIOS = "(CASE WHEN now() - intentos_login.actualizado_en > interval '1 day' THEN 0 ELSE intentos_login.bloqueos END)";
+const BLOQUEA = `(${INTENTOS_NUEVOS} >= $2::int)`;
+const SUMAR_FALLO = `
+  INSERT INTO intentos_login (clave, intentos, bloqueos, bloqueado_hasta)
+  VALUES (
+    $1,
+    CASE WHEN $2::int <= 1 THEN 0 ELSE 1 END,
+    CASE WHEN $2::int <= 1 THEN 1 ELSE 0 END,
+    CASE WHEN $2::int <= 1 THEN now() + $4::bigint * interval '1 millisecond' END
+  )
+  ON CONFLICT (clave) DO UPDATE SET
+    intentos = CASE WHEN ${BLOQUEA} THEN 0 ELSE ${INTENTOS_NUEVOS} END,
+    primer_intento = CASE WHEN ${BLOQUEA} OR ${VENTANA_VENCIDA} THEN now() ELSE intentos_login.primer_intento END,
+    bloqueos = CASE WHEN ${BLOQUEA} THEN ${BLOQUEOS_PREVIOS} + 1 ELSE ${BLOQUEOS_PREVIOS} END,
+    bloqueado_hasta = CASE WHEN ${BLOQUEA}
+      THEN now() + LEAST($4::float8 * power(2::float8, ${BLOQUEOS_PREVIOS}), $5::float8) * interval '1 millisecond'
+    END,
+    actualizado_en = now()
+  WHERE intentos_login.bloqueado_hasta IS NULL OR intentos_login.bloqueado_hasta <= now()
+  RETURNING intentos, bloqueado_hasta`;
+
+// Las filas sin actividad desde hace un día y sin bloqueo vigente ya no sirven. Va aparte del fallo y salta las
+// filas que otro está usando, para que la limpieza nunca haga esperar un inicio de sesión. Si falla, no importa.
+const purgar = async (pool: pg.Pool) => {
+  await pool
+    .query(
+      `DELETE FROM intentos_login WHERE clave IN (
+         SELECT clave FROM intentos_login
+         WHERE actualizado_en < now() - interval '1 day' AND (bloqueado_hasta IS NULL OR bloqueado_hasta < now())
+         FOR UPDATE SKIP LOCKED
+       )`,
+    )
+    .catch((e: Error) => registro.error('intentos_login_limpieza_fallo', { mensaje: e.message }));
 };
 
 export const crearServicioIntentos = (pool: pg.Pool, config: ConfigIntentos) => ({
@@ -51,49 +82,18 @@ export const crearServicioIntentos = (pool: pg.Pool, config: ConfigIntentos) => 
 
   // Suma un fallo; al llegar al máximo bloquea la cuenta. Devuelve los fallos seguidos que lleva.
   async registrarFallo(clave: string): Promise<number> {
-    return await enTransaccion(pool, async (tx) => {
-      await tx.query('INSERT INTO intentos_login (clave) VALUES ($1) ON CONFLICT (clave) DO NOTHING', [clave]);
-      const f = (
-        await tx.query<FilaIntentos>(
-          `SELECT intentos, primer_intento, bloqueos, bloqueado_hasta, actualizado_en, now() AS ahora
-           FROM intentos_login WHERE clave = $1 FOR UPDATE`,
-          [clave],
-        )
-      ).rows[0];
-      const ahora = f.ahora.getTime();
-      // Bloqueada: el fallo no cambia nada (el bloqueo ya está corriendo)
-      if (f.bloqueado_hasta && f.bloqueado_hasta.getTime() > ahora) return f.intentos;
-
-      let { intentos, primer_intento: primero, bloqueos } = f;
-      // Una ventana nueva empieza de cero; tras un día sin intentos también se olvidan los bloqueos
-      if (ahora - primero.getTime() > config.ventanaMs) {
-        intentos = 0;
-        primero = f.ahora;
-      }
-      if (ahora - f.actualizado_en.getTime() > UN_DIA_MS) bloqueos = 0;
-
-      intentos += 1;
-      let bloqueadoHasta: Date | null = null;
-      if (intentos >= config.max) {
-        bloqueos += 1;
-        const espera = Math.min(config.bloqueoBaseMs * 2 ** (bloqueos - 1), config.bloqueoMaxMs);
-        bloqueadoHasta = new Date(ahora + espera);
-        intentos = 0;
-        primero = f.ahora;
-      }
-      await tx.query(
-        `UPDATE intentos_login
-         SET intentos = $2, primer_intento = $3, bloqueos = $4, bloqueado_hasta = $5, actualizado_en = now()
-         WHERE clave = $1`,
-        [clave, intentos, primero, bloqueos, bloqueadoHasta],
-      );
-      // Limpieza: las filas sin actividad desde hace un día y sin bloqueo vigente ya no sirven
-      await tx.query(
-        `DELETE FROM intentos_login
-         WHERE actualizado_en < now() - interval '1 day' AND (bloqueado_hasta IS NULL OR bloqueado_hasta < now())`,
-      );
-      return bloqueadoHasta ? config.max : intentos;
-    });
+    const { rows } = await pool.query<{ intentos: number; bloqueado_hasta: Date | null }>(SUMAR_FALLO, [
+      clave,
+      config.max,
+      config.ventanaMs,
+      config.bloqueoBaseMs,
+      config.bloqueoMaxMs,
+    ]);
+    // Sin fila: la cuenta ya estaba bloqueada y el fallo no cambia nada
+    const fila = rows[0];
+    const fallos = !fila || fila.bloqueado_hasta ? config.max : fila.intentos;
+    await purgar(pool);
+    return fallos;
   },
 
   // Inicio de sesión correcto: la cuenta empieza de cero
@@ -110,7 +110,8 @@ export type OrigenLogin = { ruta: string; ip: string | null };
 // 1. Si la cuenta está bloqueada, responde 429 sin siquiera probar la contraseña.
 // 2. Un 401 (credenciales incorrectas) suma un fallo y queda en el registro del servidor (sin contraseña ni
 //    correo: solo la ruta, la IP y un hash corto de la cuenta, para detectar un ataque).
-// 3. Un inicio correcto reinicia el contador.
+// 3. Un inicio correcto reinicia el contador (si eso falla, entra igual y se registra) y se vuelve a revisar el
+//    bloqueo, por si otros intentos simultáneos lo activaron mientras se probaba la contraseña.
 export const conContadorDeCuenta = async <T>(
   intentos: ServicioIntentos,
   clave: string,
@@ -121,7 +122,15 @@ export const conContadorDeCuenta = async <T>(
   await intentos.exigirSinBloqueo(clave);
   try {
     const resultado = await intento();
-    await intentos.limpiar(clave);
+    // Varios intentos pueden estar probando contraseñas a la vez: si mientras tanto la cuenta se bloqueó, ni siquiera
+    // la contraseña correcta entra (si no, el bloqueo se saltaría con intentos simultáneos)
+    await intentos.exigirSinBloqueo(clave);
+    // La contraseña ya era correcta: si el contador no se puede reiniciar, la persona entra igual y el fallo se registra
+    try {
+      await intentos.limpiar(clave);
+    } catch (e) {
+      registro.error('intentos_login_fallo', { mensaje: (e as Error).message });
+    }
     return resultado;
   } catch (error) {
     if (error instanceof ErrorApp && error.estado === 401) {

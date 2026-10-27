@@ -100,6 +100,10 @@ export const actualizarMiembro = async (db: Consultable, id: string, empresaId: 
     )
   ).rows[0];
 
+// Quita los tokens de notificaciones de los celulares de un integrante (al cambiar su contraseña dejan de recibir avisos)
+export const borrarDispositivosDeMiembro = async (db: Consultable, id: string) =>
+  db.query('DELETE FROM dispositivos_push WHERE barbero_id = $1', [id]);
+
 // Bloquea la fila de la empresa: dos cambios al equipo a la vez se esperan y el segundo ve al primero.
 // Los topes (profesionales cobrados y administradores que no atienden) están en modules/empresas/cobro.ts.
 export const bloquearLimiteEquipo = async (db: Consultable, empresaId: string) =>

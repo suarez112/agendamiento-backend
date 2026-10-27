@@ -120,6 +120,9 @@ export const crearServicioEquipo = ({ pool, fotos, tokens }: { pool: pg.Pool; fo
       }
       const cambiado = await repositorio.actualizarMiembro(tx, id, sesion.empresaId, { ...cambios, passwordHash });
       if (cambiado) await reajustarCobro(tx, sesion.empresaId, cambiado.id);
+      // Con la contraseña nueva se cierran sus sesiones: sus celulares tampoco deben seguir recibiendo avisos
+      // (la app vuelve a registrar el suyo al iniciar sesión)
+      if (cambiado && passwordHash !== undefined) await repositorio.borrarDispositivosDeMiembro(tx, cambiado.id);
       return cambiado;
     }).catch(traducirUsuarioRepetido);
     if (!miembro) throw errores.noEncontrado(NO_ENCONTRADO);

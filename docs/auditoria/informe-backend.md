@@ -350,7 +350,7 @@ La revisión (lentes de riesgo y fiabilidad) aprobó los commits de A-3 y M-3. S
 
 # SEGUIMIENTO – TANDA 3 (hallazgos A-2, M-1, M-2, M-4, M-5, M-6, M-8, B-1 a B-7, B-9 a B-11 y pendientes menores)
 
-**Fecha:** 2026-10-26 · **Rama:** `auditoria` · **Resultado:** `npm test` → **318 pruebas, 318 pasan, 0 fallan** (antes: 221) · `npm run typecheck` sin errores · en PostgreSQL no quedaron bases temporales.
+**Fecha:** 2026-10-26 · **Rama:** `auditoria` · **Resultado:** `npm test` → **323 pruebas, 323 pasan, 0 fallan** (antes: 221) · `npm run typecheck` sin errores · en PostgreSQL no quedaron bases temporales.
 
 ## Qué se hizo
 
@@ -415,6 +415,13 @@ La revisión (lentes de riesgo y fiabilidad) aprobó los commits de A-3 y M-3. S
 
 Observaciones que **no bloquean** y quedan como trabajo aparte (las revisiones las listan como advertencias o sugerencias):
 
-- **Límites y contador:** si falla el borrado del contador tras un inicio de sesión correcto, la persona recibe un error 500 en vez de entrar; varios intentos a la vez pueden pasar el bloqueo antes de que se registre; la limpieza de filas viejas corre dentro de cada fallo y puede competir por bloqueos; el bloqueo de cuenta no se quita al recuperar la contraseña; un atacante que conozca un correo puede bloquear esa cuenta unos minutos, y uno con muchas IP puede seguir probando contra el superadmin.
-- **Sesiones:** `POST /logout` responde 200 aunque la cuenta ya no exista; al cambiar la contraseña de un integrante sus celulares registrados siguen recibiendo avisos; falta una prueba con un campo `ver` mal formado.
+- **Límites y contador — corregidas (2026-10-27):**
+  - Si fallaba el borrado del contador tras un inicio de sesión correcto, la persona recibía un error 500: ahora entra igual y el fallo queda en el registro (`intentos_login_fallo`).
+  - Varios intentos a la vez podían saltarse el bloqueo: cada fallo se suma ahora con una sola sentencia atómica en la base (`INSERT … ON CONFLICT DO UPDATE`), y antes de dejar entrar a una contraseña correcta se vuelve a revisar el bloqueo. La limpieza de filas viejas salió del camino del fallo (`DELETE … FOR UPDATE SKIP LOCKED`), así que ya no compite por bloqueos.
+  - Pruebas: `test/intentosDeLogin.test.ts` (fallo del borrado, 12 fallos simultáneos = un solo bloqueo, contraseña correcta que termina con la cuenta ya bloqueada).
+- **Sesiones — corregida (2026-10-27):** al cambiar la contraseña de un integrante (también la propia) se borran los tokens de notificaciones de sus celulares (`test/sesiones.test.ts`).
+- **Aceptadas (decisión del dueño, 2026-10-27):**
+  - Quien conozca un correo o usuario puede bloquear esa cuenta unos minutos con intentos fallidos. Es el costo de tener bloqueo por cuenta; el bloqueo es corto, crece solo si se repite y se puede salir de él recuperando la contraseña por correo.
+  - Quien pruebe contraseñas del superadmin desde muchas IP distintas sigue pudiendo intentarlo, aunque el bloqueo por cuenta + IP y el segundo paso (código de la app autenticadora) lo frenan; un límite global exigiría Redis o un servicio de borde (queda para cuando se publique).
+- **Siguen pendientes, de bajo riesgo:** el bloqueo de cuenta no se quita al recuperar la contraseña; `POST /logout` responde 200 aunque la cuenta ya no exista; falta una prueba con un campo `ver` mal formado.
 - **Secretos:** la validación de `DETRAS_DE_CLOUDFLARE` sin proxy no tiene prueba propia (sí la tiene en `autorizaciones`); las pruebas dependen de módulos de otros commits (por el corte por temas).
