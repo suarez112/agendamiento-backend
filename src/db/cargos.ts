@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import { cargarEntornoBaseDeDatos } from '../config/entorno.js';
 import { marcarCargosPagados } from '../modules/empresas/cobro.js';
+import { negarEnProduccion, registrarComando } from './comandos.js';
 import { crearPool, enTransaccion } from './pool.js';
 
 // npm run dev:cargos -- listar CODIGO
@@ -25,6 +26,9 @@ if ((accion !== 'listar' && accion !== 'pagar') || !codigo || (accion === 'lista
   process.exit(1);
 }
 
+// Marcar cargos como pagados mueve dinero que no se cobró de verdad: solo en desarrollo
+if (accion === 'pagar') negarEnProduccion('dev:cargos pagar');
+
 const pool = crearPool(cargarEntornoBaseDeDatos());
 
 try {
@@ -45,7 +49,18 @@ try {
       console.log(`#${c.id} ${c.fecha} ${c.estado.toUpperCase()} ${Number(c.monto).toLocaleString('es-CO')} COP — ${c.concepto}`);
     }
   } else {
-    const pagados = await enTransaccion(pool, (tx) => marcarCargosPagados(tx, empresa.id, 'comando', id));
+    const pagados = await enTransaccion(pool, async (tx) => {
+      const marcados = await marcarCargosPagados(tx, empresa.id, 'comando', id);
+      if (marcados.length > 0) {
+        await registrarComando(tx, {
+          comando: 'dev:cargos',
+          accion: 'pagar_cargos',
+          empresa: { id: empresa.id, codigo_acceso: codigo, nombre: empresa.nombre },
+          detalle: { cargos: marcados.length, total: marcados.reduce((suma, c) => suma + Number(c.monto), 0) },
+        });
+      }
+      return marcados;
+    });
     if (pagados.length === 0) {
       console.error(id ? `✖ No hay un cargo pendiente #${id} en ${codigo}` : `✖ ${codigo} no tiene cargos pendientes`);
       process.exitCode = 1;

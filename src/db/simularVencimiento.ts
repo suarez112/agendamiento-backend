@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 import { cargarEntornoBaseDeDatos } from '../config/entorno.js';
 import { buscarSuscripcion } from '../modules/empresas/empresas.repositorio.js';
 import { estadoEfectivo } from '../modules/empresas/suscripcion.js';
+import { negarEnProduccion, registrarComando } from './comandos.js';
 import { crearPool } from './pool.js';
 
 // npm run dev:simular-vencimiento -- CODIGO DIAS
@@ -10,10 +11,7 @@ import { crearPool } from './pool.js';
 // Cambia la fecha de fin; el estado se calcula a partir de ella.
 dotenv.config({ quiet: true });
 
-if (process.env.NODE_ENV === 'production') {
-  console.error('Este comando solo funciona en desarrollo (NODE_ENV es "production").');
-  process.exit(1);
-}
+negarEnProduccion('dev:simular-vencimiento');
 
 const USO = 'Uso: npm run dev:simular-vencimiento -- CODIGO DIAS   (ej. 3, 0 o -2)';
 const [codigoArg, diasArg] = process.argv.slice(2);
@@ -49,6 +47,12 @@ try {
     process.exitCode = 1;
   } else {
     const s = (await buscarSuscripcion(pool, rows[0].id))!;
+    await registrarComando(pool, {
+      comando: 'dev:simular-vencimiento',
+      accion: 'simular_vencimiento',
+      empresa: { id: rows[0].id, codigo_acceso: codigo, nombre: rows[0].nombre },
+      detalle: { dias },
+    });
     console.log(
       `✔ ${rows[0].nombre} (${codigo}): ${estadoEfectivo(s)}. Fin: ${s.fecha_fin}. Días restantes: ${s.dias_restantes}.`,
     );

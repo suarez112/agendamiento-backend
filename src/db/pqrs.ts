@@ -2,6 +2,7 @@ import { ZONA_PLATAFORMA } from '../config/plataforma.js';
 import dotenv from 'dotenv';
 import { cargarEntornoBaseDeDatos } from '../config/entorno.js';
 import { ESTADOS_PQRS, type EstadoPqrs } from '../modules/pqrs/pqrs.repositorio.js';
+import { negarEnProduccion, registrarComando } from './comandos.js';
 import { crearPool } from './pool.js';
 
 // npm run dev:pqrs -- listar [estado]
@@ -15,6 +16,8 @@ const USO = `Uso:
   npm run dev:pqrs -- responder RADICADO ${ESTADOS_PQRS.join('|')} ["respuesta"]`;
 
 const [orden, ...resto] = process.argv.slice(2);
+// Responder cambia el estado y el texto que ve quien radicó; en producción se hace desde el panel del superadmin
+if (orden === 'responder') negarEnProduccion('dev:pqrs responder');
 const pool = crearPool(cargarEntornoBaseDeDatos());
 const esEstado = (valor: string | undefined): valor is EstadoPqrs => ESTADOS_PQRS.includes(valor as EstadoPqrs);
 
@@ -51,6 +54,12 @@ try {
       console.error(`No existe una PQRS con el radicado ${radicado}`);
       process.exitCode = 1;
     } else {
+      await registrarComando(pool, {
+        comando: 'dev:pqrs',
+        accion: 'responder_pqrs',
+        referencia: rows[0].radicado,
+        detalle: { estado: rows[0].estado, conRespuesta: Boolean(respuesta) },
+      });
       console.log(`✔ ${rows[0].radicado}: estado ${rows[0].estado}.` + (rows[0].respuesta ? ` Respuesta: ${rows[0].respuesta}` : ' Sin respuesta.'));
     }
   } else {

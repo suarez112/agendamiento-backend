@@ -4,6 +4,7 @@ import { buscarPlan, precioPara } from '../config/planes.js';
 import { activarPlanEmpresa } from '../modules/empresas/activacion.js';
 import { buscarSuscripcion } from '../modules/empresas/empresas.repositorio.js';
 import { ErrorApp } from '../shared/errores.js';
+import { confirmar, registrarComando } from './comandos.js';
 import { crearPool, enTransaccion } from './pool.js';
 
 // npm run dev:activar-plan -- CODIGO mensual|anual
@@ -11,6 +12,8 @@ import { crearPool, enTransaccion } from './pool.js';
 // El precio sale de los profesionales que atienden clientes ahora (el primero $35.000 y cada adicional $25.000
 // al mes, mínimo uno; el anual es × 12 con 10 % de descuento) y el nivel (Emprendedor, Equipo, Pro), de ese número.
 // Los cargos proporcionales pendientes del negocio quedan pagados (el equipo actual ya va en el precio).
+// Pide confirmación antes de cambiar nada y deja el registro en la actividad del superadmin (B-6). Es el único
+// comando que también funciona con NODE_ENV=production: sirve para activar a mano un negocio mientras no haya pagos.
 // La fecha de pago es hoy (fecha en la zona horaria del negocio) y la empresa queda 'activa' de inmediato.
 // El plan dura 1 mes o 1 año contados desde:
 // - el fin de la prueba, si paga durante la prueba (no pierde los días gratis que le
@@ -38,18 +41,36 @@ if (!codigo || argumentos.length !== 2 || (plan !== 'mensual' && plan !== 'anual
 const pool = crearPool(cargarEntornoBaseDeDatos());
 
 try {
-  const rows = await enTransaccion(pool, async (tx) => {
-    const empresa = (
-      await tx.query<{ id: string; nombre: string }>('SELECT id, nombre FROM empresas WHERE codigo_acceso = $1', [codigo])
-    ).rows[0];
-    if (!empresa) return [];
-    await activarPlanEmpresa(tx, empresa.id, plan);
-    return [empresa];
-  });
-  if (rows.length === 0) {
+  const previa = (
+    await pool.query<{ id: string; nombre: string }>('SELECT id, nombre FROM empresas WHERE codigo_acceso = $1', [codigo])
+  ).rows[0];
+  const antes = previa && (await buscarSuscripcion(pool, previa.id));
+  let rows: { id: string; nombre: string }[] = [];
+  if (!previa || !antes) {
     console.error(`No existe un negocio con el código ${codigo}`);
     process.exitCode = 1;
   } else {
+    const precio = precioPara(antes.profesionales_cobrados, plan);
+    const aceptado = await confirmar(
+      `¿Activar el plan ${plan} de ${previa.nombre} (${codigo}) por ${precio.toLocaleString('es-CO')} COP, con ${antes.profesionales_cobrados} profesional(es) cobrado(s)? ` +
+        'Quedará como pagado sin un pago real.',
+    );
+    if (aceptado) {
+      rows = await enTransaccion(pool, async (tx) => {
+        await activarPlanEmpresa(tx, previa.id, plan);
+        await registrarComando(tx, {
+          comando: 'dev:activar-plan',
+          accion: 'activar_plan',
+          empresa: { id: previa.id, codigo_acceso: codigo, nombre: previa.nombre },
+          detalle: { periodo: plan, profesionales: antes.profesionales_cobrados, precio },
+        });
+        return [previa];
+      });
+    } else {
+      console.log('Cancelado: no se cambió nada.');
+    }
+  }
+  if (rows.length > 0) {
     const s = (await buscarSuscripcion(pool, rows[0].id))!;
     console.log(
       `✔ ${rows[0].nombre} (${codigo}): nivel ${buscarPlan(s.plan_equipo)?.nombre ?? s.plan_equipo}, plan ${s.plan} activo ` +
