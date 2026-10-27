@@ -50,7 +50,7 @@ export const crearServicioAuth = ({ pool, tokens }: Dependencias) => ({
     }
     return {
       mensaje: 'Autenticación exitosa',
-      token: tokens.firmar({ barberoId: barbero.id, empresaId: barbero.empresa_id }),
+      token: tokens.firmar({ barberoId: barbero.id, empresaId: barbero.empresa_id, version: barbero.version_sesion }),
       barbero: {
         id: barbero.id,
         empresaId: barbero.empresa_id,
@@ -77,8 +77,9 @@ export const crearServicioAuth = ({ pool, tokens }: Dependencias) => ({
     const datos = tokens.verificar(token);
     if (datos) {
       const rol = await repositorio.buscarRolVigente(pool, datos.barberoId, datos.empresaId);
-      if (!rol) throw errores.noAutenticado('Sesión no válida. Inicia sesión de nuevo.');
-      return { ...datos, usuarioId: null, esAdmin: rol.es_admin };
+      // Eliminado, o su contraseña cambió / cerró sesión en el servidor después de iniciar esta sesión
+      if (!rol || rol.version_sesion !== datos.version) throw errores.noAutenticado('Sesión no válida. Inicia sesión de nuevo.');
+      return { barberoId: datos.barberoId, empresaId: datos.empresaId, usuarioId: null, esAdmin: rol.es_admin };
     }
 
     const cuenta = tokens.verificarCuenta(token);

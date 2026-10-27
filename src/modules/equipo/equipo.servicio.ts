@@ -10,6 +10,7 @@ import {
   reajustarCobro,
   validarTopes,
 } from '../empresas/cobro.js';
+import type { ServicioTokens } from '../auth/tokens.js';
 import { type AlmacenFotos, urlFoto } from '../empresas/fotos.js';
 import * as repositorio from './equipo.repositorio.js';
 import type { FilaMiembro } from './equipo.repositorio.js';
@@ -65,7 +66,7 @@ const traducirUsuarioRepetido = (error: unknown): never => {
   throw error;
 };
 
-export const crearServicioEquipo = ({ pool, fotos }: { pool: pg.Pool; fotos: AlmacenFotos }) => ({
+export const crearServicioEquipo = ({ pool, fotos, tokens }: { pool: pg.Pool; fotos: AlmacenFotos; tokens: ServicioTokens }) => ({
   async listar(empresaId: string, urlBase: string) {
     return (await repositorio.listarEquipo(pool, empresaId)).map((m) => armarMiembro(m, urlBase));
   },
@@ -122,7 +123,15 @@ export const crearServicioEquipo = ({ pool, fotos }: { pool: pg.Pool; fotos: Alm
       return cambiado;
     }).catch(traducirUsuarioRepetido);
     if (!miembro) throw errores.noEncontrado(NO_ENCONTRADO);
-    return armarMiembro(miembro, urlBase);
+    // Una contraseña nueva cierra las sesiones abiertas de ese integrante. Si quien la cambió es él mismo, se le
+    // entrega un token nuevo para que su sesión actual siga: las demás quedan cerradas.
+    const propiaSesion = clave !== undefined && sesion.barberoId === id;
+    return {
+      ...armarMiembro(miembro, urlBase),
+      ...(propiaSesion && {
+        token: tokens.firmar({ barberoId: miembro.id, empresaId: sesion.empresaId, version: miembro.version_sesion }),
+      }),
+    };
   },
 
   async borrar(sesion: Sesion, id: string) {
@@ -166,12 +175,12 @@ export const crearServicioEquipo = ({ pool, fotos }: { pool: pg.Pool; fotos: Alm
         if (!actual?.activo) return actual;
         // Con citas pendientes sigue activo (para ver su agenda), pero ya no recibe reservas nuevas ni se cobra
         const pendientes = await repositorio.contarCitasPendientes(tx, actual.id, sesion.empresaId);
-        resultado = await repositorio.cambiarPerfilDeCuenta(tx, actual.id, pendientes > 0, false);
+        resultado = await repositorio.cambiarPerfilDeCuenta(tx, sesion.empresaId, actual.id, pendientes > 0, false);
       } else {
         // Atender clientes lo cuenta como profesional cobrado
         if (!(actual?.activo && actual.atiende_clientes)) validarTopes(await contarEquipoCobrable(tx, sesion.empresaId), { cobrados: 1 });
         if (actual) {
-          resultado = await repositorio.cambiarPerfilDeCuenta(tx, actual.id, true, true);
+          resultado = await repositorio.cambiarPerfilDeCuenta(tx, sesion.empresaId, actual.id, true, true);
         } else {
           const nombre = (await repositorio.nombreDeLaAdministradora(tx, sesion.empresaId)) ?? 'Administradora';
           resultado = await repositorio.crearPerfilDeCuenta(tx, { id: randomUUID(), empresaId: sesion.empresaId, usuarioId, nombre });

@@ -70,19 +70,21 @@ export type CambiosMiembro = {
 };
 
 // Solo cambia los campos enviados. especialidad: undefined = no cambia, null = se borra.
+// Una contraseña nueva sube la versión de sesión: las sesiones abiertas del integrante dejan de servir.
 export const actualizarMiembro = async (db: Consultable, id: string, empresaId: string, c: CambiosMiembro) =>
   (
-    await db.query<FilaMiembro>(
+    await db.query<FilaMiembro & { version_sesion: number }>(
       `UPDATE barberos
        SET nombre = COALESCE($3, nombre),
            usuario = COALESCE($4, usuario),
            password_hash = COALESCE($5, password_hash),
+           version_sesion = version_sesion + CASE WHEN $5::text IS NULL THEN 0 ELSE 1 END,
            es_admin = COALESCE($6, es_admin),
            especialidad = CASE WHEN $7::boolean THEN $8::varchar ELSE especialidad END,
            porcentaje_ganancia = COALESCE($9, porcentaje_ganancia),
            atiende_clientes = COALESCE($10, atiende_clientes)
        WHERE id = $1 AND empresa_id = $2 AND activo
-       RETURNING ${COLUMNAS}`,
+       RETURNING ${COLUMNAS}, version_sesion`,
       [
         id,
         empresaId,
@@ -163,11 +165,11 @@ export const crearPerfilDeCuenta = async (
   ).rows[0];
 
 // Activa o desactiva el perfil (activo = sigue en el equipo; atiende = recibe reservas nuevas)
-export const cambiarPerfilDeCuenta = async (db: Consultable, id: string, activo: boolean, atiende: boolean) =>
+export const cambiarPerfilDeCuenta = async (db: Consultable, empresaId: string, id: string, activo: boolean, atiende: boolean) =>
   (
     await db.query<FilaMiembro>(
-      `UPDATE barberos SET activo = $2, atiende_clientes = $3 WHERE id = $1 RETURNING ${COLUMNAS}`,
-      [id, activo, atiende],
+      `UPDATE barberos SET activo = $3, atiende_clientes = $4 WHERE id = $1 AND empresa_id = $2 RETURNING ${COLUMNAS}`,
+      [id, empresaId, activo, atiende],
     )
   ).rows[0];
 

@@ -1,14 +1,14 @@
 import jwt, { type SignOptions } from 'jsonwebtoken';
 
 // Hay dos clases de token:
-// - personal (barberos): identifica al barbero y su negocio.
+// - personal (barberos): identifica al barbero y su negocio, y lleva la versión de su sesión.
 // - cuenta (tabla usuarios: admin de empresa o cliente): lleva tipo 'cuenta'.
 // Los permisos (es_admin, rol, empresa) se leen de la base en cada solicitud,
 // así un cambio de rol aplica de inmediato.
-export type DatosToken = { barberoId: string; empresaId: string };
-// version = usuarios.version_sesion al firmar; si la cuenta cambia su contraseña,
-// la versión sube y los tokens anteriores dejan de servir. Los tokens de antes
-// de la migración 013 no la traen y cuentan como versión 0.
+// version = barberos.version_sesion / usuarios.version_sesion al firmar; si cambia la contraseña o se cierra
+// la sesión en el servidor (POST /logout), la versión sube y los tokens anteriores dejan de servir. Los tokens
+// de antes de las migraciones 013 (cuentas) y 029 (personal) no la traen y cuentan como versión 0.
+export type DatosToken = { barberoId: string; empresaId: string; version: number };
 export type DatosTokenCuenta = { usuarioId: string; version: number };
 
 const ALGORITMO = 'HS256';
@@ -35,8 +35,8 @@ export const crearServicioTokens = (secreto: string, expiraEn: string) => {
   };
 
   return {
-    firmar: ({ barberoId, empresaId }: DatosToken): string =>
-      jwt.sign({ empresaId }, secreto, opciones(barberoId)),
+    firmar: ({ barberoId, empresaId, version }: DatosToken): string =>
+      jwt.sign({ empresaId, ver: version }, secreto, opciones(barberoId)),
 
     // null si el token es falso, venció, es de una cuenta o no tiene el formato esperado
     verificar: (token: string): DatosToken | null => {
@@ -44,7 +44,9 @@ export const crearServicioTokens = (secreto: string, expiraEn: string) => {
       if (!datos || datos.tipo !== undefined) return null;
       const { sub, empresaId } = datos;
       if (typeof sub !== 'string' || typeof empresaId !== 'string') return null;
-      return { barberoId: sub, empresaId };
+      const version = datos.ver ?? 0;
+      if (typeof version !== 'number' || !Number.isInteger(version)) return null;
+      return { barberoId: sub, empresaId, version };
     },
 
     firmarCuenta: ({ usuarioId, version }: DatosTokenCuenta): string =>
