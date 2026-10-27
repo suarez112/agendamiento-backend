@@ -1,6 +1,6 @@
 import type { ErrorRequestHandler, RequestHandler } from 'express';
 import { ErrorApp, errores } from '../errores.js';
-import { registro } from '../registro.js';
+import { datosDeErrorPg, registro } from '../registro.js';
 
 export const rutaNoEncontrada: RequestHandler = () => {
   throw errores.noEncontrado('Ruta no encontrada');
@@ -36,6 +36,8 @@ export const manejadorErrores: ErrorRequestHandler = (error, req, res, next) => 
   registro.error('error_no_controlado', {
     metodo: req.method,
     ruta: req.path,
+    // Si viene de PostgreSQL: solo código, tabla, columna y restricción; el mensaje se limpia en registro
+    ...datosDeErrorPg(error),
     mensaje: (error as Error)?.message,
     pila: (error as Error)?.stack,
   });
