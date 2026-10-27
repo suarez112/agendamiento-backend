@@ -1,9 +1,12 @@
 import { readdir, readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import type pg from 'pg';
 
-// Las migraciones son archivos SQL numerados en db/migraciones. Cada una corre
-// en su propia transacción y queda anotada en schema_migrations para no repetirse.
+// Las migraciones son archivos numerados en db/migraciones. Cada una corre en su
+// propia transacción y queda anotada en schema_migrations para no repetirse.
+// Casi todas son SQL (.sql); una .ts exporta por defecto una función que recibe la
+// conexión de esa transacción, para cambios de datos que SQL no puede hacer bien
+// (ej. 011: pasar los teléfonos a E.164 con libphonenumber-js).
 const CARPETA = fileURLToPath(new URL('../../db/migraciones/', import.meta.url));
 
 // Evita que dos procesos migren la misma base al mismo tiempo
@@ -16,7 +19,7 @@ type Opciones = {
 };
 
 export const aplicarMigraciones = async (pool: pg.Pool, opciones: Opciones = {}) => {
-  const archivos = (await readdir(CARPETA)).filter((a) => /^\d{3}_.+\.sql$/.test(a)).sort();
+  const archivos = (await readdir(CARPETA)).filter((a) => /^\d{3}_.+\.(sql|ts)$/.test(a)).sort();
   const cliente = await pool.connect();
   const aplicadas: string[] = [];
   try {
@@ -39,10 +42,16 @@ export const aplicarMigraciones = async (pool: pg.Pool, opciones: Opciones = {})
       if (opciones.hasta && version > opciones.hasta) break;
       if (yaAplicadas.has(version)) continue;
 
-      const sql = await readFile(`${CARPETA}${archivo}`, 'utf8');
       try {
         await cliente.query('BEGIN');
-        await cliente.query(sql);
+        if (archivo.endsWith('.ts')) {
+          const modulo = (await import(pathToFileURL(`${CARPETA}${archivo}`).href)) as {
+            default: (db: pg.PoolClient) => Promise<void>;
+          };
+          await modulo.default(cliente);
+        } else {
+          await cliente.query(await readFile(`${CARPETA}${archivo}`, 'utf8'));
+        }
         await cliente.query('INSERT INTO schema_migrations (version, nombre) VALUES ($1, $2)', [
           version,
           archivo,

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
+import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { type Contexto, iniciar, iniciarSesion, pedir, SECRETO_PRUEBAS } from './apoyo/servidor.js';
 
@@ -14,7 +15,7 @@ describe('autenticación', () => {
   const login = (usuario: unknown, clave: unknown) =>
     pedir(ctx, '/api/v1/auth/login', { method: 'POST', body: { usuario, clave } });
 
-  test('una contraseña heredada en texto plano funciona y queda cifrada con bcrypt', async () => {
+  test('un hash bcrypt de costo bajo funciona y se sube al costo actual', async () => {
     const r = await login('barbero.a', 'clave-a');
     assert.equal(r.estado, 200);
     assert.equal(r.json.barbero.id, 'barb_a');
@@ -23,6 +24,34 @@ describe('autenticación', () => {
     const { rows } = await ctx.pool.query("SELECT password_hash FROM barberos WHERE id = 'barb_a'");
     assert.match(rows[0].password_hash, /^\$2[aby]\$12\$/);
     assert.equal((await login('barbero.a', 'clave-a')).estado, 200, 'sigue entrando con el hash nuevo');
+  });
+
+  // M-3 — una contraseña guardada en texto plano ya no se acepta, ni siquiera con la clave correcta
+  test('una contraseña guardada en texto plano no sirve en ningún inicio de sesión y no se modifica', async () => {
+    await ctx.pool.query("UPDATE barberos SET password_hash = 'texto-plano-1' WHERE id = 'barb_a2'");
+    await ctx.pool.query(
+      "INSERT INTO usuarios (id, correo, usuario, password_hash, rol, empresa_id) VALUES ('11111111-1111-4111-8111-111111111111', 'plano@correo.co', 'plano.uno', 'texto-plano-2', 'admin', 'emp_a')",
+    );
+    try {
+      assert.equal((await login('barbero.a2', 'texto-plano-1')).estado, 401);
+      const unico = (usuario: string, clave: string) =>
+        pedir(ctx, '/api/v1/login', { method: 'POST', body: { usuario, clave } });
+      assert.equal((await unico('barbero.a2', 'texto-plano-1')).estado, 401);
+      assert.equal((await unico('plano.uno', 'texto-plano-2')).estado, 401);
+      const cuenta = await pedir(ctx, '/api/v1/cuentas/login', {
+        method: 'POST',
+        body: { correo: 'plano@correo.co', clave: 'texto-plano-2' },
+      });
+      assert.equal(cuenta.estado, 401);
+
+      const { rows } = await ctx.pool.query(
+        "SELECT (SELECT password_hash FROM barberos WHERE id = 'barb_a2') AS barbero, (SELECT password_hash FROM usuarios WHERE correo = 'plano@correo.co') AS cuenta",
+      );
+      assert.deepEqual(rows[0], { barbero: 'texto-plano-1', cuenta: 'texto-plano-2' }, 'no se cifra al intentar entrar');
+    } finally {
+      await ctx.pool.query("DELETE FROM usuarios WHERE correo = 'plano@correo.co'");
+      await ctx.pool.query("UPDATE barberos SET password_hash = $1 WHERE id = 'barb_a2'", [await bcrypt.hash('secreta', 4)]);
+    }
   });
 
   test('una contraseña guardada con bcrypt se verifica', async () => {
@@ -88,7 +117,8 @@ describe('autenticación', () => {
 
   test('un barbero eliminado pierde el acceso', async () => {
     await ctx.pool.query(
-      "INSERT INTO barberos (id, empresa_id, nombre, usuario, password_hash) VALUES ('temporal', 'emp_a', 'Temporal', 'temporal', 'tmp-1')",
+      "INSERT INTO barberos (id, empresa_id, nombre, usuario, password_hash) VALUES ('temporal', 'emp_a', 'Temporal', 'temporal', $1)",
+      [await bcrypt.hash('tmp-1', 4)],
     );
     const token = await iniciarSesion(ctx, 'temporal', 'tmp-1');
     await ctx.pool.query("DELETE FROM barberos WHERE id = 'temporal'");
@@ -100,7 +130,7 @@ describe('autenticación', () => {
 describe('límite de intentos de inicio de sesión', () => {
   let ctx: Contexto;
   before(async () => {
-    ctx = await iniciar({ limites: { login: 3 } });
+    ctx = await iniciar({ limites: { loginPersonal: 3 } });
   });
   after(() => ctx.cerrar());
 

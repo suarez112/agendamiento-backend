@@ -1,34 +1,35 @@
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 import pg from 'pg';
-import { cargarEntornoBaseDeDatos } from '../../src/config/entorno.js';
 import { aplicarMigraciones } from '../../src/db/migraciones.js';
+import { hoyEn, sumarDiasAFecha, ZONA_POR_DEFECTO } from '../../src/shared/zonaHoraria.js';
 import { crearPool } from '../../src/db/pool.js';
+import { esBaseTemporalDePrueba, leerConfigPruebas } from './configuracionPruebas.js';
 
 dotenv.config({ quiet: true });
 process.env.NODE_ENV = 'test';
 
-// Fecha local "YYYY-MM-DD" a N días de hoy
-export const fechaEnDias = (dias: number) => {
-  const d = new Date();
-  d.setDate(d.getDate() + dias);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-};
+// Fecha "YYYY-MM-DD" a N días de hoy en la zona del negocio de pruebas (Bogotá), no la del computador:
+// así las pruebas no fallan cerca de la medianoche ni en otra zona horaria.
+export const fechaEnDias = (dias: number) => sumarDiasAFecha(hoyEn(ZONA_POR_DEFECTO), dias);
 
 export const FECHA_FUTURA = fechaEnDias(7);
 
 // Datos conocidos: dos negocios para probar el aislamiento entre ellos
-const sembrar = async (pool: pg.Pool) => {
-  const hashSecreta = await bcrypt.hash('secreta', 4);
+const sembrar = async (pool: pg.Pool | pg.PoolClient) => {
+  // Costo bajo para que las pruebas sean rápidas; el inicio de sesión lo sube al de producción
+  const [hashSecreta, hash1234, hashClaveA, hashClaveB] = await Promise.all(
+    ['secreta', '1234', 'clave-a', 'clave-b'].map((clave) => bcrypt.hash(clave, 4)),
+  );
   await pool.query(`
     INSERT INTO empresas (id, nombre, codigo_acceso, horario_apertura, horario_cierre) VALUES
       ('emp_a', 'Negocio A', 'NEGA', '08:00', '20:00'),
       ('emp_b', 'Negocio B', 'NEGB', '08:00', '20:00');
     INSERT INTO barberos (id, empresa_id, nombre, usuario, password_hash, es_admin) VALUES
-      ('admin_a', 'emp_a', 'Admin A', 'admin.a', '1234', true),
-      ('barb_a', 'emp_a', 'Barbero A', 'barbero.a', 'clave-a', false),
+      ('admin_a', 'emp_a', 'Admin A', 'admin.a', '${hash1234}', true),
+      ('barb_a', 'emp_a', 'Barbero A', 'barbero.a', '${hashClaveA}', false),
       ('barb_a2', 'emp_a', 'Barbero A2', 'barbero.a2', '${hashSecreta}', false),
-      ('admin_b', 'emp_b', 'Admin B', 'admin.b', 'clave-b', true);
+      ('admin_b', 'emp_b', 'Admin B', 'admin.b', '${hashClaveB}', true);
     INSERT INTO servicios (id, empresa_id, nombre, duracion_min, precio) VALUES
       ('serv_a', 'emp_a', 'Corte', 30, 20000),
       ('serv_a_largo', 'emp_a', 'Corte y barba', 60, 35000),
@@ -40,19 +41,22 @@ const sembrar = async (pool: pg.Pool) => {
   `);
 };
 
+const VERSION_SEMILLA = '002';
+
 export type BaseDePrueba = { nombre: string; pool: pg.Pool; destruir: () => Promise<void> };
 
-// Crea una base temporal, la migra y la llena; destruir() la elimina
+// Crea una base temporal, la migra y la llena; destruir() la elimina. Nunca toca la base de
+// desarrollo: solo usa la base de pruebas de TEST_DB_NAME (y se niega a correr si falta).
 export const crearBaseDePrueba = async (opciones: { hasta?: string } = {}): Promise<BaseDePrueba> => {
-  const entornoDb = cargarEntornoBaseDeDatos();
-  const nombre = `agendamiento_prueba_${process.pid}_${Date.now().toString(36)}`;
+  const config = leerConfigPruebas();
+  const nombre = `${config.prefijo}${process.pid}_${Date.now().toString(36)}`;
   const conAdmin = async (sql: string) => {
     const cliente = new pg.Client({
-      host: entornoDb.DB_HOST,
-      port: entornoDb.DB_PORT,
-      user: entornoDb.DB_USER,
-      password: entornoDb.DB_PASSWORD,
-      database: 'postgres',
+      host: config.host,
+      port: config.port,
+      user: config.user,
+      password: config.password,
+      database: config.baseMantenimiento,
     });
     await cliente.connect();
     try {
@@ -63,15 +67,37 @@ export const crearBaseDePrueba = async (opciones: { hasta?: string } = {}): Prom
   };
 
   await conAdmin(`CREATE DATABASE "${nombre}"`);
-  const pool = crearPool({ ...entornoDb, DB_NAME: nombre });
+  const pool = crearPool({
+    DB_HOST: config.host,
+    DB_PORT: config.port,
+    DB_USER: config.user,
+    DB_PASSWORD: config.password,
+    DB_NAME: nombre,
+    DB_POOL_MAX: 10,
+  });
+  // Los datos sembrados son negocios que ya existían antes del registro de
+  // empresas (003): se insertan con el esquema 002 y luego se migra el resto.
+  const hastaSemilla = opciones.hasta && opciones.hasta < VERSION_SEMILLA ? opciones.hasta : VERSION_SEMILLA;
+  await aplicarMigraciones(pool, { hasta: hastaSemilla });
+  // La semilla escribe fechas sin zona (created_at), que la migración 024 interpreta como hora de Bogotá, como en
+  // producción (donde el servidor trabajaba en esa zona). Se siembra con esa zona para que no queden 5 horas en el futuro.
+  const cliente = await pool.connect();
+  try {
+    await cliente.query("SET TIME ZONE 'America/Bogota'");
+    await sembrar(cliente);
+  } finally {
+    await cliente.query('RESET TIME ZONE').catch(() => undefined);
+    cliente.release();
+  }
   await aplicarMigraciones(pool, opciones);
-  await sembrar(pool);
 
   return {
     nombre,
     pool,
     destruir: async () => {
       await pool.end();
+      // Última defensa: solo se borra una base que lleve el prefijo de las temporales de pruebas
+      if (!esBaseTemporalDePrueba(config, nombre)) throw new Error(`No se borra "${nombre}": no es una base temporal de pruebas`);
       await conAdmin(`DROP DATABASE IF EXISTS "${nombre}" WITH (FORCE)`);
     },
   };

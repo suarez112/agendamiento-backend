@@ -29,3 +29,10 @@ export const esFechaReal = (fecha: string): boolean => {
   const dia = new Date(`${fecha}T00:00:00Z`);
   return !Number.isNaN(dia.getTime()) && dia.toISOString().slice(0, 10) === fecha;
 };
+
+// 580 -> "09:40 AM" (el formato con que la app reserva y muestra las horas)
+export const minutosAHora12 = (total: number): string => {
+  const h24 = Math.floor(total / 60) % 24;
+  const h = h24 % 12 === 0 ? 12 : h24 % 12;
+  return `${String(h).padStart(2, '0')}:${String(total % 60).padStart(2, '0')} ${h24 < 12 ? 'AM' : 'PM'}`;
+};

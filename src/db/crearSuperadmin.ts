@@ -1,0 +1,67 @@
+import dotenv from 'dotenv';
+import { z } from 'zod';
+import { cargarEntorno } from '../config/entorno.js';
+import { cifrarContrasena } from '../modules/auth/contrasenas.js';
+import * as repositorio from '../modules/superadmin/superadmin.repositorio.js';
+import { cifrarSecreto, generarSecretoTotp } from '../modules/superadmin/totp.js';
+import { generarContrasena, mostrarSegundoPaso } from './credencialesSuperadmin.js';
+import { negarEnProduccion, registrarComandoSinFallar } from './comandos.js';
+import { CODIGO_PG, crearPool, esErrorPg } from './pool.js';
+
+// npm run dev:crear-superadmin -- correo [--reiniciar]
+// Crea la cuenta del dueño de la plataforma. Es la ÚNICA forma de crear un superadmin: no hay registro
+// ni endpoint para eso. El comando genera una contraseña al azar y la clave de la verificación en dos
+// pasos, y muestra las dos una sola vez (la clave también como código QR para Google Authenticator, y el QR guardado como imagen PNG).
+// Con --reiniciar, a un superadmin que ya existe le cambia la contraseña y el segundo paso, y cierra sus sesiones.
+dotenv.config({ quiet: true });
+negarEnProduccion('dev:crear-superadmin');
+
+const USO = 'Uso: npm run dev:crear-superadmin -- correo [--reiniciar]';
+const argumentos = process.argv.slice(2);
+const reiniciar = argumentos.includes('--reiniciar');
+const correos = argumentos.filter((a) => a !== '--reiniciar');
+const correo = z.email().max(254).safeParse(correos[0]?.trim().toLowerCase());
+
+if (correos.length !== 1 || !correo.success || argumentos.length - correos.length > 1) {
+  console.error(USO);
+  process.exit(1);
+}
+
+const entorno = cargarEntorno();
+const pool = crearPool(entorno);
+
+try {
+  const contrasena = generarContrasena();
+  const secreto = generarSecretoTotp();
+  const datos = { passwordHash: await cifrarContrasena(contrasena), totpSecreto: cifrarSecreto(secreto, entorno.TOTP_SECRET) };
+
+  if (reiniciar) {
+    if (!(await repositorio.reiniciarSuperadmin(pool, correo.data, datos))) {
+      console.error(`✖ No existe un superadmin con el correo ${correo.data}. Créalo sin --reiniciar.`);
+      process.exit(1);
+    }
+  } else {
+    await repositorio.insertarSuperadmin(pool, { correo: correo.data, ...datos });
+  }
+  console.log(`✔ Superadmin ${reiniciar ? 'reiniciado' : 'creado'}: ${correo.data}\n`);
+  console.log('1) Configura la verificación en dos pasos en Google Authenticator (o Authy, Microsoft Authenticator…).');
+  await mostrarSegundoPaso(correo.data, secreto);
+  console.log(`2) Contraseña: ${contrasena}`);
+  console.log('\nGuárdalas ahora: no se vuelven a mostrar. Inicia sesión en POST /api/v1/superadmin/login con');
+  console.log('{ "correo", "clave", "codigo" }, donde "codigo" es el número de 6 dígitos que muestra tu app.');
+  // Después de mostrar las credenciales: si anotarlo falla, no se pierden
+  await registrarComandoSinFallar(pool, {
+    comando: 'dev:crear-superadmin',
+    accion: reiniciar ? 'reiniciar_superadmin' : 'crear_superadmin',
+    detalle: { correo: correo.data },
+  });
+} catch (error) {
+  if (esErrorPg(error, CODIGO_PG.violacionUnica)) {
+    console.error(`✖ Ya existe un superadmin con el correo ${correo.data}. Para cambiar su contraseña y su segundo paso usa --reiniciar.`);
+  } else {
+    console.error((error as Error).message);
+  }
+  process.exitCode = 1;
+} finally {
+  await pool.end();
+}

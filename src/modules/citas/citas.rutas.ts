@@ -1,17 +1,28 @@
 import { Router } from 'express';
 import type { Limitadores } from '../../shared/http/limitadores.js';
 import { parsear } from '../../shared/http/validacion.js';
-import { type Guardias, sesionDe } from '../auth/guardias.js';
-import { esquemaCrearCita, esquemaHorasOcupadas, esquemaIdCita } from './citas.esquemas.js';
+import { type Guardias, sesionDe, tokenDe } from '../auth/guardias.js';
+import type { ServicioCuentas } from '../cuentas/cuentas.servicio.js';
+import type { GuardiaSuscripcion } from '../empresas/suscripcion.js';
+import { esquemaCrearCita, esquemaHorasDisponibles, esquemaHorasOcupadas, esquemaIdCita } from './citas.esquemas.js';
+import { contextoDe } from '../legal/legal.js';
 import type { ServicioCitas } from './citas.servicio.js';
 
-export const crearRutasCitas = (citas: ServicioCitas, guardias: Guardias, limitadores: Limitadores) => {
+export const crearRutasCitas = (
+  citas: ServicioCitas,
+  guardias: Guardias,
+  suscripcion: GuardiaSuscripcion,
+  limitadores: Limitadores,
+  cuentas: ServicioCuentas,
+) => {
   const rutas = Router();
   const { requerirSesion, requerirAdmin } = guardias;
 
-  // Públicas: las usan los clientes que reservan
-  rutas.post('/', limitadores.reservas, async (req, res) => {
-    res.status(201).json(await citas.crear(parsear(esquemaCrearCita, req.body)));
+  // Públicas: las usan los clientes que reservan. Con el token de una cuenta de
+  // cliente se usan su nombre y teléfono; sin token (o con otro) es una reserva de invitado.
+  rutas.post('/', limitadores.reservas, limitadores.reservasCreadas, async (req, res) => {
+    const datos = parsear(esquemaCrearCita, req.body);
+    res.status(201).json(await citas.crear(datos, await cuentas.clienteDeToken(tokenDe(req)), contextoDe(req)));
   });
 
   rutas.get('/ocupadas', async (req, res) => {
@@ -19,12 +30,25 @@ export const crearRutasCitas = (citas: ServicioCitas, guardias: Guardias, limita
     res.json(await citas.horasOcupadas(empresaId));
   });
 
-  // Personal con sesión iniciada
-  rutas.get('/agenda', requerirSesion, async (_req, res) => {
+  // Horas libres de un profesional para un servicio ese día (reemplaza la cuadrícula fija de la app)
+  rutas.get('/disponibilidad', async (req, res) => {
+    res.json(await citas.horasDisponibles(parsear(esquemaHorasDisponibles, req.query)));
+  });
+
+  rutas.get('/bloqueos', async (req, res) => {
+    const { empresaId } = parsear(esquemaHorasOcupadas, req.query);
+    res.json(await citas.bloqueosPublicos(empresaId));
+  });
+
+  // Personal con sesión iniciada (barberos o la cuenta del administrador de la empresa).
+  // Con la suscripción vencida responden 402 (al empleado: negocio inactivo).
+  const sesionVigente = [requerirSesion, suscripcion.requerirSuscripcionVigente];
+
+  rutas.get('/agenda', ...sesionVigente, async (_req, res) => {
     res.json(await citas.agenda(sesionDe(res)));
   });
 
-  rutas.patch('/:id/completar', requerirSesion, async (req, res) => {
+  rutas.patch('/:id/completar', ...sesionVigente, async (req, res) => {
     const { id } = parsear(esquemaIdCita, req.params);
     res.json(await citas.completar(sesionDe(res), id));
   });
@@ -33,6 +57,12 @@ export const crearRutasCitas = (citas: ServicioCitas, guardias: Guardias, limita
     '/:id/cancelar',
     requerirSesion,
     requerirAdmin('Solo el administrador puede cancelar citas.'),
+    // Primero la existencia (404) y luego la suscripción (402)
+    async (req, res, next) => {
+      await citas.exigirCita(sesionDe(res), parsear(esquemaIdCita, req.params).id);
+      next();
+    },
+    suscripcion.requerirSuscripcionVigente,
     async (req, res) => {
       const { id } = parsear(esquemaIdCita, req.params);
       res.json(await citas.cancelar(sesionDe(res), id));

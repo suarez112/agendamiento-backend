@@ -1,11 +1,11 @@
 import dotenv from 'dotenv';
-import { cargarEntornoBaseDeDatos } from '../config/entorno.js';
+import { cargarEntornoMigraciones } from '../config/entorno.js';
 import { aplicarMigraciones } from './migraciones.js';
 import { crearPool } from './pool.js';
 
-// npm run db:migrate
+// npm run db:migrate (usa DB_MIGRACION_USER, no el usuario limitado de la app)
 dotenv.config({ quiet: true });
-const pool = crearPool(cargarEntornoBaseDeDatos());
+const pool = crearPool(cargarEntornoMigraciones());
 
 try {
   const aplicadas = await aplicarMigraciones(pool, {

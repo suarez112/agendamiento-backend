@@ -1,22 +1,50 @@
 import type pg from 'pg';
+import { CODIGO_PG, enTransaccion, esErrorPg } from '../../db/pool.js';
 import { errores } from '../../shared/errores.js';
+import { aIsoEnZona } from '../../shared/zonaHoraria.js';
+import { type CambiosEmpresa, ubicacionOficial } from './empresas.esquemas.js';
 import * as repositorio from './empresas.repositorio.js';
-import type { FilaEmpresa } from './empresas.repositorio.js';
+import { enlacePublico } from './enlace.js';
+import { marcarPaso } from './guia.js';
+import { armarHorario, guardarHorario, listarHorarios } from './horario.js';
+import { type AlmacenFotos, urlFoto } from './fotos.js';
+import type { FilaEmpresa, FilaPerfilEmpresa } from './empresas.repositorio.js';
+import { buscarPlan, COBRO, PLANES, precioPara } from '../../config/planes.js';
+import { INTERVALOS_MINUTOS } from '../citas/disponibilidad.js';
+import { reajustarCobro } from './cobro.js';
+import { DIAS_RECORDATORIO, estadoEfectivo, mensajeBloqueo } from './suscripcion.js';
 
-const CODIGO_VALIDO = /^[A-Z0-9_-]{1,32}$/;
+// Mismo formato que la restricción empresas_codigo_acceso_valido (migración 007)
+const CODIGO_VALIDO = /^[A-Z0-9]{1,10}$/;
+
+export const CODIGO_REPETIDO = 'Ese código ya lo usa otro negocio. Elige otro.';
 
 type Visibilidad = {
   // Los usuarios de inicio de sesión solo se muestran al personal del negocio.
   // El código del negocio es público (lo usan los clientes para reservar).
-  incluirUsuarios: boolean;
+  // Los clientes solo ven a quienes atienden clientes (los que se pueden reservar).
+  esPublica: boolean;
 };
 
-export const crearServicioEmpresas = ({ pool }: { pool: pg.Pool }) => {
-  const armarNegocio = async (empresa: FilaEmpresa, { incluirUsuarios }: Visibilidad) => {
-    const [barberos, servicios] = await Promise.all([
+export const crearServicioEmpresas = ({
+  pool,
+  fotos,
+  enlaceBase,
+}: {
+  pool: pg.Pool;
+  fotos: AlmacenFotos;
+  // Dirección base de los enlaces públicos (ej. https://agendaya.app)
+  enlaceBase: string;
+}) => {
+  const armarNegocio = async (empresa: FilaEmpresa, { esPublica }: Visibilidad, urlBase: string) => {
+    const [equipo, servicios, horario, suscripcion] = await Promise.all([
       repositorio.listarBarberos(pool, empresa.id),
       repositorio.listarServicios(pool, empresa.id),
+      listarHorarios(pool, [empresa.id]),
+      repositorio.buscarSuscripcion(pool, empresa.id),
     ]);
+    const barberos = esPublica ? equipo.filter((b) => b.atiende_clientes) : equipo;
+    const { horario: dias, horarioApertura, horarioCierre } = armarHorario(horario);
 
     return {
       empresa: {
@@ -25,20 +53,29 @@ export const crearServicioEmpresas = ({ pool }: { pool: pg.Pool }) => {
         codigoAcceso: empresa.codigo_acceso,
         colorPrimario: empresa.color_primario,
         colorSecundario: empresa.color_secundario,
-        // la base manda "08:00:00"; la app usa "08:00"
-        horarioApertura: String(empresa.horario_apertura).slice(0, 5),
-        horarioCierre: String(empresa.horario_cierre).slice(0, 5),
+        // Apertura más temprana y cierre más tardío de la semana (la app de antes los usa);
+        // el horario de cada día está en "horario"
+        horarioApertura,
+        horarioCierre,
+        horario: dias,
+        // false si la suscripción venció: la app puede avisar antes de reservar
+        recibiendoReservas: Boolean(suscripcion?.habilitada),
+        zonaHoraria: empresa.zona_horaria,
+        whatsappContacto: empresa.whatsapp_contacto,
+        whatsappUrl: enlaceWhatsapp(empresa.whatsapp_contacto),
+        anticipacionCancelacionHoras: empresa.anticipacion_cancelacion_horas,
       },
       barberos: barberos.map((b) => ({
         id: b.id,
         nombre: b.nombre,
-        usuario: incluirUsuarios ? b.usuario : '',
+        usuario: esPublica ? '' : (b.usuario ?? ''),
         clave: '', // por seguridad, el servidor nunca envía contraseñas
         esAdmin: b.es_admin,
+        atiendeClientes: b.atiende_clientes,
         especialidad: b.especialidad ?? '',
         equipo: `${empresa.nombre} TEAM`,
         porcentajeGanancia: Number(b.porcentaje_ganancia),
-        foto: b.foto_url ?? undefined,
+        foto: urlFoto(urlBase, b.foto_url) ?? undefined,
       })),
       servicios: servicios.map((s) => ({
         id: s.id,
@@ -49,24 +86,268 @@ export const crearServicioEmpresas = ({ pool }: { pool: pg.Pool }) => {
     };
   };
 
+  const conHorario = async (perfil: FilaPerfilEmpresa) => ({
+    perfil,
+    horario: armarHorario(await listarHorarios(pool, [perfil.id])),
+  });
+
   return {
     // Vista pública para clientes que reservan con el código del negocio
-    async negocioPorCodigo(codigo: string) {
+    async negocioPorCodigo(codigo: string, urlBase: string) {
       const limpio = codigo.trim().toUpperCase();
       const empresa = CODIGO_VALIDO.test(limpio)
         ? await repositorio.buscarEmpresaPorCodigo(pool, limpio)
         : undefined;
       if (!empresa) throw errores.noEncontrado('Establecimiento no encontrado');
-      return armarNegocio(empresa, { incluirUsuarios: false });
+      return armarNegocio(empresa, { esPublica: true }, urlBase);
     },
 
     // Vista para el personal con sesión iniciada: su propio negocio
-    async negocioDeSesion(empresaId: string) {
+    async negocioDeSesion(empresaId: string, urlBase: string) {
       const empresa = await repositorio.buscarEmpresaPorId(pool, empresaId);
       if (!empresa) throw errores.noEncontrado('Establecimiento no encontrado');
-      return armarNegocio(empresa, { incluirUsuarios: true });
+      return armarNegocio(empresa, { esPublica: false }, urlBase);
+    },
+
+    // Información del negocio para clientes: sin NIT, datos internos ni suscripción.
+    // urlBase arma la dirección completa de la foto (ej. https://api.mibarberia.co).
+    async perfilPublico(codigo: string, urlBase: string) {
+      const limpio = codigo.trim().toUpperCase();
+      const perfil = CODIGO_VALIDO.test(limpio)
+        ? await repositorio.buscarPerfilEmpresaPorCodigo(pool, limpio)
+        : undefined;
+      if (!perfil) throw errores.noEncontrado('Establecimiento no encontrado');
+      const suscripcion = await repositorio.buscarSuscripcion(pool, perfil.id);
+      return {
+        ...armarPerfilPublico(await conHorario(perfil), urlBase),
+        recibiendoReservas: Boolean(suscripcion?.habilitada),
+      };
+    },
+
+    // Perfil de la empresa del administrador. El id sale siempre de la sesión.
+    async perfilDeAdmin(empresaId: string, urlBase: string) {
+      const perfil = await repositorio.buscarPerfilEmpresa(pool, empresaId);
+      if (!perfil) throw errores.noEncontrado('Establecimiento no encontrado');
+      return armarPerfil(await conHorario(perfil), urlBase, enlaceBase);
+    },
+
+    // Datos y horario se guardan juntos: si algo falla, no cambia nada.
+    // Durante la prueba, el número de empleados decide el plan (1 Emprendedor, 2-5 Equipo,
+    // 6-10 Pro); un plan cuyo cupo no alcanza para el equipo activo se rechaza. Fuera de
+    // la prueba es solo informativo: el plan lo cambia el pago. El UPDATE bloquea la
+    // fila de la empresa, así que un integrante nuevo creado a la vez espera.
+    async actualizarPerfil(empresaId: string, { horario, ...cambios }: CambiosEmpresa, urlBase: string) {
+      const perfil = await enTransaccion(pool, async (tx) => {
+        const actual = await repositorio.buscarPerfilEmpresa(tx, empresaId);
+        if (!actual) return undefined;
+        // En Colombia el departamento y la ciudad deben ser los oficiales (DIVIPOLA)
+        if (actual.pais === 'CO' && cambios.departamento !== undefined && cambios.ciudad !== undefined) {
+          const ubicacion = ubicacionOficial({ departamento: cambios.departamento, ciudad: cambios.ciudad });
+          if (typeof ubicacion === 'string') throw errores.solicitudInvalida(ubicacion);
+          Object.assign(cambios, ubicacion);
+        }
+        // Las citas guardan la fecha y la hora locales del negocio: con la zona cambiada
+        // quedarían en otro instante. Hay que dejar sin citas pendientes antes de cambiarla.
+        if (cambios.zonaHoraria !== undefined && cambios.zonaHoraria !== actual.zona_horaria) {
+          const pendientes = await repositorio.contarCitasPendientes(tx, empresaId);
+          if (pendientes > 0) {
+            throw errores.conflicto(
+              `Tienes ${pendientes} cita(s) pendiente(s). Cancélalas o espera a que pasen antes de cambiar la zona horaria: sus horas se guardan en la hora de ${actual.zona_horaria}.`,
+            );
+          }
+        }
+        const actualizado = await repositorio.actualizarPerfilEmpresa(tx, empresaId, cambios);
+        if (actualizado && cambios.numeroEmpleados !== undefined && actualizado.estado_suscripcion === 'trial') {
+          // En la prueba el nivel sale del mayor entre los profesionales cobrados y los empleados del registro
+          await reajustarCobro(tx, empresaId);
+        }
+        if (actualizado && horario) await guardarHorario(tx, empresaId, horario);
+        // Guía inicial: guardar "Mi negocio" cuenta como haber revisado el horario
+        if (actualizado) await marcarPaso(tx, empresaId, 'horario');
+        return actualizado;
+      }).catch(traducirErrorPerfil);
+      if (!perfil) throw errores.noEncontrado('Establecimiento no encontrado');
+      return armarPerfil(await conHorario(perfil), urlBase, enlaceBase);
+    },
+
+    // Cada cuántos minutos pueden agendar los clientes
+    async intervalo(empresaId: string) {
+      const minutos = await repositorio.buscarIntervalo(pool, empresaId);
+      if (minutos === undefined) throw errores.noEncontrado('Establecimiento no encontrado');
+      return { intervaloMinutos: minutos, opciones: INTERVALOS_MINUTOS };
+    },
+
+    async cambiarIntervalo(empresaId: string, minutos: number) {
+      const nuevo = await repositorio.cambiarIntervalo(pool, empresaId, minutos);
+      if (nuevo === undefined) throw errores.noEncontrado('Establecimiento no encontrado');
+      return { mensaje: 'Intervalo de horarios actualizado', intervaloMinutos: nuevo, opciones: INTERVALOS_MINUTOS };
+    },
+
+    // Para el registro y "Mi negocio": el código ya viene validado y en mayúsculas
+    async codigoDisponible(codigo: string) {
+      return { codigo, disponible: await repositorio.codigoDisponible(pool, codigo) };
+    },
+
+    // Sube o reemplaza la foto del negocio. Primero guarda el archivo nuevo; si la
+    // base no se actualiza, lo borra. La foto anterior se borra solo al final.
+    async cambiarFoto(empresaId: string, datos: Buffer, urlBase: string) {
+      const ruta = await fotos.guardar(datos);
+      let cambio: Awaited<ReturnType<typeof repositorio.cambiarFotoEmpresa>>;
+      try {
+        cambio = await repositorio.cambiarFotoEmpresa(pool, empresaId, ruta);
+      } catch (error) {
+        await fotos.borrar(ruta);
+        throw error;
+      }
+      if (!cambio) {
+        await fotos.borrar(ruta);
+        throw errores.noEncontrado('Establecimiento no encontrado');
+      }
+      await fotos.borrar(cambio.foto_anterior);
+      return { mensaje: 'Foto del negocio actualizada', fotoUrl: urlFoto(urlBase, ruta) };
+    },
+
+    // Días de prueba gratuita que le quedan a la empresa (null si no está en prueba)
+    async estadoPrueba(empresaId: string) {
+      const suscripcion = await repositorio.buscarSuscripcion(pool, empresaId);
+      if (!suscripcion) throw errores.noEncontrado('Establecimiento no encontrado');
+      const enPrueba = suscripcion.estado_suscripcion === 'trial';
+      return {
+        estadoSuscripcion: suscripcion.estado_suscripcion,
+        trialEndsAt: aIsoEnZona(suscripcion.trial_ends_at, suscripcion.zona_horaria),
+        zonaHoraria: suscripcion.zona_horaria,
+        diasRestantes: enPrueba ? Math.max(0, suscripcion.dias_restantes ?? 0) : null,
+        pruebaVencida: enPrueba && !suscripcion.habilitada,
+      };
+    },
+
+    // Estado, plan, fechas y días que quedan (con la fecha actual en la zona del negocio), y si
+    // la app debe mostrar un recordatorio: siempre en la prueba y en los últimos
+    // días de un plan mensual o anual
+    async suscripcion(empresaId: string) {
+      const s = await repositorio.buscarSuscripcion(pool, empresaId);
+      if (!s) throw errores.noEncontrado('Establecimiento no encontrado');
+      const estado = estadoEfectivo(s);
+      const plan = buscarPlan(s.plan_equipo) ?? PLANES[PLANES.length - 1];
+      const dias = estado === 'vencida' ? 0 : s.dias_restantes;
+      const mostrarRecordatorio =
+        estado === 'prueba' || (estado === 'activa' && dias !== null && dias <= DIAS_RECORDATORIO);
+      return {
+        estado,
+        plan: s.plan,
+        fechaPago: s.fecha_pago,
+        fechaFin: s.fecha_fin,
+        diasRestantes: dias,
+        // Días de prueba que le quedaban al pagar y se sumaron al plan (0 si pagó con la
+        // prueba vencida; null si el plan no se activó durante una prueba o si está en prueba)
+        diasPruebaSumados: estado === 'prueba' ? null : s.dias_prueba_sumados,
+        mostrarRecordatorio,
+        // true si soporte suspendió el negocio: se ve como vencida, con su propio mensaje
+        suspendida: s.suspendida,
+        mensaje: estado === 'vencida' ? mensajeBloqueo(s) : recordatorio(estado, s.plan, dias, mostrarRecordatorio),
+        // Nivel (automático según los profesionales cobrados) y cuántos profesionales se cobran hoy
+        planEquipo: { id: plan.id, nombre: plan.nombre, cupo: plan.cupo },
+        cupoUsado: s.profesionales_cobrados,
+        cupoDisponible: Math.max(0, COBRO.maxProfesionales - s.profesionales_cobrados),
+        profesionalesCobrados: s.profesionales_cobrados,
+        profesionalesPagados: s.profesionales_pagados,
+        precioPeriodo: s.plan ? precioPara(s.profesionales_cobrados, s.plan) : null,
+        // Día del registro (zona del negocio): la cartera no acepta rangos que empiecen antes
+        fechaRegistro: s.fecha_registro,
+        zonaHoraria: s.zona_horaria,
+      };
     },
   };
+};
+
+// Texto del recordatorio; null si no hay que mostrar ninguno
+const recordatorio = (estado: string, plan: string | null, dias: number | null, mostrar: boolean) => {
+  if (!mostrar || dias === null) return null;
+  const quedan = dias === 1 ? 'Te queda 1 día' : `Te quedan ${dias} días`;
+  if (estado === 'prueba') return `${quedan} de prueba gratuita. Activa un plan para no perder el acceso.`;
+  return `${quedan} de tu plan${plan ? ` ${plan}` : ''}. Renuévalo para no perder el acceso.`;
+};
+
+type PerfilConHorario = { perfil: FilaPerfilEmpresa; horario: ReturnType<typeof armarHorario> };
+
+const numeroONulo = (valor: string | null) => (valor === null ? null : Number(valor));
+
+// Enlace de Google Maps (no necesita clave de API): con las coordenadas si el negocio
+// las tiene; si no, con la dirección, el municipio y el departamento. null si no hay datos.
+export const enlaceGoogleMaps = (p: FilaPerfilEmpresa) => {
+  const consulta =
+    p.latitud !== null && p.longitud !== null
+      ? `${Number(p.latitud)},${Number(p.longitud)}`
+      : [p.direccion, p.ciudad, p.departamento].filter(Boolean).join(', ');
+  return consulta ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(consulta)}` : null;
+};
+
+// Enlace para abrir el chat de WhatsApp (el número en E.164 sin el "+"); null si no hay número
+export const enlaceWhatsapp = (telefono: string | null) => (telefono ? `https://wa.me/${telefono.replace(/\D/g, '')}` : null);
+
+const armarPerfilPublico = ({ perfil: p, horario: h }: PerfilConHorario, urlBase: string) => ({
+  id: p.id,
+  nombre: p.nombre,
+  codigoAcceso: p.codigo_acceso,
+  categoria: p.categoria,
+  direccion: p.direccion,
+  departamento: p.departamento,
+  ciudad: p.ciudad,
+  horario: h.horario,
+  diasAtencion: h.diasAtencion,
+  horarioApertura: h.horarioApertura,
+  horarioCierre: h.horarioCierre,
+  logoUrl: p.logo_url,
+  fotoUrl: urlFoto(urlBase, p.foto_url),
+  colorPrimario: p.color_primario,
+  colorSecundario: p.color_secundario,
+  googleMapsUrl: enlaceGoogleMaps(p),
+  intervaloMinutos: p.intervalo_minutos,
+  whatsappContacto: p.whatsapp_contacto,
+  whatsappUrl: enlaceWhatsapp(p.whatsapp_contacto),
+  anticipacionCancelacionHoras: p.anticipacion_cancelacion_horas,
+  pais: p.pais,
+  zonaHoraria: p.zona_horaria,
+});
+
+const armarPerfil = ({ perfil: p, horario: h }: PerfilConHorario, urlBase: string, enlaceBase: string) => ({
+  id: p.id,
+  nombre: p.nombre,
+  codigoAcceso: p.codigo_acceso,
+  enlacePublico: enlacePublico(enlaceBase, p.codigo_acceso),
+  categoria: p.categoria,
+  direccion: p.direccion,
+  departamento: p.departamento,
+  ciudad: p.ciudad,
+  horario: h.horario,
+  diasAtencion: h.diasAtencion,
+  horarioApertura: h.horarioApertura,
+  horarioCierre: h.horarioCierre,
+  nombreAdministradora: p.nombre_administradora,
+  numeroEmpleados: p.numero_empleados,
+  logoUrl: p.logo_url,
+  fotoUrl: urlFoto(urlBase, p.foto_url),
+  colorPrimario: p.color_primario,
+  colorSecundario: p.color_secundario,
+  latitud: numeroONulo(p.latitud),
+  longitud: numeroONulo(p.longitud),
+  precisionUbicacion: numeroONulo(p.precision_ubicacion),
+  googleMapsUrl: enlaceGoogleMaps(p),
+  intervaloMinutos: p.intervalo_minutos,
+  estadoSuscripcion: p.estado_suscripcion,
+  pais: p.pais,
+  zonaHoraria: p.zona_horaria,
+  trialEndsAt: aIsoEnZona(p.trial_ends_at, p.zona_horaria),
+  creadaEn: aIsoEnZona(p.created_at, p.zona_horaria),
+});
+
+// Lo que la validación no puede saber sin mirar la base: el código de otro negocio
+export const traducirErrorPerfil = (error: unknown): never => {
+  const restriccion = (error as { constraint?: string }).constraint;
+  if (esErrorPg(error, CODIGO_PG.violacionUnica) && restriccion === 'empresas_codigo_acceso_key') {
+    throw errores.conflicto(CODIGO_REPETIDO);
+  }
+  throw error;
 };
 
 export type ServicioEmpresas = ReturnType<typeof crearServicioEmpresas>;

@@ -11,7 +11,15 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "test": "tsx --test --test-concurrency=1 \"test/**/*.test.ts\"",
     "db:migrate": "tsx src/db/migrar.ts",
-    "db:cifrar-contrasenas": "tsx src/db/cifrarContrasenas.ts"
+    "db:cifrar-contrasenas": "tsx src/db/cifrarContrasenas.ts",
+    "db:recifrar-2fa": "tsx src/db/recifrar2fa.ts",
+    "dev:activar-plan": "tsx src/db/activarPlan.ts",
+    "dev:cargos": "tsx src/db/cargos.ts",
+    "dev:simular-vencimiento": "tsx src/db/simularVencimiento.ts",
+    "dev:pqrs": "tsx src/db/pqrs.ts",
+    "dev:crear-superadmin": "tsx src/db/crearSuperadmin.ts",
+    "dev:restablecer-superadmin": "tsx src/db/restablecerSuperadmin.ts",
+    "dev:eliminar-superadmin": "tsx src/db/eliminarSuperadmin.ts"
   },
   "keywords": [],
   "author": "",
@@ -20,11 +28,17 @@
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^18.0.8",
+    "exceljs": "^4.4.0",
     "express": "^5.3.0",
     "express-rate-limit": "^8.7.1",
     "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.3",
+    "libphonenumber-js": "^1.13.15",
+    "multer": "^2.4.0",
+    "pdfkit": "^0.20.2",
     "pg": "^8.23.1",
+    "qrcode": "^1.5.4",
+    "sharp": "^0.35.5",
     "zod": "^4.6.7"
   },
   "devDependencies": {
@@ -32,12 +46,18 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.10",
+    "@types/multer": "^2.3.0",
     "@types/node": "^26.6.5",
+    "@types/pdfkit": "^0.17.7",
     "@types/pg": "^8.23.1",
+    "@types/qrcode": "^1.5.6",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   },
   "engines": {
     "node": ">=20.19"
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
   }
 }

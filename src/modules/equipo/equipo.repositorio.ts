@@ -1,0 +1,183 @@
+import type { Consultable } from '../../db/pool.js';
+
+// Sin password_hash: nunca sale de la base hacia la API
+export type FilaMiembro = {
+  id: string;
+  nombre: string;
+  // null en el perfil vinculado a la cuenta de la administradora (no tiene inicio de sesión propio)
+  usuario: string | null;
+  usuario_id: string | null;
+  es_admin: boolean;
+  especialidad: string | null;
+  porcentaje_ganancia: string;
+  foto_url: string | null;
+  atiende_clientes: boolean;
+};
+
+const COLUMNAS = 'id, nombre, usuario, usuario_id, es_admin, especialidad, porcentaje_ganancia, foto_url, atiende_clientes';
+
+// Solo el equipo activo; quienes fueron eliminados se conservan para las citas pasadas
+export const listarEquipo = async (db: Consultable, empresaId: string) =>
+  (
+    await db.query<FilaMiembro>(
+      `SELECT ${COLUMNAS} FROM barberos WHERE empresa_id = $1 AND activo ORDER BY nombre`,
+      [empresaId],
+    )
+  ).rows;
+
+export const crearMiembro = async (
+  db: Consultable,
+  m: {
+    id: string;
+    empresaId: string;
+    nombre: string;
+    usuario: string;
+    passwordHash: string;
+    esAdmin: boolean;
+    atiendeClientes: boolean;
+    especialidad: string | null;
+    porcentajeGanancia: number;
+  },
+) =>
+  (
+    await db.query<FilaMiembro>(
+      `INSERT INTO barberos (id, empresa_id, nombre, usuario, password_hash, es_admin, atiende_clientes,
+         especialidad, porcentaje_ganancia)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING ${COLUMNAS}`,
+      [
+        m.id,
+        m.empresaId,
+        m.nombre,
+        m.usuario,
+        m.passwordHash,
+        m.esAdmin,
+        m.atiendeClientes,
+        m.especialidad,
+        m.porcentajeGanancia,
+      ],
+    )
+  ).rows[0];
+
+export type CambiosMiembro = {
+  nombre?: string;
+  usuario?: string;
+  passwordHash?: string;
+  esAdmin?: boolean;
+  atiendeClientes?: boolean;
+  especialidad?: string | null;
+  porcentajeGanancia?: number;
+};
+
+// Solo cambia los campos enviados. especialidad: undefined = no cambia, null = se borra.
+// Una contraseña nueva sube la versión de sesión: las sesiones abiertas del integrante dejan de servir.
+export const actualizarMiembro = async (db: Consultable, id: string, empresaId: string, c: CambiosMiembro) =>
+  (
+    await db.query<FilaMiembro & { version_sesion: number }>(
+      `UPDATE barberos
+       SET nombre = COALESCE($3, nombre),
+           usuario = COALESCE($4, usuario),
+           password_hash = COALESCE($5, password_hash),
+           version_sesion = version_sesion + CASE WHEN $5::text IS NULL THEN 0 ELSE 1 END,
+           es_admin = COALESCE($6, es_admin),
+           especialidad = CASE WHEN $7::boolean THEN $8::varchar ELSE especialidad END,
+           porcentaje_ganancia = COALESCE($9, porcentaje_ganancia),
+           atiende_clientes = COALESCE($10, atiende_clientes)
+       WHERE id = $1 AND empresa_id = $2 AND activo
+       RETURNING ${COLUMNAS}, version_sesion`,
+      [
+        id,
+        empresaId,
+        c.nombre ?? null,
+        c.usuario ?? null,
+        c.passwordHash ?? null,
+        c.esAdmin ?? null,
+        c.especialidad !== undefined,
+        c.especialidad ?? null,
+        c.porcentajeGanancia ?? null,
+        c.atiendeClientes ?? null,
+      ],
+    )
+  ).rows[0];
+
+// Quita los tokens de notificaciones de los celulares de un integrante (al cambiar su contraseña dejan de recibir avisos)
+export const borrarDispositivosDeMiembro = async (db: Consultable, id: string) =>
+  db.query('DELETE FROM dispositivos_push WHERE barbero_id = $1', [id]);
+
+// Bloquea la fila de la empresa: dos cambios al equipo a la vez se esperan y el segundo ve al primero.
+// Los topes (profesionales cobrados y administradores que no atienden) están en modules/empresas/cobro.ts.
+export const bloquearLimiteEquipo = async (db: Consultable, empresaId: string) =>
+  (await db.query<{ id: string }>('SELECT id FROM empresas WHERE id = $1 FOR UPDATE', [empresaId])).rows[0];
+
+// Citas confirmadas desde hoy: si tiene alguna, no se puede eliminar
+export const contarCitasPendientes = async (db: Consultable, id: string, empresaId: string) =>
+  (
+    await db.query<{ total: number }>(
+      `SELECT count(*)::int AS total FROM citas
+       WHERE barbero_id = $1 AND empresa_id = $2 AND estado = 'CONFIRMADA' AND fecha >= (now() AT TIME ZONE (SELECT zona_horaria FROM empresas WHERE id = $2))::date`,
+      [id, empresaId],
+    )
+  ).rows[0].total;
+
+// Borrado lógico: ya no inicia sesión ni recibe reservas, pero sus citas pasadas
+// y la cartera siguen mostrando su nombre. Devuelve su foto para borrar el archivo.
+export const desactivarMiembro = async (db: Consultable, id: string, empresaId: string) =>
+  (
+    await db.query<{ foto_url: string | null }>(
+      `UPDATE barberos b SET activo = false, foto_url = NULL
+       FROM (SELECT id, foto_url FROM barberos WHERE id = $1 AND empresa_id = $2 AND activo FOR UPDATE) anterior
+       WHERE b.id = anterior.id
+       RETURNING anterior.foto_url`,
+      [id, empresaId],
+    )
+  ).rows[0];
+
+// Cambia la foto y devuelve la anterior para borrar el archivo
+export const cambiarFotoMiembro = async (db: Consultable, id: string, empresaId: string, fotoUrl: string) =>
+  (
+    await db.query<{ foto_anterior: string | null }>(
+      `UPDATE barberos b SET foto_url = $3
+       FROM (SELECT id, foto_url FROM barberos WHERE id = $1 AND empresa_id = $2 AND activo FOR UPDATE) anterior
+       WHERE b.id = anterior.id
+       RETURNING anterior.foto_url AS foto_anterior`,
+      [id, empresaId, fotoUrl],
+    )
+  ).rows[0];
+
+// ---- "Yo también atiendo clientes": perfil de profesional de la cuenta de la administradora ----
+
+// Perfil vinculado a la cuenta (activo o no)
+export const buscarPerfilDeCuenta = async (db: Consultable, usuarioId: string, bloquear = false) =>
+  (
+    await db.query<FilaMiembro & { activo: boolean }>(
+      `SELECT ${COLUMNAS}, activo FROM barberos WHERE usuario_id = $1${bloquear ? ' FOR UPDATE' : ''}`,
+      [usuarioId],
+    )
+  ).rows[0];
+
+export const crearPerfilDeCuenta = async (
+  db: Consultable,
+  p: { id: string; empresaId: string; usuarioId: string; nombre: string },
+) =>
+  (
+    await db.query<FilaMiembro>(
+      `INSERT INTO barberos (id, empresa_id, usuario_id, nombre, es_admin, atiende_clientes)
+       VALUES ($1, $2, $3, $4, false, true)
+       RETURNING ${COLUMNAS}`,
+      [p.id, p.empresaId, p.usuarioId, p.nombre],
+    )
+  ).rows[0];
+
+// Activa o desactiva el perfil (activo = sigue en el equipo; atiende = recibe reservas nuevas)
+export const cambiarPerfilDeCuenta = async (db: Consultable, empresaId: string, id: string, activo: boolean, atiende: boolean) =>
+  (
+    await db.query<FilaMiembro>(
+      `UPDATE barberos SET activo = $3, atiende_clientes = $4 WHERE id = $1 AND empresa_id = $2 RETURNING ${COLUMNAS}`,
+      [id, empresaId, activo, atiende],
+    )
+  ).rows[0];
+
+export const nombreDeLaAdministradora = async (db: Consultable, empresaId: string) =>
+  (
+    await db.query<{ nombre: string | null }>('SELECT nombre_administradora AS nombre FROM empresas WHERE id = $1', [empresaId])
+  ).rows[0]?.nombre ?? null;
