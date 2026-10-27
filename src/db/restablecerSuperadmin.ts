@@ -5,6 +5,7 @@ import { cifrarContrasena } from '../modules/auth/contrasenas.js';
 import * as repositorio from '../modules/superadmin/superadmin.repositorio.js';
 import { cifrarSecreto, generarSecretoTotp } from '../modules/superadmin/totp.js';
 import { generarContrasena, mostrarSegundoPaso } from './credencialesSuperadmin.js';
+import { negarEnProduccion, registrarComando } from './comandos.js';
 import { crearPool } from './pool.js';
 
 // npm run dev:restablecer-superadmin -- correo [--totp]
@@ -13,6 +14,7 @@ import { crearPool } from './pool.js';
 // perdiste el celular): se muestra como QR y escrita, y el QR se guarda como imagen PNG en una carpeta
 // que no se sube a GitHub. No hay recuperación por correo para el superadmin: solo este comando.
 dotenv.config({ quiet: true });
+negarEnProduccion('dev:restablecer-superadmin');
 
 const USO = 'Uso: npm run dev:restablecer-superadmin -- correo [--totp]';
 const argumentos = process.argv.slice(2);
@@ -33,12 +35,17 @@ try {
   const secreto = conTotp ? generarSecretoTotp() : undefined;
   const reiniciado = await repositorio.reiniciarSuperadmin(pool, correo.data, {
     passwordHash: await cifrarContrasena(contrasena),
-    totpSecreto: secreto && cifrarSecreto(secreto, entorno.JWT_SECRET),
+    totpSecreto: secreto && cifrarSecreto(secreto, entorno.TOTP_SECRET),
   });
   if (!reiniciado) {
     console.error(`✖ No existe un superadmin con el correo ${correo.data}.`);
     process.exitCode = 1;
   } else {
+    await registrarComando(pool, {
+      comando: 'dev:restablecer-superadmin',
+      accion: 'restablecer_superadmin',
+      detalle: { correo: correo.data, segundoPaso: Boolean(secreto) },
+    });
     console.log(`✔ Contraseña restablecida: ${correo.data}. Las sesiones abiertas se cerraron.\n`);
     console.log(`Contraseña nueva: ${contrasena}\n`);
     if (secreto) {

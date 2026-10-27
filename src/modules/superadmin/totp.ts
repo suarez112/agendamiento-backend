@@ -78,8 +78,9 @@ export const urlOtpauth = (correo: string, secreto: string) =>
   `&algorithm=SHA1&digits=${DIGITOS}&period=${PASO_SEGUNDOS}`;
 
 // La clave TOTP debe poder leerse de nuevo, así que no se puede guardar con un hash: se cifra (AES-256-GCM)
-// con una llave derivada de JWT_SECRET. Si JWT_SECRET cambia, hay que reiniciar el segundo paso con
-// npm run dev:crear-superadmin -- correo --reiniciar.
+// con una llave derivada de TOTP_SECRET (un secreto propio, distinto del de las sesiones). Si TOTP_SECRET cambia,
+// hay que volver a cifrar las claves con npm run db:recifrar-2fa (o reiniciar el segundo paso con
+// npm run dev:crear-superadmin -- correo --reiniciar).
 const llave = (jwtSecret: string) => Buffer.from(hkdfSync('sha256', jwtSecret, '', 'superadmin-totp', 32));
 
 export const cifrarSecreto = (secreto: string, jwtSecret: string) => {

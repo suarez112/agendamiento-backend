@@ -7,6 +7,8 @@ import { crearRutasAuth } from './modules/auth/auth.rutas.js';
 import { crearServicioAuth } from './modules/auth/auth.servicio.js';
 import { crearGuardias } from './modules/auth/guardias.js';
 import { crearPermisos } from './modules/auth/permisos.js';
+import { crearServicioIntentos } from './modules/auth/intentos.js';
+import { crearRutasLogout } from './modules/auth/logout.js';
 import { crearServicioTokens } from './modules/auth/tokens.js';
 import { crearRutasBloqueos } from './modules/bloqueos/bloqueos.rutas.js';
 import { crearServicioBloqueos } from './modules/bloqueos/bloqueos.servicio.js';
@@ -52,9 +54,12 @@ import { crearRutasUbicaciones } from './modules/ubicaciones/ubicaciones.js';
 import { crearEnviadorCorreo, type EnviadorCorreo } from './shared/correo.js';
 import { crearEnviadorPush, type EnviadorPush } from './shared/push.js';
 import { crearCors } from './shared/http/cors.js';
+import { AJUSTE_CLOUDFLARE } from './shared/http/ip.js';
 import { type ConfigLimites, crearLimitadores, LIMITES_POR_DEFECTO } from './shared/http/limitadores.js';
 import { manejadorErrores, rutaNoEncontrada } from './shared/http/manejadorErrores.js';
-import { registro } from './shared/registro.js';
+
+// Un bloqueo de cuenta por intentos fallidos nunca dura más que esto, por muchos bloqueos seguidos que lleve
+const TOPE_BLOQUEO_CUENTA_MS = 4 * 60 * 60_000;
 
 export type Dependencias = {
   pool: pg.Pool;
@@ -81,13 +86,27 @@ export const crearApp = ({
   const categorias = crearServicioCategorias({ pool });
   const cuentas = crearServicioCuentas({ pool, tokens, categorias, enlaceBase: entorno.ENLACE_PUBLICO_BASE });
   const guardiasCuenta = crearGuardiasCuenta(cuentas);
-  const recuperacion = crearServicioRecuperacion({ pool, secreto: entorno.JWT_SECRET, correo });
+  const recuperacion = crearServicioRecuperacion({ pool, secreto: entorno.RECUPERACION_SECRET, correo });
   const suscripcion = crearGuardiaSuscripcion({ pool });
   const permisos = crearPermisos(guardias, suscripcion);
   const fotos = crearAlmacenesFotos(entorno.CARPETA_SUBIDAS);
   const urlBase = crearUrlBase(entorno.URL_PUBLICA);
   const empresas = crearServicioEmpresas({ pool, fotos: fotos.empresas, enlaceBase: entorno.ENLACE_PUBLICO_BASE });
   const limitadores = crearLimitadores(limites);
+  // Contadores de fallos de inicio de sesión guardados en la base de datos: uno por cuenta y otro, más estricto, por
+  // cuenta + IP para el superadmin
+  const intentosPorCuenta = crearServicioIntentos(pool, {
+    max: limites.fallosPorCuenta,
+    ventanaMs: limites.ventanaMs,
+    bloqueoBaseMs: limites.bloqueoCuentaMs,
+    bloqueoMaxMs: TOPE_BLOQUEO_CUENTA_MS,
+  });
+  const intentosSuperadmin = crearServicioIntentos(pool, {
+    max: limites.fallosSuperadmin,
+    ventanaMs: limites.ventanaMs,
+    bloqueoBaseMs: limites.bloqueoCuentaMs,
+    bloqueoMaxMs: TOPE_BLOQUEO_CUENTA_MS,
+  });
   const notificaciones = crearServicioNotificaciones({ pool, push });
   const funciones = crearServicioFunciones({ pool });
   const servicioCartera = crearServicioCartera({ pool });
@@ -95,6 +114,7 @@ export const crearApp = ({
 
   const app = express();
   app.set('trust proxy', entorno.TRUST_PROXY);
+  app.set(AJUSTE_CLOUDFLARE, entorno.DETRAS_DE_CLOUDFLARE);
   app.use(helmet());
   app.use(crearCors(entorno));
   app.use(express.json({ limit: '10kb' }));
@@ -114,24 +134,10 @@ export const crearApp = ({
     }),
   );
 
-  // Comprobación de salud (monitoreo y la app en desarrollo)
-  app.get('/api/saludo', async (_req, res) => {
-    try {
-      const { rows } = await pool.query<{ now: Date }>('SELECT NOW()');
-      res.json({
-        mensaje: '¡Servidor Backend funcionando correctamente! 🚀',
-        horaBaseDatos: rows[0].now,
-      });
-    } catch (error) {
-      registro.error('salud_sin_base_de_datos', { mensaje: (error as Error).message });
-      res.status(500).json({ error: 'Error de conexión con la base de datos' });
-    }
-  });
-
   // Login único (administradora o personal); los dos logins de abajo siguen funcionando
-  app.use('/api/v1/login', crearRutasAcceso(auth, cuentas, limitadores));
-  app.use('/api/v1/auth', crearRutasAuth(auth, limitadores));
-  app.use('/api/v1/cuentas', crearRutasCuentas(cuentas, recuperacion, crearServicioEliminacion({ pool }), guardiasCuenta, limitadores));
+  app.use('/api/v1/login', crearRutasAcceso(auth, cuentas, limitadores, intentosPorCuenta));
+  app.use('/api/v1/auth', crearRutasAuth(auth, limitadores, intentosPorCuenta));
+  app.use('/api/v1/cuentas', crearRutasCuentas(cuentas, recuperacion, crearServicioEliminacion({ pool, fotos: fotos.barberos }), guardiasCuenta, limitadores, intentosPorCuenta));
   app.use('/api/v1/ubicaciones', crearRutasUbicaciones());
   app.use('/api/v1/planes', crearRutasPlanes());
   // Funciones que incluye el plan del negocio de la sesión
@@ -141,16 +147,18 @@ export const crearApp = ({
   // Panel del dueño de la plataforma: sesión propia, con verificación en dos pasos
   app.use(
     '/api/v1/superadmin',
-    crearRutasSuperadmin(crearServicioSuperadmin({ pool, tokens, secreto: entorno.JWT_SECRET }), categorias, limitadores),
+    crearRutasSuperadmin(crearServicioSuperadmin({ pool, tokens, secreto: entorno.TOTP_SECRET, intentos: intentosSuperadmin }), categorias, limitadores),
   );
   // Celulares con sesión para recibir notificaciones push
   const titularDe = crearResolverTitular(auth, cuentas, tokens);
   app.use('/api/v1/legal', crearRutasLegal({ pool, titularDe }));
+  // Cerrar sesión en el servidor (cualquier sesión)
+  app.use('/api/v1/logout', crearRutasLogout(pool, titularDe));
   app.use('/api/v1/dispositivos', crearRutasDispositivos(notificaciones, titularDe));
   // Centro de notificaciones dentro de la app (cualquier sesión)
   app.use('/api/v1/notificaciones', crearRutasNotificaciones(notificaciones, titularDe));
   // Cuenta del cliente registrado: negocios guardados y sus citas
-  const servicioCitas = crearServicioCitas({ pool, notificaciones });
+  const servicioCitas = crearServicioCitas({ pool, notificaciones, maxPendientes: entorno.MAX_CITAS_PENDIENTES });
   app.use(
     '/api/v1/mi-cuenta',
     crearRutasMiCuenta(crearServicioMiCuenta({ pool, notificaciones, citas: servicioCitas }), guardiasCuenta, limitadores, urlBase),
@@ -160,7 +168,7 @@ export const crearApp = ({
   app.use('/api/v1/citas', crearRutasCitas(servicioCitas, guardias, suscripcion, limitadores, cuentas));
   // Gestión del negocio: personal (barberos) o la cuenta del administrador de la empresa
   app.use('/api/v1/clientes', crearRutasClientes(crearServicioClientes({ pool }), permisos));
-  app.use('/api/v1/equipo', crearRutasEquipo(crearServicioEquipo({ pool, fotos: fotos.barberos }), permisos, urlBase, funciones));
+  app.use('/api/v1/equipo', crearRutasEquipo(crearServicioEquipo({ pool, fotos: fotos.barberos, tokens }), permisos, urlBase, funciones));
   app.use('/api/v1/servicios', crearRutasServicios(crearServicioServicios({ pool }), permisos));
   app.use(
     '/api/v1/productos',

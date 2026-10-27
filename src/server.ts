@@ -14,6 +14,12 @@ if (entorno.JWT_SECRET.length < 32) {
   registro.warn('jwt_secret_corto', { recomendacion: 'usa al menos 32 caracteres aleatorios' });
 }
 
+if (entorno.NODE_ENV === 'production' && entorno.TRUST_PROXY === 0) {
+  registro.warn('trust_proxy_sin_configurar', {
+    aviso: 'TRUST_PROXY=0: si hay un proxy o balanceador delante, todos los usuarios parecerán tener su IP. Ver docs/despliegue/trust-proxy.md',
+  });
+}
+
 const pool = crearPool(entorno);
 const servidor = crearApp({ pool, entorno }).listen(entorno.PORT, (error) => {
   if (error) {

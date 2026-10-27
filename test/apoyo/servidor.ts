@@ -11,18 +11,30 @@ import { type BaseDePrueba, crearBaseDePrueba, FECHA_FUTURA } from './baseDePrue
 import { leerConfigPruebas } from './configuracionPruebas.js';
 
 export const SECRETO_PRUEBAS = 'secreto-de-pruebas-con-mas-de-32-caracteres';
+// Un secreto distinto para cada uso (B-4): las sesiones, los códigos de recuperación y el segundo paso del superadmin
+export const SECRETO_RECUPERACION_PRUEBAS = 'secreto-de-recuperacion-de-pruebas-1234567890';
+export const SECRETO_TOTP_PRUEBAS = 'secreto-del-segundo-paso-de-pruebas-1234567';
 
 // Límites altos para que las pruebas no choquen con ellos (salvo la que los prueba)
 const LIMITES_PRUEBA: ConfigLimites = {
   ventanaMs: 60_000,
+  ventanaLargaMs: 60_000,
   general: 10_000,
-  login: 1_000,
+  loginUnico: 1_000,
+  loginPersonal: 1_000,
+  loginCuentas: 1_000,
+  eliminarCuenta: 1_000,
+  loginSuperadmin: 1_000,
   codigoNegocio: 1_000,
   reservas: 1_000,
+  reservasCreadas: 1_000,
   registro: 1_000,
   recuperacion: 1_000,
   recuperacionPorCorreo: 1_000,
   pqrs: 1_000,
+  fallosPorCuenta: 1_000,
+  fallosSuperadmin: 1_000,
+  bloqueoCuentaMs: 60_000,
 };
 
 export type Contexto = { url: string; pool: pg.Pool; cerrar: () => Promise<void> };
@@ -73,7 +85,11 @@ export const iniciar = async (opciones: Opciones = {}): Promise<Contexto> => {
   }
 
   const entorno: Entorno = {
-    ...cargarEntorno({ ...process.env, ...datosDb, DB_NAME: base.nombre, NODE_ENV: 'test', JWT_SECRET: SECRETO_PRUEBAS }),
+    ...cargarEntorno({ ...process.env, ...datosDb, DB_NAME: base.nombre, NODE_ENV: 'test',
+      JWT_SECRET: SECRETO_PRUEBAS,
+      RECUPERACION_SECRET: SECRETO_RECUPERACION_PRUEBAS,
+      TOTP_SECRET: SECRETO_TOTP_PRUEBAS,
+    }),
     DB_NAME: base.nombre,
     ...opciones.entorno,
   };
@@ -212,7 +228,7 @@ export const crearSuperadmin = async (ctx: Contexto): Promise<string> => {
   await ctx.pool.query('INSERT INTO superadmins (correo, password_hash, totp_secreto) VALUES ($1, $2, $3)', [
     correo,
     await cifrarContrasena(clave),
-    cifrarSecreto(secreto, SECRETO_PRUEBAS),
+    cifrarSecreto(secreto, SECRETO_TOTP_PRUEBAS),
   ]);
   const r = await pedir(ctx, '/api/v1/superadmin/login', {
     method: 'POST',

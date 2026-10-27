@@ -5,6 +5,7 @@ import { cifrarContrasena } from '../modules/auth/contrasenas.js';
 import * as repositorio from '../modules/superadmin/superadmin.repositorio.js';
 import { cifrarSecreto, generarSecretoTotp } from '../modules/superadmin/totp.js';
 import { generarContrasena, mostrarSegundoPaso } from './credencialesSuperadmin.js';
+import { negarEnProduccion, registrarComando } from './comandos.js';
 import { CODIGO_PG, crearPool, esErrorPg } from './pool.js';
 
 // npm run dev:crear-superadmin -- correo [--reiniciar]
@@ -13,6 +14,7 @@ import { CODIGO_PG, crearPool, esErrorPg } from './pool.js';
 // pasos, y muestra las dos una sola vez (la clave también como código QR para Google Authenticator, y el QR guardado como imagen PNG).
 // Con --reiniciar, a un superadmin que ya existe le cambia la contraseña y el segundo paso, y cierra sus sesiones.
 dotenv.config({ quiet: true });
+negarEnProduccion('dev:crear-superadmin');
 
 const USO = 'Uso: npm run dev:crear-superadmin -- correo [--reiniciar]';
 const argumentos = process.argv.slice(2);
@@ -31,7 +33,7 @@ const pool = crearPool(entorno);
 try {
   const contrasena = generarContrasena();
   const secreto = generarSecretoTotp();
-  const datos = { passwordHash: await cifrarContrasena(contrasena), totpSecreto: cifrarSecreto(secreto, entorno.JWT_SECRET) };
+  const datos = { passwordHash: await cifrarContrasena(contrasena), totpSecreto: cifrarSecreto(secreto, entorno.TOTP_SECRET) };
 
   if (reiniciar) {
     if (!(await repositorio.reiniciarSuperadmin(pool, correo.data, datos))) {
@@ -41,6 +43,11 @@ try {
   } else {
     await repositorio.insertarSuperadmin(pool, { correo: correo.data, ...datos });
   }
+  await registrarComando(pool, {
+    comando: 'dev:crear-superadmin',
+    accion: reiniciar ? 'reiniciar_superadmin' : 'crear_superadmin',
+    detalle: { correo: correo.data },
+  });
 
   console.log(`✔ Superadmin ${reiniciar ? 'reiniciado' : 'creado'}: ${correo.data}\n`);
   console.log('1) Configura la verificación en dos pasos en Google Authenticator (o Authy, Microsoft Authenticator…).');

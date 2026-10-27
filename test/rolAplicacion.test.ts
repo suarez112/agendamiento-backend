@@ -28,6 +28,12 @@ describe('usuario de las migraciones separado del de la app', () => {
     const { DB_PASSWORD: _omitida, ...sinClave } = BASE;
     assert.throws(() => cargarEntornoBaseDeDatos(sinClave), /DB_PASSWORD: falta/);
     assert.throws(() => cargarEntornoBaseDeDatos({ ...BASE, DB_PASSWORD: '' }), /DB_PASSWORD: está vacía/);
+    assert.throws(() => cargarEntornoBaseDeDatos({ ...BASE, DB_PASSWORD: '   ' }), /DB_PASSWORD: está vacía/, 'solo espacios cuenta como vacía');
+    assert.throws(() => cargarEntornoBaseDeDatos({ ...BASE, DB_USER: '  ' }), /DB_USER/);
+    assert.throws(
+      () => cargarEntornoMigraciones({ ...BASE, DB_MIGRACION_USER: 'postgres', DB_MIGRACION_PASSWORD: '  ' }),
+      /DB_MIGRACION_PASSWORD/,
+    );
     for (const clave of [undefined, '']) {
       assert.throws(
         () => cargarEntornoMigraciones({ ...BASE, DB_MIGRACION_USER: 'postgres', DB_MIGRACION_PASSWORD: clave }),
