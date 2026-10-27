@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { type ConsultaPeriodo, resolverPeriodo } from '../cartera/cartera.servicio.js';
+import { type ConsultaPeriodo, exigirProfesionalDelNegocio, resolverPeriodo } from '../cartera/cartera.servicio.js';
 import * as repositorio from './reportes.repositorio.js';
 import { diasDelRango, minutosDisponibles } from './ocupacion.js';
 
@@ -16,6 +16,7 @@ const hhmm = (hora: number) => `${String(hora).padStart(2, '0')}:00`;
 // o rango, y opcionalmente un profesional). La empresa sale siempre de la sesión.
 export const crearServicioReportes = ({ pool }: { pool: pg.Pool }) => {
   const preparar = async (empresaId: string, consulta: ConsultaPeriodo) => {
+    await exigirProfesionalDelNegocio(pool, empresaId, consulta.barberoId);
     const { desde, hasta, limites } = await resolverPeriodo(pool, empresaId, consulta);
     return {
       desde,

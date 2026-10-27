@@ -149,3 +149,7 @@ export const clientesNuevosYRecurrentes = async (db: Consultable, p: FiltroCarte
       parametros(p),
     )
   ).rows[0];
+
+// ¿Ese profesional es de este negocio? (activo o no: la cartera también muestra a quienes ya no están)
+export const existeProfesional = async (db: Consultable, empresaId: string, barberoId: string) =>
+  (await db.query('SELECT 1 FROM barberos WHERE id = $1 AND empresa_id = $2', [barberoId, empresaId])).rowCount! > 0;

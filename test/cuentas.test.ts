@@ -16,6 +16,8 @@ import {
 const MENSAJE_CLAVE =
   'La contraseña debe tener entre 8 y 64 caracteres e incluir una mayúscula, una minúscula, un número y un carácter especial';
 const DEBE_ACEPTAR = 'Debes aceptar la Política de Tratamiento de Datos y los Términos y Condiciones';
+// Correo, usuario o teléfono repetidos: el mismo mensaje en los tres casos (no revela si la persona ya tiene cuenta)
+const GENERICO = 'No pudimos crear la cuenta con esos datos. Si ya tienes una, inicia sesión o recupera tu contraseña.';
 const MENSAJE_EMPLEADOS = 'El número de empleados debe ser un número entero entre 1 y 10';
 
 // S1, S2, S3, S7 — registro de empresas y clientes, login de cuentas
@@ -235,7 +237,7 @@ describe('registro de empresa', () => {
     // Mismo correo con otras mayúsculas: la empresa tampoco debe quedar creada
     const correo = await registrarEmpresa(ctx, { correo: 'UNICA@Central.co' });
     assert.equal(correo.estado, 409);
-    assert.deepEqual(correo.json, { error: 'Ya existe una cuenta con ese correo' });
+    assert.deepEqual(correo.json, { error: GENERICO });
 
     const codigo = await registrarEmpresa(ctx, { correo: 'otro@central.co', codigoAcceso: 'unica' });
     assert.equal(codigo.estado, 409);
@@ -243,7 +245,7 @@ describe('registro de empresa', () => {
 
     const usuario = await registrarEmpresa(ctx, { correo: 'otro2@central.co', usuario: 'USUARIO.UNICO' });
     assert.equal(usuario.estado, 409);
-    assert.deepEqual(usuario.json, { error: 'Ese usuario ya está en uso. Elige otro.' });
+    assert.deepEqual(usuario.json, { error: GENERICO });
 
     assert.deepEqual([await contar('empresas'), await contar('usuarios'), await contar('auditoria_autorizaciones')], [empresas, usuarios, pruebas]);
   });
@@ -345,19 +347,19 @@ describe('cuentas de cliente y login', () => {
   test('no permite dos cuentas con el mismo correo, usuario o teléfono', async () => {
     const correo = await registrarCliente(ctx, 'CLIENTE@correo.com', 'Otra-clave-123');
     assert.equal(correo.estado, 409);
-    assert.deepEqual(correo.json, { error: 'Ya existe una cuenta con ese correo' });
+    assert.deepEqual(correo.json, { error: GENERICO });
     // Tampoco con el correo de la administradora de una empresa
     assert.equal((await registrarCliente(ctx, 'admin@central.co', 'Otra-clave-123')).estado, 409);
 
     const telefono = await registrarCliente(ctx, 'otro@correo.com', CLAVE_CLIENTE, { telefono: '+57 300 123 4567' });
     assert.equal(telefono.estado, 409);
-    assert.deepEqual(telefono.json, { error: 'Ya existe una cuenta con ese número de teléfono' });
+    assert.deepEqual(telefono.json, { error: GENERICO });
 
     const conUsuario = await registrarCliente(ctx, undefined, CLAVE_CLIENTE, { usuario: 'juan.gomez' });
     assert.equal(conUsuario.estado, 201);
     const repetido = await registrarCliente(ctx, undefined, CLAVE_CLIENTE, { usuario: 'JUAN.GOMEZ' });
     assert.equal(repetido.estado, 409);
-    assert.deepEqual(repetido.json, { error: 'Ese usuario ya está en uso. Elige otro.' });
+    assert.deepEqual(repetido.json, { error: GENERICO }, 'el mismo mensaje para correo, usuario y teléfono: no revela cuál existe');
     // El usuario de la administradora ya está tomado
     const deAdmin = await registrarCliente(ctx, undefined, CLAVE_CLIENTE, { usuario: 'admin.a' });
     assert.equal(deAdmin.estado, 409, 'el usuario de una persona del personal no se puede usar');

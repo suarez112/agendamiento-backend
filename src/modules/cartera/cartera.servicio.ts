@@ -3,6 +3,16 @@ import { errores } from '../../shared/errores.js';
 import type { Sesion } from '../auth/auth.servicio.js';
 import * as repositorio from './cartera.repositorio.js';
 
+export const PROFESIONAL_NO_ENCONTRADO = 'Profesional no encontrado';
+
+// Un administrador solo puede filtrar por un profesional de su propio negocio: otro id responde 404,
+// igual que el resto de los endpoints
+export const exigirProfesionalDelNegocio = async (pool: pg.Pool, empresaId: string, barberoId: string | null | undefined) => {
+  if (barberoId && !(await repositorio.existeProfesional(pool, empresaId, barberoId))) {
+    throw errores.noEncontrado(PROFESIONAL_NO_ENCONTRADO);
+  }
+};
+
 export type ConsultaPeriodo = { barberoId?: string } & (
   | { periodo: repositorio.Periodo }
   | { periodo: 'rango'; desde: string; hasta: string }
@@ -200,6 +210,7 @@ export const crearServicioCartera = ({ pool }: { pool: pg.Pool }) => ({
   },
 
   async resumen(sesion: Sesion, desde: string, hasta: string, filtro?: string) {
+    if (sesion.esAdmin) await exigirProfesionalDelNegocio(pool, sesion.empresaId, filtro);
     const filas = await repositorio.resumenPorProfesional(pool, {
       empresaId: sesion.empresaId,
       desde,

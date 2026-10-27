@@ -69,7 +69,7 @@ describe('permisos y aislamiento entre negocios', () => {
   test('el admin de A no puede cancelar ni completar citas del negocio B', async () => {
     const cancelar = await pedir(ctx, '/api/v1/citas/cita_b/cancelar', { method: 'PATCH', token: tokenAdminA });
     const completar = await pedir(ctx, '/api/v1/citas/cita_b/completar', { method: 'PATCH', token: tokenAdminA });
-    assert.equal(cancelar.estado, 409);
+    assert.equal(cancelar.estado, 404, 'cancelar: la cita de otro negocio no existe para A (B-3)');
     assert.equal(completar.estado, 409);
     const { rows } = await ctx.pool.query("SELECT estado FROM citas WHERE id = 'cita_b'");
     assert.equal(rows[0].estado, 'CONFIRMADA');

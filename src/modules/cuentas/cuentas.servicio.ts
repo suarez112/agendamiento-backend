@@ -41,22 +41,27 @@ export type DatosRegistroCliente = {
   clave: string;
 };
 
-const CORREO_REPETIDO = 'Ya existe una cuenta con ese correo';
-export const USUARIO_REPETIDO = 'Ese usuario ya está en uso. Elige otro.';
-const TELEFONO_REPETIDO = 'Ya existe una cuenta con ese número de teléfono';
+// Correo, usuario o teléfono repetidos: un solo mensaje para los tres, así nadie puede comprobar si una persona
+// ya tiene cuenta (hallazgo B-1). Quien ya la tiene sabe qué hacer: iniciar sesión o recuperar la contraseña.
+export const CUENTA_NO_CREADA =
+  'No pudimos crear la cuenta con esos datos. Si ya tienes una, inicia sesión o recupera tu contraseña.';
 
 // Traduce los choques con índices únicos a un 409 con un mensaje claro
 const traducirDuplicado = (error: unknown): never => {
   if (esErrorPg(error, CODIGO_PG.violacionUnica)) {
     const restriccion = (error as { constraint?: string }).constraint;
-    if (restriccion === 'usuarios_correo_lower_key') throw errores.conflicto(CORREO_REPETIDO);
-    // El usuario no puede repetirse entre cuentas ni con el equipo (trigger de la migración 007)
-    if (restriccion === 'usuarios_usuario_lower_key' || restriccion === 'usuario_login_unico') {
-      throw errores.conflicto(USUARIO_REPETIDO);
+    // El usuario no puede repetirse entre cuentas ni con el equipo (trigger de la migración 007) y el teléfono
+    // es único entre las cuentas de cliente (migración 011)
+    if (
+      restriccion === 'usuarios_correo_lower_key' ||
+      restriccion === 'usuarios_usuario_lower_key' ||
+      restriccion === 'usuario_login_unico' ||
+      restriccion === 'usuarios_telefono_cliente_key'
+    ) {
+      throw errores.conflicto(CUENTA_NO_CREADA);
     }
+    // El código del negocio es público por diseño (se comparte como enlace y se consulta con codigo-disponible)
     if (restriccion === 'empresas_codigo_acceso_key') throw errores.conflicto(CODIGO_REPETIDO);
-    // El teléfono es único entre las cuentas de cliente (migración 011)
-    if (restriccion === 'usuarios_telefono_cliente_key') throw errores.conflicto(TELEFONO_REPETIDO);
   }
   throw error;
 };

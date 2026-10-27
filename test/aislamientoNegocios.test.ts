@@ -126,20 +126,34 @@ describe('aislamiento entre negocios', () => {
     const propia = await pedir(ctx, `/api/v1/cartera?${filtro}`, { token: tokenB });
     assert.equal(propia.json.totalVentas, 18000, 'B sí ve sus propias ventas');
 
-    for (const ruta of [`/api/v1/cartera?${filtro}`, `/api/v1/cartera?${filtro}&barberoId=admin_b`]) {
+    const sinFiltro = await pedir(ctx, `/api/v1/cartera?${filtro}`, { token: tokenA });
+    assert.equal(sinFiltro.estado, 200);
+    assert.equal(sinFiltro.json.totalVentas, 0);
+    assert.equal(sinFiltro.json.totalCitas, 0);
+    assert.ok(!sinFiltro.texto.includes('Admin B'));
+
+    // Los reportes dependen del plan: A usa el nivel Pro para que el plan no responda antes que la validación
+    await ctx.pool.query("UPDATE empresas SET plan_equipo = 'pro' WHERE id = 'emp_a'");
+
+    // Pedir un profesional de otro negocio responde 404, como el resto de los endpoints
+    const ajenas = [
+      `/api/v1/cartera?${filtro}&barberoId=admin_b`,
+      `/api/v1/cartera/resumen?periodo=rango&desde=${fechaEnDias(0)}&hasta=${fechaEnDias(0)}&barberoId=admin_b`,
+      `/api/v1/cartera/resumen?periodo=mes&barberoId=admin_b`,
+      '/api/v1/reportes/servicios-rentables?periodo=mes&barberoId=admin_b',
+      '/api/v1/reportes/ocupacion?periodo=mes&barberoId=admin_b',
+      '/api/v1/reportes/demanda?periodo=mes&barberoId=admin_b',
+    ];
+    for (const ruta of ajenas) {
       const r = await pedir(ctx, ruta, { token: tokenA });
-      assert.equal(r.estado, 200, ruta);
-      assert.equal(r.json.totalVentas, 0, ruta);
-      assert.equal(r.json.totalCitas, 0, ruta);
-      // La respuesta repite el filtro pedido (barberoId), pero no trae ningún dato del profesional ni de las ventas de B
-      assert.deepEqual(r.json.porProfesional.filter((p: { barberoId: string }) => p.barberoId === 'admin_b'), [], ruta);
-      assert.ok(!r.texto.includes('Admin B'), ruta);
+      assert.equal(r.estado, 404, ruta);
+      assert.deepEqual(r.json, { error: 'Profesional no encontrado' }, ruta);
+      assert.ok(!r.texto.includes('Admin B') && !r.texto.includes('Corte B'), ruta);
     }
-    const resumen = await pedir(ctx, `/api/v1/cartera/resumen?periodo=rango&${filtro.replace(fechaEnDias(-30), fechaEnDias(0))}&barberoId=admin_b`, { token: tokenA });
-    assert.ok(resumen.estado === 200 || resumen.estado === 400, resumen.texto);
-    if (resumen.estado === 200) assert.equal(resumen.json.totalVentas, 0);
-    const reporte = await pedir(ctx, `/api/v1/reportes/servicios-rentables?${filtro}&barberoId=admin_b`, { token: tokenA });
-    assert.ok(!reporte.texto.includes('Corte B'), 'el servicio de B no aparece en los reportes de A');
+    // Un profesional del propio negocio sigue funcionando
+    const propio = await pedir(ctx, `/api/v1/cartera?${filtro}&barberoId=barb_a`, { token: tokenA });
+    assert.equal(propio.estado, 200);
+    assert.equal(propio.json.barberoId, 'barb_a');
   });
 
   test('no se puede pedir horas ni reservar mezclando negocios', async () => {
