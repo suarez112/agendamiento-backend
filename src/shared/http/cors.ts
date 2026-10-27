@@ -15,7 +15,7 @@ export const crearCors = (entorno: Pick<Entorno, 'CORS_ORIGINS' | 'NODE_ENV'>) =
         (entorno.NODE_ENV !== 'production' && ORIGEN_LOCAL.test(origen));
       responder(null, permitido);
     },
-    methods: ['GET', 'POST', 'PATCH'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     maxAge: 600,
   });

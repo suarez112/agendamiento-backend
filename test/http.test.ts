@@ -1,10 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
-import type { AddressInfo } from 'node:net';
-import type pg from 'pg';
-import { crearApp } from '../src/app.js';
-import { cargarEntorno } from '../src/config/entorno.js';
-import { type Contexto, iniciar, pedir, SECRETO_PRUEBAS } from './apoyo/servidor.js';
+import { type Contexto, iniciar, pedir } from './apoyo/servidor.js';
 
 // S10 — manejo de errores, CORS y encabezados de seguridad
 describe('manejo de errores', () => {
@@ -34,25 +30,22 @@ describe('manejo de errores', () => {
   });
 
   test('incluye encabezados de seguridad y oculta la tecnología', async () => {
-    const r = await pedir(ctx, '/api/saludo');
+    const r = await pedir(ctx, '/api/v1/planes');
     assert.equal(r.estado, 200);
     assert.equal(r.headers.get('x-content-type-options'), 'nosniff');
     assert.equal(r.headers.get('x-powered-by'), null);
   });
 });
 
-test('la comprobación de salud informa la caída de la base con su mensaje de siempre', async () => {
-  const poolCaido = { query: async () => Promise.reject(new Error('connect ECONNREFUSED')) } as unknown as pg.Pool;
-  const entorno = cargarEntorno({ ...process.env, NODE_ENV: 'test', JWT_SECRET: SECRETO_PRUEBAS });
-  const servidor = crearApp({ pool: poolCaido, entorno }).listen(0, '127.0.0.1');
-  await new Promise((r) => servidor.once('listening', r));
+// B-11: la comprobación /api/saludo no la usa nadie (ni la app) y revelaba la hora de la base y su estado
+test('/api/saludo ya no existe', async () => {
+  const ctx = await iniciar();
   try {
-    const { port } = servidor.address() as AddressInfo;
-    const r = await fetch(`http://127.0.0.1:${port}/api/saludo`);
-    assert.equal(r.status, 500);
-    assert.deepEqual(await r.json(), { error: 'Error de conexión con la base de datos' });
+    const r = await pedir(ctx, '/api/saludo');
+    assert.equal(r.estado, 404);
+    assert.deepEqual(r.json, { error: 'Ruta no encontrada' });
   } finally {
-    servidor.close();
+    await ctx.cerrar();
   }
 });
 
@@ -64,16 +57,41 @@ describe('CORS en producción', () => {
   after(() => ctx.cerrar());
 
   test('permite el origen configurado', async () => {
-    const r = await pedir(ctx, '/api/saludo', { headers: { Origin: 'https://app.ejemplo.com' } });
+    const r = await pedir(ctx, '/api/v1/planes', { headers: { Origin: 'https://app.ejemplo.com' } });
     assert.equal(r.headers.get('access-control-allow-origin'), 'https://app.ejemplo.com');
   });
 
+  // M-8: la verificación previa del navegador debe aceptar PUT y DELETE (fotos, dispositivos, intervalo, borrados)
+  for (const metodo of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']) {
+    test(`la verificación previa (OPTIONS) permite ${metodo} desde el origen configurado`, async () => {
+      const r = await pedir(ctx, '/api/v1/dispositivos', {
+        method: 'OPTIONS',
+        headers: {
+          Origin: 'https://app.ejemplo.com',
+          'Access-Control-Request-Method': metodo,
+          'Access-Control-Request-Headers': 'authorization,content-type',
+        },
+      });
+      assert.equal(r.estado, 204);
+      assert.equal(r.headers.get('access-control-allow-origin'), 'https://app.ejemplo.com');
+      assert.ok(r.headers.get('access-control-allow-methods')?.split(',').includes(metodo), r.headers.get('access-control-allow-methods') ?? '');
+    });
+  }
+
+  test('la verificación previa no autoriza a un origen desconocido', async () => {
+    const r = await pedir(ctx, '/api/v1/dispositivos', {
+      method: 'OPTIONS',
+      headers: { Origin: 'https://malicioso.com', 'Access-Control-Request-Method': 'DELETE' },
+    });
+    assert.equal(r.headers.get('access-control-allow-origin'), null);
+  });
+
   test('no autoriza otros orígenes', async () => {
-    const r = await pedir(ctx, '/api/saludo', { headers: { Origin: 'https://malicioso.com' } });
+    const r = await pedir(ctx, '/api/v1/planes', { headers: { Origin: 'https://malicioso.com' } });
     assert.equal(r.headers.get('access-control-allow-origin'), null);
   });
 
   test('las apps nativas (sin Origin) siguen funcionando', async () => {
-    assert.equal((await pedir(ctx, '/api/saludo')).estado, 200);
+    assert.equal((await pedir(ctx, '/api/v1/planes')).estado, 200);
   });
 });
