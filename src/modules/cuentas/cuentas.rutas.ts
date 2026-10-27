@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { ipDe } from '../../shared/http/ip.js';
 import type { Limitadores } from '../../shared/http/limitadores.js';
 import { parsear } from '../../shared/http/validacion.js';
 import {
@@ -15,6 +16,7 @@ import { claveNueva, texto } from '../../shared/http/esquemas.js';
 import { esquemaIndicativo } from '../citas/citas.esquemas.js';
 import { conTelefonoNormalizado } from '../../shared/telefonos.js';
 import { aceptacionObligatoria, contextoDe } from '../legal/legal.js';
+import { conContadorDeCuenta, type ServicioIntentos } from '../auth/intentos.js';
 import { cuentaDe, type GuardiasCuenta } from './cuentas.guardias.js';
 import type { ServicioCuentas } from './cuentas.servicio.js';
 import type { ServicioEliminacion } from './eliminacion.servicio.js';
@@ -107,6 +109,7 @@ export const crearRutasCuentas = (
   eliminacion: ServicioEliminacion,
   guardias: GuardiasCuenta,
   limitadores: Limitadores,
+  intentos: ServicioIntentos,
 ) => {
   const rutas = Router();
 
@@ -118,8 +121,13 @@ export const crearRutasCuentas = (
     res.status(201).json(await cuentas.registrarCliente(parsear(esquemaRegistroCliente, req.body), contextoDe(req)));
   });
 
-  rutas.post('/login', limitadores.login, async (req, res) => {
-    res.json(await cuentas.iniciarSesion(parsear(esquemaLogin, req.body)));
+  rutas.post('/login', limitadores.loginCuentas, async (req, res) => {
+    const datos = parsear(esquemaLogin, req.body);
+    res.json(
+      await conContadorDeCuenta(intentos, intentos.claveDe('cuenta', datos.correo), { ruta: '/cuentas/login', ip: ipDe(req) }, () =>
+        cuentas.iniciarSesion(datos),
+      ),
+    );
   });
 
   // Recuperar contraseña (administradoras y clientes con correo). Límite por
@@ -133,9 +141,16 @@ export const crearRutasCuentas = (
     res.json(await recuperacion.restablecer(parsear(esquemaRestablecer, req.body)));
   });
 
-  // Elimina la cuenta de una administradora o de un cliente (los fallos de contraseña cuentan como intentos de login)
-  rutas.post('/eliminar', limitadores.login, guardias.requerirCuenta, async (req, res) => {
-    res.json(await eliminacion.eliminar(cuentaDe(res), parsear(esquemaEliminar, req.body)));
+  // Elimina la cuenta de una administradora o de un cliente. Una contraseña errónea cuenta como intento fallido,
+  // con su propio contador por IP y por cuenta (no se mezcla con el del login).
+  rutas.post('/eliminar', limitadores.eliminarCuenta, guardias.requerirCuenta, async (req, res) => {
+    const cuenta = cuentaDe(res);
+    const datos = parsear(esquemaEliminar, req.body);
+    res.json(
+      await conContadorDeCuenta(intentos, intentos.claveDe('eliminar', cuenta.usuarioId), { ruta: '/cuentas/eliminar', ip: ipDe(req) }, () =>
+        eliminacion.eliminar(cuenta, datos),
+      ),
+    );
   });
 
   return rutas;

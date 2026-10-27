@@ -5,6 +5,7 @@ import { ZONA_PLATAFORMA } from '../../config/plataforma.js';
 import { errores } from '../../shared/errores.js';
 import { aIsoEnZona } from '../../shared/zonaHoraria.js';
 import { verificarContrasena } from '../auth/contrasenas.js';
+import { conContadorDeCuenta, type ServicioIntentos } from '../auth/intentos.js';
 import type { ServicioTokens } from '../auth/tokens.js';
 import { activarPlanEmpresa, type Periodo } from '../empresas/activacion.js';
 import * as pqrsRepositorio from '../pqrs/pqrs.repositorio.js';
@@ -15,7 +16,8 @@ import type { EstadoNegocio, FilaActividad, FilaDetalleNegocio, FilaNegocio } fr
 
 export type SesionSuperadmin = { id: string; correo: string };
 
-type Dependencias = { pool: pg.Pool; tokens: ServicioTokens; secreto: string };
+// intentos: contador de fallos por cuenta + IP (en la base de datos)
+type Dependencias = { pool: pg.Pool; tokens: ServicioTokens; secreto: string; intentos: ServicioIntentos };
 export type Pagina = { pagina: number; limite: number };
 
 const INCORRECTOS = 'Correo, contraseña o código incorrectos';
@@ -107,7 +109,7 @@ const armarActividad = (a: FilaActividad) => ({
   zonaHoraria: ZONA_PLATAFORMA,
 });
 
-export const crearServicioSuperadmin = ({ pool, tokens, secreto }: Dependencias) => {
+export const crearServicioSuperadmin = ({ pool, tokens, secreto, intentos }: Dependencias) => {
   const actividadDe = (pagina: Pagina, filtros: Omit<repositorio.FiltrosActividad, 'limite' | 'desplazamiento'>) =>
     repositorio.listarActividad(pool, { ...filtros, ...aPagina(pagina) });
 
@@ -122,21 +124,21 @@ export const crearServicioSuperadmin = ({ pool, tokens, secreto }: Dependencias)
 
   return {
     // Correo + contraseña + código de la app autenticadora, todo en una sola solicitud
-    async iniciarSesion(entrada: { correo: string; clave: string; codigo: string }, ip: string | undefined) {
+    // Los fallos se cuentan por cuenta + IP (existan o no): quien conozca el correo del dueño no puede dejarlo fuera
+    // del panel, porque el bloqueo de sus intentos desde otra IP no afecta los intentos desde la IP del dueño.
+    // El mensaje de bloqueo es el mismo exista o no la cuenta.
+    iniciarSesion(entrada: { correo: string; clave: string; codigo: string }, ip: string | null) {
+      const clave = intentos.claveDe('superadmin', `${entrada.correo}|${ip ?? ''}`);
+      return conContadorDeCuenta(intentos, clave, { ruta: '/superadmin/login', ip }, () => this.entrar(entrada, ip), 'login_superadmin_fallido');
+    },
+
+    async entrar(entrada: { correo: string; clave: string; codigo: string }, ip: string | null) {
       const cuenta = await repositorio.buscarSuperadminPorCorreo(pool, entrada.correo);
-      if (cuenta?.bloqueado) {
-        throw errores.demasiadosIntentos(
-          `Demasiados intentos fallidos. Espera ${repositorio.MINUTOS_BLOQUEO} minutos para volver a intentar.`,
-        );
-      }
       // Siempre se hace la comparación de la contraseña, exista o no la cuenta
       const { valida } = await verificarContrasena(entrada.clave, cuenta?.password_hash);
       const clave2 = cuenta && valida ? descifrarSecreto(cuenta.totp_secreto, secreto) : null;
       const paso = clave2 ? verificarTotp(clave2, entrada.codigo) : null;
-      if (!cuenta || !valida || paso === null) {
-        if (cuenta) await repositorio.registrarIntentoFallido(pool, cuenta.id);
-        throw errores.noAutenticado(INCORRECTOS);
-      }
+      if (!cuenta || !valida || paso === null) throw errores.noAutenticado(INCORRECTOS);
       // Cada código sirve una sola vez
       if (!(await repositorio.registrarEntrada(pool, cuenta.id, paso))) {
         throw errores.noAutenticado('Ese código ya se usó. Espera el siguiente código de tu app autenticadora.');

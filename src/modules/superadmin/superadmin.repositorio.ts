@@ -9,7 +9,6 @@ export type FilaSuperadmin = {
   totp_secreto: string;
   totp_ultimo_paso: string | null;
   version_sesion: number;
-  bloqueado: boolean;
   inactivo: boolean;
 };
 
@@ -17,7 +16,6 @@ export type FilaSuperadmin = {
 export const MINUTOS_INACTIVIDAD = 15;
 
 const COLUMNAS_SUPERADMIN = `id, correo, password_hash, totp_secreto, totp_ultimo_paso, version_sesion,
-  COALESCE(bloqueado_hasta > now(), false) AS bloqueado,
   (ultima_actividad IS NULL OR ultima_actividad < now() - make_interval(mins => ${MINUTOS_INACTIVIDAD})) AS inactivo`;
 
 export const buscarSuperadminPorCorreo = async (db: Consultable, correo: string) =>
@@ -29,24 +27,6 @@ export const buscarSuperadminPorCorreo = async (db: Consultable, correo: string)
 
 export const buscarSuperadminPorId = async (db: Consultable, id: string) =>
   (await db.query<FilaSuperadmin>(`SELECT ${COLUMNAS_SUPERADMIN} FROM superadmins WHERE id = $1`, [id])).rows[0];
-
-export const MAX_INTENTOS = 5;
-export const MINUTOS_BLOQUEO = 15;
-
-// Cuenta un intento fallido; al llegar al máximo bloquea la cuenta unos minutos.
-// Si el bloqueo anterior ya venció, la cuenta empieza de cero.
-export const registrarIntentoFallido = async (db: Consultable, id: string) => {
-  await db.query(
-    `UPDATE superadmins s
-     SET intentos_fallidos = n.valor,
-         bloqueado_hasta = CASE WHEN n.valor >= $2 THEN now() + make_interval(mins => $3) END
-     FROM (SELECT id, CASE WHEN bloqueado_hasta IS NOT NULL AND bloqueado_hasta <= now() THEN 1
-                           ELSE intentos_fallidos + 1 END AS valor
-           FROM superadmins WHERE id = $1) n
-     WHERE s.id = n.id`,
-    [id, MAX_INTENTOS, MINUTOS_BLOQUEO],
-  );
-};
 
 // Entrada correcta: guarda el paso del código usado y reinicia los intentos. Devuelve false si ese
 // código (o uno más viejo) ya se había usado: así un código visto por otra persona no sirve de nuevo.

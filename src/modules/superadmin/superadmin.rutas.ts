@@ -2,6 +2,7 @@ import { type RequestHandler, Router } from 'express';
 import { z } from 'zod';
 import { errores } from '../../shared/errores.js';
 import { esquemaId, fecha, obligatorio, texto } from '../../shared/http/esquemas.js';
+import { ipDe } from '../../shared/http/ip.js';
 import type { Limitadores } from '../../shared/http/limitadores.js';
 import { parsear } from '../../shared/http/validacion.js';
 import { tokenDe } from '../auth/guardias.js';
@@ -146,9 +147,10 @@ export const crearRutasSuperadmin = (
     next();
   });
 
-  // Solo cuentan los intentos fallidos (límite por IP); además la cuenta se bloquea tras 5 fallos seguidos
-  rutas.post('/login', limitadores.login, async (req, res) => {
-    res.json(await servicio.iniciarSesion(parsear(esquemaLogin, req.body), req.ip));
+  // Solo cuentan los intentos fallidos (límite por IP, propio de esta ruta); además se bloquea la pareja cuenta + IP
+  // tras varios fallos seguidos (ver iniciarSesion), así nadie puede dejar fuera al dueño desde otra conexión
+  rutas.post('/login', limitadores.loginSuperadmin, async (req, res) => {
+    res.json(await servicio.iniciarSesion(parsear(esquemaLogin, req.body), ipDe(req)));
   });
 
   const requerirSuperadmin: RequestHandler = async (req, res, next) => {

@@ -1,11 +1,13 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { errores } from '../../shared/errores.js';
+import { ipDe } from '../../shared/http/ip.js';
 import type { Limitadores } from '../../shared/http/limitadores.js';
 import { parsear } from '../../shared/http/validacion.js';
 import type { ServicioCuentas } from '../cuentas/cuentas.servicio.js';
 import type { ServicioAuth } from './auth.servicio.js';
 import { verificarContrasena } from './contrasenas.js';
+import { conContadorDeCuenta, type ServicioIntentos } from './intentos.js';
 
 // Login único: recibe "correo o usuario" y contraseña, y detecta si es la
 // administradora de una empresa o un cliente con cuenta (tabla usuarios), o
@@ -53,13 +55,23 @@ export const crearServicioAcceso = (auth: ServicioAuth, cuentas: ServicioCuentas
   },
 });
 
-export const crearRutasAcceso = (auth: ServicioAuth, cuentas: ServicioCuentas, limitadores: Limitadores) => {
+export const crearRutasAcceso = (
+  auth: ServicioAuth,
+  cuentas: ServicioCuentas,
+  limitadores: Limitadores,
+  intentos: ServicioIntentos,
+) => {
   const acceso = crearServicioAcceso(auth, cuentas);
   const rutas = Router();
 
-  rutas.post('/', limitadores.login, async (req, res) => {
+  // Límite por IP (solo fallos) y contador por cuenta en la base de datos
+  rutas.post('/', limitadores.loginUnico, async (req, res) => {
     const { usuario, clave } = parsear(esquemaLogin, req.body);
-    res.json(await acceso.iniciarSesion(usuario, clave));
+    res.json(
+      await conContadorDeCuenta(intentos, intentos.claveDe('cuenta', usuario), { ruta: '/login', ip: ipDe(req) }, () =>
+        acceso.iniciarSesion(usuario, clave),
+      ),
+    );
   });
 
   return rutas;

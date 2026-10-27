@@ -130,7 +130,7 @@ describe('autenticación', () => {
 describe('límite de intentos de inicio de sesión', () => {
   let ctx: Contexto;
   before(async () => {
-    ctx = await iniciar({ limites: { login: 3 } });
+    ctx = await iniciar({ limites: { loginPersonal: 3 } });
   });
   after(() => ctx.cerrar());
 
