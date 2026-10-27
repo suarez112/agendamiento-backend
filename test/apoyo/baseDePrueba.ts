@@ -16,7 +16,7 @@ export const fechaEnDias = (dias: number) => sumarDiasAFecha(hoyEn(ZONA_POR_DEFE
 export const FECHA_FUTURA = fechaEnDias(7);
 
 // Datos conocidos: dos negocios para probar el aislamiento entre ellos
-const sembrar = async (pool: pg.Pool) => {
+const sembrar = async (pool: pg.Pool | pg.PoolClient) => {
   // Costo bajo para que las pruebas sean rápidas; el inicio de sesión lo sube al de producción
   const [hashSecreta, hash1234, hashClaveA, hashClaveB] = await Promise.all(
     ['secreta', '1234', 'clave-a', 'clave-b'].map((clave) => bcrypt.hash(clave, 4)),
@@ -79,7 +79,16 @@ export const crearBaseDePrueba = async (opciones: { hasta?: string } = {}): Prom
   // empresas (003): se insertan con el esquema 002 y luego se migra el resto.
   const hastaSemilla = opciones.hasta && opciones.hasta < VERSION_SEMILLA ? opciones.hasta : VERSION_SEMILLA;
   await aplicarMigraciones(pool, { hasta: hastaSemilla });
-  await sembrar(pool);
+  // La semilla escribe fechas sin zona (created_at), que la migración 024 interpreta como hora de Bogotá, como en
+  // producción (donde el servidor trabajaba en esa zona). Se siembra con esa zona para que no queden 5 horas en el futuro.
+  const cliente = await pool.connect();
+  try {
+    await cliente.query("SET TIME ZONE 'America/Bogota'");
+    await sembrar(cliente);
+  } finally {
+    await cliente.query('RESET TIME ZONE').catch(() => undefined);
+    cliente.release();
+  }
   await aplicarMigraciones(pool, opciones);
 
   return {

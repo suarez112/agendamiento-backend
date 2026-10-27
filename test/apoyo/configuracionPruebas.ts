@@ -31,18 +31,22 @@ const GRUPOS_DE_CREDENCIALES = [
   ['DB_USER', 'DB_PASSWORD'],
 ] as const;
 
+// Un valor solo con espacios cuenta como no definido (un " " en el .env no es un usuario ni una contraseña).
+// El usuario se recorta; la contraseña se usa tal cual, porque los espacios al borde pueden ser parte de ella.
+const definido = (valor: string | undefined) => valor !== undefined && valor.trim() !== '';
+
 const leerCredenciales = (env: NodeJS.ProcessEnv) => {
-  const grupo = GRUPOS_DE_CREDENCIALES.find(([variableUsuario]) => env[variableUsuario]);
+  const grupo = GRUPOS_DE_CREDENCIALES.find(([variableUsuario]) => definido(env[variableUsuario]));
   if (!grupo) throw new Error(`Faltan las credenciales: define TEST_DB_USER (o DB_MIGRACION_USER).${PASOS}`);
   const [variableUsuario, variableClave] = grupo;
   const password = env[variableClave];
-  if (!password) {
+  if (!definido(password)) {
     throw new Error(
       `${variableUsuario} está definido pero falta ${variableClave} (o está vacía). ` +
         `Cada usuario va con su propia contraseña: no se toma la de otro grupo.${PASOS}`,
     );
   }
-  return { user: env[variableUsuario] as string, password };
+  return { user: (env[variableUsuario] as string).trim(), password: password as string };
 };
 
 export const leerConfigPruebas = (env: NodeJS.ProcessEnv = process.env): ConfigPruebas => {

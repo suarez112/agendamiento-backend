@@ -50,6 +50,25 @@ describe('guardia de la base de pruebas', () => {
     assert.deepEqual([propio.host, propio.port, propio.user, propio.password], ['127.0.0.1', 5433, 'agendamiento_test', 'solo-pruebas']);
   });
 
+  // Un valor como " " en el .env no cuenta como definido (ni como usuario ni como contraseña)
+  test('un usuario o una contraseña con solo espacios no cuentan como definidos', () => {
+    const base = { ...DESARROLLO, TEST_DB_NAME: 'agendamiento_test' };
+    // TEST_DB_USER en blanco se ignora: se toma el grupo siguiente
+    assert.equal(leerConfigPruebas({ ...base, TEST_DB_USER: '   ', TEST_DB_PASSWORD: 'x' }).user, 'postgres');
+    assert.equal(leerConfigPruebas({ ...base, TEST_DB_USER: '', DB_MIGRACION_USER: ' ', DB_MIGRACION_PASSWORD: 'm' }).password, 'dev');
+    // Una contraseña en blanco para un usuario definido es un error claro, no una contraseña vacía
+    assert.throws(() => leerConfigPruebas({ ...base, TEST_DB_USER: 'tester', TEST_DB_PASSWORD: '   ' }), /TEST_DB_PASSWORD/);
+    assert.throws(() => leerConfigPruebas({ ...base, TEST_DB_USER: 'tester' }), /TEST_DB_PASSWORD/);
+    // Sin ningún usuario real, se pide definirlo
+    assert.throws(() => leerConfigPruebas({ ...base, DB_USER: '  ', DB_PASSWORD: 'x' }), /Faltan las credenciales/);
+  });
+
+  test('el usuario se recorta y la contraseña se respeta tal cual', () => {
+    const config = leerConfigPruebas({ ...DESARROLLO, TEST_DB_NAME: 'agendamiento_test', TEST_DB_USER: '  tester  ', TEST_DB_PASSWORD: ' con espacios ' });
+    assert.equal(config.user, 'tester');
+    assert.equal(config.password, ' con espacios ');
+  });
+
   test('solo se pueden borrar las bases temporales que crea la propia suite', () => {
     const config = leerConfigPruebas({ ...DESARROLLO, TEST_DB_NAME: 'agendamiento_test' });
     assert.equal(esBaseTemporalDePrueba(config, 'agendamiento_test_1234_abc'), true);
