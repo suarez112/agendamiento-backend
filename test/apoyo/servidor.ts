@@ -6,6 +6,7 @@ import { crearApp } from '../../src/app.js';
 import { cifrarContrasena } from '../../src/modules/auth/contrasenas.js';
 import { cifrarSecreto, codigoTotp, generarSecretoTotp } from '../../src/modules/superadmin/totp.js';
 import { cargarEntorno, type Entorno } from '../../src/config/entorno.js';
+import type { ProveedorPago } from '../../src/modules/pagos/proveedor.js';
 import type { ConfigLimites } from '../../src/shared/http/limitadores.js';
 import { type BaseDePrueba, crearBaseDePrueba, FECHA_FUTURA } from './baseDePrueba.js';
 import { leerConfigPruebas } from './configuracionPruebas.js';
@@ -39,7 +40,8 @@ const LIMITES_PRUEBA: ConfigLimites = {
 
 export type Contexto = { url: string; pool: pg.Pool; cerrar: () => Promise<void> };
 
-type Opciones = { limites?: Partial<ConfigLimites>; entorno?: Partial<Entorno> };
+// proveedorPago: 'ausente' fuerza una app sin pagos; sin la clave se usa el del entorno (simulado en pruebas)
+type Opciones = { limites?: Partial<ConfigLimites>; entorno?: Partial<Entorno>; proveedorPago?: ProveedorPago | 'ausente' };
 
 const puertoLibre = () =>
   new Promise<number>((resolver) => {
@@ -93,7 +95,12 @@ export const iniciar = async (opciones: Opciones = {}): Promise<Contexto> => {
     DB_NAME: base.nombre,
     ...opciones.entorno,
   };
-  const app = crearApp({ pool: base.pool, entorno, limites: { ...LIMITES_PRUEBA, ...opciones.limites } });
+  const app = crearApp({
+    pool: base.pool,
+    entorno,
+    limites: { ...LIMITES_PRUEBA, ...opciones.limites },
+    ...(opciones.proveedorPago ? { proveedorPago: opciones.proveedorPago === 'ausente' ? null : opciones.proveedorPago } : {}),
+  });
   const servidor: Server = await new Promise((resolver) => {
     const s = app.listen(0, '127.0.0.1', () => resolver(s as unknown as Server));
   });
