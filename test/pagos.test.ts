@@ -259,6 +259,34 @@ describe('pagos: la pasarela debe coincidir con la orden', () => {
     assert.equal(await estadoEmpresa(ctx, empresaId), 'activa');
   });
 
+  test('un rechazo no cierra la orden: si la persona reintenta y paga con la misma referencia, se activa', async () => {
+    const { token, empresaId } = await negocioNuevo(ctx);
+    const orden = await crearOrden(ctx, token);
+    respuesta = (ref, monto) => aprobado(ref, monto, { estado: 'rechazada', idExterno: 'tx_intento_1' });
+    assert.equal((await confirmar(ctx, token, orden.json.referencia)).json.estado, 'rechazada');
+    assert.equal(await estadoEmpresa(ctx, empresaId), 'trial');
+    respuesta = (ref, monto) => aprobado(ref, monto, { idExterno: 'tx_intento_2' });
+    const r = await confirmar(ctx, token, orden.json.referencia);
+    assert.equal(r.json.estado, 'aprobada');
+    assert.equal(r.json.activada, true);
+    assert.equal(await estadoEmpresa(ctx, empresaId), 'activa');
+    assert.equal((await filas(ctx, 'SELECT 1 FROM activaciones_plan WHERE empresa_id = $1', [empresaId])).length, 1);
+    // Una orden aprobada es definitiva: un rechazo o una anulación posteriores no la tocan
+    respuesta = (ref, monto) => aprobado(ref, monto, { estado: 'anulada' });
+    assert.equal((await confirmar(ctx, token, orden.json.referencia)).json.estado, 'aprobada');
+    assert.equal(await estadoEmpresa(ctx, empresaId), 'activa');
+  });
+
+  test('un rechazo posterior no cambia una orden anulada ni la activa', async () => {
+    const { token, empresaId } = await negocioNuevo(ctx);
+    const orden = await crearOrden(ctx, token);
+    respuesta = (ref, monto) => aprobado(ref, monto, { estado: 'anulada' });
+    assert.equal((await confirmar(ctx, token, orden.json.referencia)).json.estado, 'anulada');
+    respuesta = (ref, monto) => aprobado(ref, monto, { estado: 'rechazada' });
+    assert.equal((await confirmar(ctx, token, orden.json.referencia)).json.estado, 'anulada');
+    assert.equal(await estadoEmpresa(ctx, empresaId), 'trial');
+  });
+
   test('la misma transacción de la pasarela no puede pagar dos órdenes', async () => {
     const { token } = await negocioNuevo(ctx);
     const a = await crearOrden(ctx, token);

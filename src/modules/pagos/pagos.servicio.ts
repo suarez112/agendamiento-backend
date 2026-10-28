@@ -137,7 +137,11 @@ export const crearServicioPagos = ({ pool, proveedor, urlPagos }: DependenciasPa
     enTransaccion(pool, async (tx) => {
       const f = (await tx.query<FilaOrden>(`SELECT ${COLUMNAS} FROM ordenes_pago WHERE referencia = $1 FOR UPDATE`, [referencia])).rows[0];
       if (!f) throw errores.noEncontrado('Orden no encontrada');
-      if (f.estado !== 'pendiente' || !resultado || resultado.estado === 'pendiente') return { orden: aOrden(f), inconsistente: false };
+      // Un rechazo o una anulación no cierra la orden: en Web Checkout la persona puede reintentar con la misma
+      // referencia y pagar después. Una aprobación posterior sí la activa; una orden ya aprobada no se toca, y un
+      // resultado que no es aprobado nunca cambia una orden que ya salió de "pendiente".
+      const abierta = f.estado === 'pendiente' || (f.estado !== 'aprobada' && resultado?.estado === 'aprobada');
+      if (!abierta || !resultado || resultado.estado === 'pendiente') return { orden: aOrden(f), inconsistente: false };
 
       const coincide =
         resultado.referencia === f.referencia && resultado.montoCentavos === Number(f.monto_centavos) && resultado.moneda === f.moneda;
@@ -185,7 +189,8 @@ export const crearServicioPagos = ({ pool, proveedor, urlPagos }: DependenciasPa
   const confirmar = async (empresaId: string, referencia: string, idExterno?: string) => {
     const pasarela = requerirProveedor();
     const orden = await buscarOrden(empresaId, referencia);
-    if (orden.estado !== 'pendiente') return aOrden(orden);
+    // Solo una orden aprobada es definitiva; una rechazada o anulada se vuelve a preguntar (puede haber un reintento)
+    if (orden.estado === 'aprobada') return aOrden(orden);
     const resultado = await pasarela.consultarPago({ referencia, idExterno: idExterno ?? orden.id_externo });
     const { orden: final, inconsistente } = await aplicar(referencia, resultado);
     if (inconsistente) {
