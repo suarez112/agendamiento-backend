@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { COBRO } from '../../config/planes.js';
 import { ZONA_PLATAFORMA } from '../../config/plataforma.js';
 import type { Consultable } from '../../db/pool.js';
 
@@ -448,12 +449,14 @@ export const activosPorProfesionales = async (db: Consultable) =>
     )
   ).rows;
 
-// Negocios por nivel (según sus profesionales cobrados) y cuántos están activos
-export const negociosPorNivel = async (db: Consultable) =>
+// Negocios por número de profesionales cobrados (mínimo 1, como el precio; máximo 10) y cuántos están activos
+export const negociosPorProfesionales = async (db: Consultable) =>
   (
-    await db.query<{ plan_equipo: string; total: number; activos: number }>(
-      `SELECT plan_equipo, count(*)::int AS total, count(*) FILTER (WHERE estado = 'activo')::int AS activos
-       FROM ${NEGOCIOS} GROUP BY plan_equipo`,
+    await db.query<{ profesionales: number; total: number; activos: number }>(
+      `SELECT LEAST(GREATEST(cobrados, 1), $1::int) AS profesionales, count(*)::int AS total,
+              count(*) FILTER (WHERE estado = 'activo')::int AS activos
+       FROM ${NEGOCIOS} GROUP BY 1`,
+      [COBRO.maxProfesionales],
     )
   ).rows;
 
