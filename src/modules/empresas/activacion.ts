@@ -3,7 +3,10 @@ import { type Periodo, planParaPersonas, precioPara } from '../../config/planes.
 import { contarEquipoCobrable, marcarCargosPagados } from './cobro.js';
 
 export type { Periodo };
-export type OrigenActivacion = 'panel' | 'comando';
+export type OrigenActivacion = 'panel' | 'comando' | 'pasarela';
+
+// Lo que realmente se cobró (pasarela): profesionales cubiertos y precio pagado. Sin esto, salen del equipo de hoy.
+export type PagoRecibido = { profesionales: number; precio: number };
 
 // Deja la empresa 'activa' con el plan de hoy (fecha en la zona del negocio). El precio sale de los
 // profesionales que atienden clientes en este momento (mínimo uno) y el nivel, de ese número.
@@ -21,11 +24,12 @@ export const activarPlanEmpresa = async (
   empresaId: string,
   periodo: Periodo,
   origen: OrigenActivacion = 'comando',
+  pago?: PagoRecibido,
 ): Promise<boolean> => {
   const existe = (await tx.query('SELECT 1 FROM empresas WHERE id = $1 FOR UPDATE', [empresaId])).rowCount;
   if (!existe) return false;
   const { cobrados } = await contarEquipoCobrable(tx, empresaId);
-  const profesionales = Math.max(cobrados, 1);
+  const profesionales = pago?.profesionales ?? Math.max(cobrados, 1);
   await tx.query(
     `UPDATE empresas e
      SET estado_suscripcion = 'activa',
@@ -48,7 +52,8 @@ export const activarPlanEmpresa = async (
      WHERE e.id = $1`,
     [empresaId, periodo, planParaPersonas(profesionales).id, profesionales],
   );
-  await marcarCargosPagados(tx, empresaId, 'activacion');
+  // Con un pago de la pasarela, los cargos pendientes solo quedan cubiertos si lo pagado alcanza para el equipo de hoy
+  if (profesionales >= cobrados) await marcarCargosPagados(tx, empresaId, 'activacion');
   const final = (
     await tx.query<{ codigo_acceso: string; nombre: string; fecha: string }>(
       `SELECT codigo_acceso, nombre, to_char((now() AT TIME ZONE zona_horaria)::date, 'YYYY-MM-DD') AS fecha
@@ -65,7 +70,7 @@ export const activarPlanEmpresa = async (
       final.nombre,
       planParaPersonas(profesionales).id,
       periodo,
-      precioPara(profesionales, periodo),
+      pago?.precio ?? precioPara(profesionales, periodo),
       final.fecha,
       origen,
       profesionales,

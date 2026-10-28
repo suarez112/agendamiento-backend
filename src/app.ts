@@ -42,6 +42,9 @@ import { crearServicioNotificaciones } from './modules/notificaciones/notificaci
 import { crearRutasMiCuenta, crearServicioMiCuenta } from './modules/micuenta/micuenta.rutas.js';
 import { crearRutasPqrs } from './modules/pqrs/pqrs.rutas.js';
 import { crearServicioPqrs } from './modules/pqrs/pqrs.servicio.js';
+import { crearProveedorDePago } from './modules/pagos/proveedores.js';
+import { crearRutasPagos } from './modules/pagos/pagos.rutas.js';
+import { crearServicioPagos } from './modules/pagos/pagos.servicio.js';
 import { crearRutasPlanes } from './modules/planes/planes.js';
 import { crearRutasFunciones, crearServicioFunciones } from './modules/planes/funciones.js';
 import { crearRutasProductos } from './modules/productos/productos.rutas.js';
@@ -51,6 +54,7 @@ import { crearServicioServicios } from './modules/servicios/servicios.servicio.j
 import { crearRutasSuperadmin } from './modules/superadmin/superadmin.rutas.js';
 import { crearServicioSuperadmin } from './modules/superadmin/superadmin.servicio.js';
 import { crearRutasUbicaciones } from './modules/ubicaciones/ubicaciones.js';
+import type { ProveedorPago } from './modules/pagos/proveedor.js';
 import { crearEnviadorCorreo, type EnviadorCorreo } from './shared/correo.js';
 import { crearEnviadorPush, type EnviadorPush } from './shared/push.js';
 import { crearCors } from './shared/http/cors.js';
@@ -69,6 +73,9 @@ export type Dependencias = {
   correo?: EnviadorCorreo;
   // Por defecto: Expo Push (en las pruebas no envía nada)
   push?: EnviadorPush;
+  // Por defecto: el que dice el entorno (simulado fuera de producción; wompi con sus llaves). undefined = sin pagos
+  // null = sin pagos en línea
+  proveedorPago?: ProveedorPago | null;
 };
 
 // Punto de composición: aquí se crean los servicios y se conectan con sus rutas.
@@ -79,6 +86,7 @@ export const crearApp = ({
   limites = LIMITES_POR_DEFECTO,
   correo = crearEnviadorCorreo(entorno.NODE_ENV),
   push = crearEnviadorPush(entorno.NODE_ENV, entorno.EXPO_ACCESS_TOKEN),
+  proveedorPago = crearProveedorDePago(entorno, pool) ?? null,
 }: Dependencias): Express => {
   const tokens = crearServicioTokens(entorno.JWT_SECRET, entorno.JWT_EXPIRA_EN);
   const auth = crearServicioAuth({ pool, tokens });
@@ -140,6 +148,8 @@ export const crearApp = ({
   app.use('/api/v1/cuentas', crearRutasCuentas(cuentas, recuperacion, crearServicioEliminacion({ pool, fotos: fotos.barberos }), guardiasCuenta, limitadores, intentosPorCuenta));
   app.use('/api/v1/ubicaciones', crearRutasUbicaciones());
   app.use('/api/v1/planes', crearRutasPlanes());
+  // Pagos de la suscripción con pasarela (administradores) y webhook de la pasarela
+  app.use('/api/v1/pagos', crearRutasPagos(crearServicioPagos({ pool, proveedor: proveedorPago ?? undefined, urlPagos: entorno.URL_PAGOS }), guardias, proveedorPago ?? undefined));
   // Funciones que incluye el plan del negocio de la sesión
   app.use('/api/v1/funciones', crearRutasFunciones(funciones, guardias));
   app.use('/api/v1/categorias', crearRutasCategorias(categorias));
