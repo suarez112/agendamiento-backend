@@ -83,6 +83,19 @@ export const registrarCliente = async (
     )
   ).rows[0].id;
 
+// Cliente de ese negocio (nunca de otro)
+export const buscarClienteDelNegocio = async (db: Consultable, empresaId: string, clienteId: string) =>
+  (
+    await db.query<{ nombre: string; telefono: string; indicativo: string }>(
+      'SELECT nombre, telefono, indicativo FROM clientes WHERE id = $1 AND empresa_id = $2',
+      [clienteId, empresaId],
+    )
+  ).rows[0];
+
+// Cuenta de cliente con ese teléfono (E.164), si la hay: las citas que el negocio agenda a su nombre aparecen en "Mis citas"
+export const buscarCuentaDeClientePorTelefono = async (db: Consultable, telefono: string) =>
+  (await db.query<{ id: string }>(`SELECT id FROM usuarios WHERE rol = 'cliente' AND telefono = $1`, [telefono])).rows[0]?.id ?? null;
+
 export const insertarCita = (
   db: Consultable,
   c: {

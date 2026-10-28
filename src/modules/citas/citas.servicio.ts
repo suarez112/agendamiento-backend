@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
-import { CODIGO_PG, enTransaccion, esErrorPg } from '../../db/pool.js';
+import { CODIGO_PG, type Consultable, enTransaccion, esErrorPg } from '../../db/pool.js';
 import { errores } from '../../shared/errores.js';
 import { aIsoEnZona } from '../../shared/zonaHoraria.js';
 import { esE164 } from '../../shared/telefonos.js';
@@ -10,7 +10,7 @@ import { buscarSuscripcion } from '../empresas/empresas.repositorio.js';
 import { SIN_RESERVAS } from '../empresas/suscripcion.js';
 import type { Avisos } from '../notificaciones/notificaciones.servicio.js';
 import { aceptoAmbos, type ContextoPeticion, DEBE_ACEPTAR, NUEVA_VERSION, registrarAutorizacion, tieneAutorizacionVigente } from '../legal/legal.js';
-import type { DatosNuevaCita } from './citas.esquemas.js';
+import type { DatosCitaPanel, DatosNuevaCita } from './citas.esquemas.js';
 import * as repositorio from './citas.repositorio.js';
 import { DIAS_RESERVA } from './citas.repositorio.js';
 import { MAX_CITAS_PENDIENTES_POR_TELEFONO, mensajeTopeCitasPendientes } from '../../config/reservas.js';
@@ -32,6 +32,22 @@ const validarFecha = (fecha: string, { hoy, ultimo_dia }: { hoy: string; ultimo_
     );
   }
 };
+
+// Horas libres del profesional ese día para la duración del servicio. Es el cálculo que ve el cliente al reservar
+// y el que usa el panel; vacío si el negocio no atiende ese día.
+const horasLibres = async (db: Consultable, datos: repositorio.DatosReserva, p: { barberoId: string; fecha: string }) =>
+  datos.horario_apertura !== null && datos.horario_cierre !== null
+    ? calcularHoras({
+        apertura: hora24AMinutos(datos.horario_apertura),
+        cierre: hora24AMinutos(datos.horario_cierre),
+        ocupados: await repositorio.listarTramosOcupados(db, p),
+        duracion: datos.duracion_min,
+        intervalo: datos.intervalo_minutos,
+        servicioMasCorto: Math.min(datos.servicio_mas_corto, datos.duracion_min),
+        // Hoy no se ofrecen las horas que ya pasaron (la hora actual, al siguiente múltiplo de 10)
+        desde: p.fecha === datos.hoy ? Math.ceil(datos.minutos_ahora / 10) * 10 : undefined,
+      })
+    : [];
 
 // notificaciones: avisos push opcionales (nunca hacen fallar la reserva ni la cancelación)
 export const crearServicioCitas = ({
@@ -183,19 +199,7 @@ export const crearServicioCitas = ({
     if (!datos) throw errores.noEncontrado('Servicio o profesional no encontrado');
     validarFecha(p.fecha, datos);
 
-    const abierto = datos.horario_apertura !== null && datos.horario_cierre !== null;
-    const horas = abierto
-      ? calcularHoras({
-          apertura: hora24AMinutos(datos.horario_apertura!),
-          cierre: hora24AMinutos(datos.horario_cierre!),
-          ocupados: await repositorio.listarTramosOcupados(pool, p),
-          duracion: datos.duracion_min,
-          intervalo: datos.intervalo_minutos,
-          servicioMasCorto: Math.min(datos.servicio_mas_corto, datos.duracion_min),
-          // Hoy no se ofrecen las horas que ya pasaron (la hora actual, al siguiente múltiplo de 10)
-          desde: p.fecha === datos.hoy ? Math.ceil(datos.minutos_ahora / 10) * 10 : undefined,
-        })
-      : [];
+    const horas = await horasLibres(pool, datos, p);
 
     return {
       empresaId: p.empresaId,
@@ -206,6 +210,121 @@ export const crearServicioCitas = ({
       duracionMin: datos.duracion_min,
       intervaloMinutos: datos.intervalo_minutos,
       horas: horas.map((h) => ({ inicio: minutosAHHMM(h.inicio), hora: minutosAHora12(h.inicio), pegada: h.pegada })),
+    };
+  },
+
+  // El personal agenda una cita desde el panel: un empleado solo para sí mismo y un administrador para cualquier
+  // profesional del negocio. Usa las mismas horas libres y la misma revisión contra choques que las reservas, pero
+  // no aplica el tope de citas pendientes por teléfono. Cliente existente o nuevo; el negocio confirma que el
+  // cliente autorizó el tratamiento de sus datos y eso queda como prueba (canal registro_negocio).
+  async crearDesdePanel(sesion: Sesion, datos: DatosCitaPanel, contexto: ContextoPeticion) {
+    const { empresaId, esAdmin } = sesion;
+    if (!esAdmin && datos.barberoId && datos.barberoId !== sesion.barberoId) {
+      throw errores.prohibido('Solo puedes agendar citas para ti. Un administrador puede agendar para cualquier profesional.');
+    }
+    const barberoId = esAdmin ? (datos.barberoId ?? sesion.barberoId) : sesion.barberoId;
+    if (!barberoId) throw errores.solicitudInvalida('Elige el profesional en "barberoId"');
+    const { servicioId, fecha, hora } = datos;
+
+    // Cliente: uno existente del negocio, o uno nuevo con nombre y teléfono
+    const nuevo = datos.nombre !== undefined || datos.telefono !== undefined;
+    if (datos.clienteId && nuevo) {
+      throw errores.solicitudInvalida('Envía "clienteId" o el nombre y el teléfono del cliente, no los dos');
+    }
+    let cliente: { nombre: string; telefono: string; indicativo: string };
+    if (datos.clienteId) {
+      const existente = await repositorio.buscarClienteDelNegocio(pool, empresaId, datos.clienteId);
+      if (!existente) throw errores.noEncontrado('Cliente no encontrado');
+      cliente = existente;
+    } else {
+      if (!datos.nombre || !datos.telefono) {
+        throw errores.solicitudInvalida('Elige un cliente existente en "clienteId" o envía su nombre y teléfono');
+      }
+      cliente = { nombre: datos.nombre, telefono: datos.telefono, indicativo: datos.indicativo };
+    }
+
+    const reserva = await repositorio.buscarDatosReserva(pool, { empresaId, barberoId, servicioId, fecha });
+    if (!reserva) throw errores.noEncontrado('Servicio o profesional no encontrado');
+    validarFecha(fecha, reserva);
+    if (!reserva.horario_apertura || !reserva.horario_cierre) {
+      throw errores.solicitudInvalida('El negocio no atiende ese día. Por favor elige otra fecha.');
+    }
+    const inicio = hora12AMinutos(hora) as number; // el esquema ya validó el formato
+    const fin = inicio + reserva.duracion_min;
+    if (inicio < hora24AMinutos(reserva.horario_apertura) || fin > hora24AMinutos(reserva.horario_cierre)) {
+      throw errores.solicitudInvalida('La hora elegida está fuera del horario del negocio');
+    }
+    // Solo horas que el cálculo de disponibilidad ofrece (no pasadas, dentro del horario y sin choques)
+    if (!(await horasLibres(pool, reserva, { barberoId, fecha })).some((h) => h.inicio === inicio)) {
+      throw errores.conflicto('Esa hora no está disponible para este profesional y servicio. Elige una de las horas libres.');
+    }
+    if (await repositorio.telefonoEnListaNegra(pool, empresaId, cliente.telefono)) {
+      throw errores.prohibido('Este cliente está en la lista negra del negocio.');
+    }
+    const horario = { horaInicio: minutosAHHMM(inicio), horaFin: minutosAHHMM(fin) };
+    // Si el cliente tiene cuenta, la cita queda en su "Mis citas" y se le avisa
+    const cuentaId = await repositorio.buscarCuentaDeClientePorTelefono(pool, cliente.telefono);
+
+    // Misma revisión segura que las reservas: el profesional se bloquea y la hora se comprueba dentro de la transacción
+    const citaId = randomUUID();
+    try {
+      await enTransaccion(pool, async (tx) => {
+        if (!(await repositorio.bloquearProfesional(tx, empresaId, barberoId))) {
+          throw errores.noEncontrado('Servicio o profesional no encontrado');
+        }
+        if (await repositorio.chocaConBloqueo(tx, { barberoId, fecha, ...horario })) throw errores.conflicto(HORA_BLOQUEADA);
+        if (await repositorio.chocaConCita(tx, { barberoId, fecha, ...horario })) throw errores.conflicto(HORA_OCUPADA);
+        const clienteId = await repositorio.registrarCliente(tx, { id: randomUUID(), empresaId, ...cliente, fecha });
+        await repositorio.insertarCita(tx, {
+          id: citaId,
+          empresaId,
+          barberoId,
+          servicioId,
+          clienteId,
+          fecha,
+          ...horario,
+          precio: reserva.precio,
+          usuarioId: cuentaId,
+        });
+        // Prueba de la autorización, a nombre del teléfono del cliente (no de su cuenta: esa aceptación no la dio él en la app)
+        await registrarAutorizacion(tx, {
+          canal: 'registro_negocio',
+          contexto,
+          telefono: cliente.telefono,
+          indicativo: cliente.indicativo,
+          empresaId,
+          citaId,
+        });
+      });
+    } catch (error) {
+      if (esErrorPg(error, CODIGO_PG.violacionExclusion)) throw errores.conflicto(HORA_OCUPADA);
+      if (esErrorPg(error, CODIGO_PG.violacionLlaveForanea)) {
+        throw errores.noEncontrado('Servicio o profesional no encontrado');
+      }
+      throw error;
+    }
+
+    void notificaciones?.avisarCitaNueva(citaId);
+    void notificaciones?.avisarCitaCreadaPorNegocio(citaId);
+
+    return {
+      mensaje: 'Cita agendada',
+      cita: {
+        id: citaId,
+        cliente: cliente.nombre,
+        telefono: cliente.telefono,
+        indicativo: cliente.indicativo,
+        servicio: reserva.servicio,
+        barberoId,
+        barberoNombre: reserva.barbero,
+        empresaId,
+        fecha,
+        hora,
+        precio: Number(reserva.precio),
+        duracionMin: reserva.duracion_min,
+        estado: 'CONFIRMADA',
+        zonaHoraria: reserva.zona_horaria,
+      },
     };
   },
 

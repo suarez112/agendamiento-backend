@@ -207,20 +207,22 @@ export const reclamarRecordatorios = async (db: Consultable, tipo: TipoRecordato
   ).rows;
 };
 
-// ---- Avisos de la prueba gratuita (día 10 y día 14) ----
+// ---- Avisos de la prueba gratuita (día 10, día 14 y al vencer) ----
 
 export type AvisoPrueba = {
   empresa_id: string;
   nombre: string;
-  dia: 10 | 14;
+  // 10 y 14: días desde el registro; 15: la prueba ya terminó
+  dia: 10 | 14 | 15;
   citas: number;
   ventas: string;
   dias_restantes: number;
 };
 
-// Empresas en prueba a las que ya les toca el aviso del día 10 o del día 14 (días desde el registro, en
-// la zona del negocio). El del día 10 vale hasta el día 13 y el del 14 hasta que termine la prueba, así un
-// servidor apagado ese día no lo pierde. Cada aviso se reclama con INSERT ... ON CONFLICT DO NOTHING sobre
+// Empresas en prueba a las que ya les toca el aviso del día 10, del día 14 (días desde el registro, en
+// la zona del negocio) o el de vencimiento (día 15). El del día 10 vale hasta el día 13, el del 14 hasta que
+// termine la prueba y el de vencimiento hasta 3 días después, así un servidor apagado ese día no lo pierde
+// (y una prueba que venció hace mucho no recibe un aviso tardío). Cada aviso se reclama con INSERT ... ON CONFLICT DO NOTHING sobre
 // la clave (empresa, día): solo una ejecución lo obtiene, aunque haya varias instancias. Las que ya pagaron
 // un plan (estado distinto de 'trial') o están suspendidas no entran. Devuelve también lo logrado en la
 // prueba: citas gestionadas (no canceladas) y ventas (citas completadas).
@@ -231,11 +233,11 @@ export const reclamarAvisosPrueba = async (db: Consultable) =>
          SELECT e.id, e.nombre, e.trial_ends_at, e.zona_horaria,
                 ((now() AT TIME ZONE e.zona_horaria)::date - (e.created_at AT TIME ZONE e.zona_horaria)::date) AS dias
          FROM empresas e
-         WHERE e.estado_suscripcion = 'trial' AND e.suspendida_en IS NULL AND e.trial_ends_at > now()
+         WHERE e.estado_suscripcion = 'trial' AND e.suspendida_en IS NULL AND e.trial_ends_at > now() - interval '3 days'
        ),
        toca AS (
          SELECT id, nombre, trial_ends_at, zona_horaria,
-                CASE WHEN dias >= 14 THEN 14 WHEN dias >= 10 THEN 10 END AS dia
+                CASE WHEN trial_ends_at <= now() THEN 15 WHEN dias >= 14 THEN 14 WHEN dias >= 10 THEN 10 END AS dia
          FROM candidatas
        ),
        reclamados AS (
@@ -255,3 +257,12 @@ export const reclamarAvisosPrueba = async (db: Consultable) =>
 // Administradores de una empresa: integrantes activos con rol Administrador y cuentas admin
 export const administradoresDe = async (db: Consultable, empresaId: string) =>
   destinatariosDelNegocio(db, { empresaId, barberoId: '' });
+
+// Correos de las cuentas de administración del negocio (el equipo no tiene correo)
+export const correosAdministradoresDe = async (db: Consultable, empresaId: string) =>
+  (
+    await db.query<{ correo: string }>(
+      `SELECT correo FROM usuarios WHERE empresa_id = $1 AND rol = 'admin' AND correo IS NOT NULL`,
+      [empresaId],
+    )
+  ).rows.map((f) => f.correo);

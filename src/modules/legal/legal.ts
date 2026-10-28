@@ -17,7 +17,7 @@ import type { Titular } from '../notificaciones/notificaciones.repositorio.js';
 // Cada aceptación guarda su prueba en auditoria_autorizaciones (solo inserción; autorizaciones_datos quedó como historial).
 
 export type TipoDocumento = 'politica_datos' | 'terminos' | 'aviso_privacidad';
-export type CanalAutorizacion = 'registro_empresa' | 'registro_cliente' | 'reserva_invitado' | 'nueva_version';
+export type CanalAutorizacion = 'registro_empresa' | 'registro_cliente' | 'reserva_invitado' | 'nueva_version' | 'registro_negocio';
 
 export const DEBE_ACEPTAR = 'Debes aceptar la Política de Tratamiento de Datos y los Términos y Condiciones';
 export const NUEVA_VERSION =

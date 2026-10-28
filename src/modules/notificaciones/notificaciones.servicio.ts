@@ -2,6 +2,7 @@ import { aIsoEnZona } from '../../shared/zonaHoraria.js';
 import type pg from 'pg';
 import { errores } from '../../shared/errores.js';
 import { registro } from '../../shared/registro.js';
+import type { EnviadorCorreo } from '../../shared/correo.js';
 import type { EnviadorPush, MensajePush } from '../../shared/push.js';
 import * as repositorio from './notificaciones.repositorio.js';
 import type { ContenidoNotificacion, DatosAviso, Titular } from './notificaciones.repositorio.js';
@@ -14,6 +15,8 @@ export type Avisos = {
   avisarCancelacionPorCliente(citaId: string): Promise<void>;
   // anterior: fecha (DD/MM/AAAA) y hora (12 h) que tenía la cita antes del cambio
   avisarReprogramacion(citaId: string, anterior: { fecha: string; hora: string }): Promise<void>;
+  // El negocio agendó la cita desde el panel: al cliente, solo si tiene cuenta
+  avisarCitaCreadaPorNegocio(citaId: string): Promise<void>;
 };
 
 const armarNotificacion = (n: repositorio.FilaNotificacion) => ({
@@ -28,7 +31,19 @@ const armarNotificacion = (n: repositorio.FilaNotificacion) => ({
   zonaHoraria: n.zona_horaria,
 });
 
-export const crearServicioNotificaciones = ({ pool, push }: { pool: pg.Pool; push: EnviadorPush }) => {
+// correo y urlPagos (opcionales): los correos de la prueba gratuita, que llevan el enlace de pago. Las
+// notificaciones de la app nunca llevan enlaces ni precios.
+export const crearServicioNotificaciones = ({
+  pool,
+  push,
+  correo,
+  urlPagos,
+}: {
+  pool: pg.Pool;
+  push: EnviadorPush;
+  correo?: EnviadorCorreo;
+  urlPagos?: string;
+}) => {
   // Envía y borra los tokens que Expo ya no reconoce
   const despachar = async (mensajes: MensajePush[]) => {
     if (!mensajes.length) return;
@@ -96,6 +111,19 @@ export const crearServicioNotificaciones = ({ pool, push }: { pool: pg.Pool; pus
         texto: `Un cliente movió ${c.servicio} del ${anterior.fecha} a las ${anterior.hora} al ${c.fecha} a las ${c.hora}.`,
         citaId: c.id,
       })),
+
+    // El negocio agendó la cita desde el panel: al cliente, solo si tiene cuenta
+    avisarCitaCreadaPorNegocio: (citaId) =>
+      seguro('cita_creada_por_negocio', async () => {
+        const cita = await repositorio.datosAviso(pool, citaId);
+        if (!cita?.usuario_id) return;
+        await notificar('cita_creada_por_negocio', [{ usuarioId: cita.usuario_id, barberoId: null }], {
+          tipo: 'cita_creada_por_negocio',
+          titulo: 'Te agendaron una cita',
+          texto: `${cita.negocio} agendó tu cita de ${cita.servicio} el ${cita.fecha} a las ${cita.hora}.`,
+          citaId: cita.id,
+        });
+      }),
 
     // El negocio canceló: al cliente, solo si reservó con su cuenta
     avisarCancelacionPorNegocio: (citaId) =>
@@ -174,22 +202,39 @@ export const crearServicioNotificaciones = ({ pool, push }: { pool: pg.Pool; pus
       return citas.length;
     },
 
-    // Aviso de la prueba gratuita (día 10 y día 14) a los administradores del negocio, con un resumen de
-    // lo logrado y la invitación a activar un plan. No va a quien ya tiene un plan activo y cada aviso
-    // se envía una sola vez. Devuelve cuántos avisos envió.
+    // Avisos de la prueba gratuita (día 10, día 14 y al vencer) a los administradores del negocio. Cada uno
+    // se envía una sola vez y no va a quien ya tiene un plan activo. La notificación de la app es corta y sin
+    // enlaces ni precios; el correo (solo a las cuentas de administración, que tienen correo) lleva el enlace
+    // de pago. Devuelve cuántos avisos envió.
     async enviarAvisosPrueba() {
       const avisos = await repositorio.reclamarAvisosPrueba(pool);
       for (const a of avisos) {
         await seguro(`prueba_dia_${a.dia}`, async () => {
           const administradores = await repositorio.administradoresDe(pool, a.empresa_id);
+          const quedan = a.dias_restantes === 1 ? 'queda 1 día' : `quedan ${a.dias_restantes} días`;
           const ventas = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(Number(a.ventas));
           const logro = `En tu prueba gratuita has gestionado ${a.citas} cita(s) y vendido ${ventas}.`;
-          await notificar(`prueba_dia_${a.dia}`, administradores, {
-            tipo: 'prueba_resumen',
-            titulo: a.dia === 10 ? 'Vas muy bien en tu prueba gratuita' : 'Tu prueba gratuita termina pronto',
-            texto: `${logro} Te ${a.dias_restantes === 1 ? 'queda 1 día' : `quedan ${a.dias_restantes} días`}: activa un plan para seguir usando AgendaYa sin interrupciones.`,
-            citaId: null,
-          });
+          const texto =
+            a.dia === 15
+              ? 'Tu prueba gratuita terminó. Activa un plan para volver a usar AgendaYa.'
+              : `${logro} Te ${quedan}: activa un plan para seguir usando AgendaYa sin interrupciones.`;
+          const titulo =
+            a.dia === 10 ? 'Vas muy bien en tu prueba gratuita' : a.dia === 14 ? 'Tu prueba gratuita termina pronto' : 'Tu prueba gratuita terminó';
+          await notificar(`prueba_dia_${a.dia}`, administradores, { tipo: 'prueba_resumen', titulo, texto, citaId: null });
+
+          if (!correo) return;
+          const enlace = urlPagos ? `
+
+Activa tu plan aquí: ${urlPagos}` : '';
+          for (const para of await repositorio.correosAdministradoresDe(pool, a.empresa_id)) {
+            await seguro(`prueba_dia_${a.dia}:correo`, () =>
+              correo.enviar({ para, asunto: `${a.nombre}: ${titulo}`, texto: `Hola,
+
+${texto}${enlace}
+
+Equipo AgendaYa` }),
+            );
+          }
         });
       }
       return avisos.length;
