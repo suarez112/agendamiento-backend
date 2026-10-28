@@ -17,6 +17,50 @@ const esquemaBaseDeDatos = z.object({
   DB_POOL_MAX: z.coerce.number().int().positive().default(10),
 });
 
+const LLAVES_WOMPI = {
+  WOMPI_LLAVE_PUBLICA: { produccion: 'pub_prod_', prueba: 'pub_test_' },
+  WOMPI_LLAVE_PRIVADA: { produccion: 'prv_prod_', prueba: 'prv_test_' },
+  WOMPI_SECRETO_EVENTOS: { produccion: 'prod_events_', prueba: 'test_events_' },
+  WOMPI_SECRETO_INTEGRIDAD: { produccion: 'prod_integrity_', prueba: 'test_integrity_' },
+} as const;
+
+// Proveedor de pago que queda activo: el elegido, o "simulado" fuera de producción. undefined = pagos desactivados.
+export const proveedorDePagoActivo = (e: { NODE_ENV: string; PROVEEDOR_PAGO?: 'simulado' | 'wompi' }) =>
+  e.PROVEEDOR_PAGO ?? (e.NODE_ENV === 'production' ? undefined : 'simulado');
+
+// El servidor se niega a arrancar en producción con el proveedor simulado o con llaves de prueba, y con Wompi
+// exige las cuatro llaves (en producción, con el prefijo de producción) y URL_PAGOS.
+const revisarPagos = (
+  e: {
+    NODE_ENV: string;
+    PROVEEDOR_PAGO?: 'simulado' | 'wompi';
+    URL_PAGOS?: string;
+  } & Partial<Record<keyof typeof LLAVES_WOMPI, string>>,
+  ctx: z.RefinementCtx,
+) => {
+  const produccion = e.NODE_ENV === 'production';
+  const problema = (path: string, message: string) => ctx.addIssue({ code: 'custom', path: [path], message });
+  if (produccion && e.PROVEEDOR_PAGO === 'simulado') {
+    problema('PROVEEDOR_PAGO', 'el proveedor simulado no puede usarse en producción: usa wompi (con llaves de producción) o quita la variable');
+  }
+  for (const [nombre, prefijos] of Object.entries(LLAVES_WOMPI) as [keyof typeof LLAVES_WOMPI, (typeof LLAVES_WOMPI)[keyof typeof LLAVES_WOMPI]][]) {
+    const valor = e[nombre];
+    // Una llave de prueba en producción impide arrancar aunque el proveedor no sea wompi: no debe estar ahí
+    if (produccion && valor && valor.startsWith(prefijos.prueba)) {
+      problema(nombre, 'es una llave de prueba (sandbox) y no puede usarse en producción');
+    }
+  }
+  if (e.PROVEEDOR_PAGO !== 'wompi') return;
+  for (const [nombre, prefijos] of Object.entries(LLAVES_WOMPI) as [keyof typeof LLAVES_WOMPI, (typeof LLAVES_WOMPI)[keyof typeof LLAVES_WOMPI]][]) {
+    const valor = e[nombre];
+    if (!valor) problema(nombre, 'falta: es obligatoria con PROVEEDOR_PAGO=wompi (ver .env.example)');
+    else if (produccion && !valor.startsWith(prefijos.produccion)) {
+      problema(nombre, `en producción debe ser una llave de producción (empieza con ${prefijos.produccion})`);
+    }
+  }
+  if (produccion && !e.URL_PAGOS) problema('URL_PAGOS', 'falta: es obligatoria en producción con PROVEEDOR_PAGO=wompi');
+};
+
 const esquemaEntorno = esquemaBaseDeDatos
   .extend({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -71,6 +115,20 @@ const esquemaEntorno = esquemaBaseDeDatos
       .transform((base) => (/^https?:\/\//.test(base) ? base : `https://${base}`).replace(/\/+$/, '')),
     // Token de acceso de Expo para enviar notificaciones push (opcional: sin él también funciona)
     EXPO_ACCESS_TOKEN: z.string().min(1).optional(),
+    // Pagos de la suscripción. PROVEEDOR_PAGO: "simulado" (solo desarrollo; es el valor por defecto fuera de
+    // producción) o "wompi". En producción no hay valor por defecto y "simulado" impide arrancar: sin
+    // PROVEEDOR_PAGO los pagos en línea quedan desactivados (la activación sigue siendo manual).
+    PROVEEDOR_PAGO: z.enum(['simulado', 'wompi'], { error: 'debe ser simulado o wompi' }).optional(),
+    // A dónde vuelve la persona después de pagar (la app o su página web): se le agrega /<referencia>
+    URL_PAGOS: z
+      .url({ protocol: /^https?$/, error: 'debe ser una dirección http:// o https://' })
+      .transform((url) => url.replace(/\/+$/, ''))
+      .optional(),
+    // Llaves de Wompi (solo con PROVEEDOR_PAGO=wompi): publica, privada, secreto de eventos y secreto de integridad
+    WOMPI_LLAVE_PUBLICA: z.string().trim().min(1).optional(),
+    WOMPI_LLAVE_PRIVADA: z.string().trim().min(1).optional(),
+    WOMPI_SECRETO_EVENTOS: z.string().trim().min(1).optional(),
+    WOMPI_SECRETO_INTEGRIDAD: z.string().trim().min(1).optional(),
   })
   .superRefine((e, ctx) => {
     if (e.DETRAS_DE_CLOUDFLARE && e.TRUST_PROXY === 0) {
@@ -92,6 +150,7 @@ const esquemaEntorno = esquemaBaseDeDatos
         ctx.addIssue({ code: 'custom', path: [nombre], message: 'debe ser distinto de JWT_SECRET: cada uso necesita su propio secreto' });
       }
     }
+    revisarPagos(e, ctx);
     if (e.RECUPERACION_SECRET === e.TOTP_SECRET) {
       ctx.addIssue({ code: 'custom', path: ['TOTP_SECRET'], message: 'debe ser distinto de RECUPERACION_SECRET' });
     }
