@@ -21,9 +21,10 @@ describe('marcar todas las notificaciones como leídas', () => {
       assert.equal(r.estado, 201, r.texto);
     }
     await esperarHasta(async () => (await pedir(ctx, '/api/v1/notificaciones/no-leidas', { token: tokenA })).json.noLeidas >= 2);
-    await pedir(ctx, '/api/v1/notificaciones/leidas', { method: 'PATCH', token: tokenB });
-
     const total = (await pedir(ctx, '/api/v1/notificaciones/no-leidas', { token: tokenA })).json.noLeidas;
+    // Que otra persona marque las suyas no toca las de A
+    await pedir(ctx, '/api/v1/notificaciones/leidas', { method: 'PATCH', token: tokenB });
+    assert.equal((await pedir(ctx, '/api/v1/notificaciones/no-leidas', { token: tokenA })).json.noLeidas, total);
     const r = await pedir(ctx, '/api/v1/notificaciones/leidas', { method: 'PATCH', token: tokenA });
     assert.equal(r.estado, 200);
     assert.deepEqual(r.json, { mensaje: 'Notificaciones marcadas como leídas', marcadas: total });
