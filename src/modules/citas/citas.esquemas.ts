@@ -36,6 +36,29 @@ export const esquemaCrearCita = z.object(
 
 export type DatosNuevaCita = z.output<typeof esquemaCrearCita>;
 
+// Cita creada desde el panel por el personal. Cliente: uno existente (clienteId) o uno nuevo (nombre y teléfono).
+// El negocio confirma que el cliente autorizó el tratamiento de sus datos.
+export const SIN_AUTORIZACION_NEGOCIO =
+  'Confirma que el cliente autorizó el tratamiento de sus datos en "autorizacion_registrada_por_negocio"';
+
+export const esquemaCrearCitaPanel = z.object(
+  {
+    // Un empleado solo puede agendar para sí mismo (la sesión lo decide); un administrador elige al profesional
+    barberoId: identificador(FALTAN_DATOS).optional(),
+    servicioId: identificador(FALTAN_DATOS),
+    fecha: texto(FALTAN_DATOS).refine(esFechaReal, FORMATO_INCORRECTO),
+    hora: texto(FALTAN_DATOS).refine((h) => hora12AMinutos(h) !== null, FORMATO_INCORRECTO),
+    clienteId: identificador('El identificador del cliente no es válido').optional(),
+    nombre: texto(FALTAN_DATOS).max(100, 'El nombre es demasiado largo').optional(),
+    telefono: texto(FALTAN_DATOS).max(30, 'El teléfono no es válido').optional(),
+    indicativo: esquemaIndicativo,
+    autorizacion_registrada_por_negocio: z.literal(true, { error: SIN_AUTORIZACION_NEGOCIO }),
+  },
+  { error: FALTAN_DATOS },
+).transform(conTelefonoNormalizado);
+
+export type DatosCitaPanel = z.output<typeof esquemaCrearCitaPanel>;
+
 export const esquemaHorasOcupadas = z.object({
   empresaId: identificador('Falta el identificador del negocio'),
 });

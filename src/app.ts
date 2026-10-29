@@ -115,7 +115,7 @@ export const crearApp = ({
     bloqueoBaseMs: limites.bloqueoCuentaMs,
     bloqueoMaxMs: TOPE_BLOQUEO_CUENTA_MS,
   });
-  const notificaciones = crearServicioNotificaciones({ pool, push });
+  const notificaciones = crearServicioNotificaciones({ pool, push, correo, urlPagos: entorno.URL_PAGOS });
   const funciones = crearServicioFunciones({ pool });
   const servicioCartera = crearServicioCartera({ pool });
   const servicioReportes = crearServicioReportes({ pool });

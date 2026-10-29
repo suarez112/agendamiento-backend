@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { buscarPlan, COBRO, comisionPasarela, PLANES, precioMensualPara, precioPara } from '../../config/planes.js';
+import { buscarPlan, COBRO, comisionPasarela, PLANES, planParaPersonas, precioMensualPara, precioPara } from '../../config/planes.js';
 import { enTransaccion } from '../../db/pool.js';
 import { ZONA_PLATAFORMA } from '../../config/plataforma.js';
 import { errores } from '../../shared/errores.js';
@@ -237,10 +237,10 @@ export const crearServicioSuperadmin = ({ pool, tokens, secreto, intentos }: Dep
     // Ingresos estimados: cada activación de plan y cada cargo proporcional pagado, menos la comisión estimada de
     // la pasarela (cada una es una transacción). No son pagos reales (todavía no hay pasarela): todo va marcado como estimado.
     async ingresos() {
-      const [{ meses, mesActual }, activos, niveles, cargos] = await Promise.all([
+      const [{ meses, mesActual }, activos, porProfesionales, cargos] = await Promise.all([
         repositorio.ingresosPorMes(pool),
         repositorio.activosPorProfesionales(pool),
-        repositorio.negociosPorNivel(pool),
+        repositorio.negociosPorProfesionales(pool),
         repositorio.cargosDelMes(pool),
       ]);
       type Cifras = { bruto: number; comisionPasarela: number; neto: number; activaciones: number; cargosPagados: number };
@@ -292,7 +292,7 @@ export const crearServicioSuperadmin = ({ pool, tokens, secreto, intentos }: Dep
       const negociosActivos = conPeriodo.reduce((suma, g) => suma + g.negocios, 0);
       const profesionalesCobrados = activos.reduce((suma, g) => suma + g.cobrados_reales, 0);
       const totalActivos = activos.reduce((suma, g) => suma + g.negocios, 0);
-      const porNivel = new Map(niveles.map((f) => [f.plan_equipo, f]));
+      const porNumero = new Map(porProfesionales.map((f) => [f.profesionales, f]));
       const delMes = new Map(cargos.map((c) => [c.estado, { cantidad: c.cantidad, total: Number(c.total) }]));
 
       return {
@@ -313,14 +313,19 @@ export const crearServicioSuperadmin = ({ pool, tokens, secreto, intentos }: Dep
           bruto: negociosActivos ? Math.round(mensual.bruto / negociosActivos) : null,
           neto: negociosActivos ? Math.round((mensual.bruto - mensual.comision) / negociosActivos) : null,
         },
-        negociosPorNivel: PLANES.map((p) => ({
-          nivel: p.id,
-          nombre: p.nombre,
-          profesionalesDesde: p.personasDesde,
-          profesionalesHasta: p.cupo,
-          total: porNivel.get(p.id)?.total ?? 0,
-          activos: porNivel.get(p.id)?.activos ?? 0,
-        })),
+        // Un grupo por cada número de profesionales cobrados (1 a 10; el nivel sale de ese número). Los negocios
+        // se cuentan en cualquier estado; el ingreso es el mensual estimado de los activos del grupo.
+        negociosPorProfesionales: Array.from({ length: COBRO.maxProfesionales }, (_, i) => {
+          const profesionales = i + 1;
+          const ingreso = ingresoMensualDe(activos.filter((g) => g.profesionales === profesionales));
+          return {
+            profesionales,
+            nivel: planParaPersonas(profesionales).id,
+            negocios: porNumero.get(profesionales)?.total ?? 0,
+            activos: porNumero.get(profesionales)?.activos ?? 0,
+            ingresoMensual: { bruto: ingreso.bruto, comisionPasarela: ingreso.comision, neto: ingreso.bruto - ingreso.comision },
+          };
+        }),
         mensualVsAnual: {
           mensual: activos.filter((g) => g.periodo === 'mensual').reduce((suma, g) => suma + g.negocios, 0),
           anual: activos.filter((g) => g.periodo === 'anual').reduce((suma, g) => suma + g.negocios, 0),
