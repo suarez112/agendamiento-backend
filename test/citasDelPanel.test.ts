@@ -10,6 +10,7 @@ import {
   iniciarSesion,
   pedir,
   registrarCliente,
+  registrarEmpresa,
   reservaValida,
   telefonoValido,
 } from './apoyo/servidor.js';
@@ -213,7 +214,8 @@ describe('crear citas desde el panel', () => {
     const telefono = telefonoValido(4008);
     const cuenta = await registrarCliente(ctx, 'cliente.sin.relacion@correo.com', CLAVE_CLIENTE, { telefono });
     // Tiene relación con OTRO negocio, no con este
-    await pedir(ctx, '/api/v1/mi-cuenta/negocios', { method: 'POST', token: cuenta.json.token, body: { codigo: 'NEGB' } });
+    const guardarOtro = await pedir(ctx, '/api/v1/mi-cuenta/negocios', { method: 'POST', token: cuenta.json.token, body: { codigo: 'NEGB' } });
+    assert.equal(guardarOtro.estado, 201, guardarOtro.texto);
 
     const r = await crear(tokenAdmin, { telefono, fecha: fechaEnDias(3), hora: '03:00 PM' });
     assert.equal(r.estado, 201, r.texto);
@@ -243,6 +245,46 @@ describe('crear citas desde el panel', () => {
     const estado = await pedir(ctx, '/api/v1/legal/estado', { token: tokenAdmin });
     assert.equal(estado.json.ultimaAceptacion, null);
     assert.equal(estado.json.vigente, false);
+  });
+
+  test('una cuenta admin (la de correo) que agenda queda registrada en registrada_por_usuario_id, no en la columna del equipo', async () => {
+    const registro = await registrarEmpresa(ctx, { correo: 'admin.panel.cuenta@central.co' });
+    assert.equal(registro.estado, 201, registro.texto);
+    const token = registro.json.token as string;
+    const servicio = await pedir(ctx, '/api/v1/servicios', { method: 'POST', token, body: { nombre: 'Corte', duracionMin: 30, precio: 20000 } });
+    assert.equal(servicio.estado, 201, servicio.texto);
+    const profesional = await pedir(ctx, '/api/v1/equipo', {
+      method: 'POST',
+      token,
+      body: { nombre: 'Carlos', usuario: 'carlos.panel', clave: 'Clave-segura-1', rol: 'empleado' },
+    });
+    assert.equal(profesional.estado, 201, profesional.texto);
+
+    // El negocio nuevo atiende de lunes a sábado: se busca el primer día que no sea domingo
+    const dia = [2, 3, 4].map(fechaEnDias).find((f) => new Date(`${f}T00:00:00Z`).getUTCDay() !== 0)!;
+    const r = await pedir(ctx, '/api/v1/citas/panel', {
+      method: 'POST',
+      token,
+      body: {
+        barberoId: profesional.json.id,
+        servicioId: servicio.json.id,
+        fecha: dia,
+        hora: '10:00 AM',
+        nombre: 'Cliente de la cuenta admin',
+        telefono: telefonoValido(4010),
+        autorizacion_registrada_por_negocio: true,
+      },
+    });
+    assert.equal(r.estado, 201, r.texto);
+
+    const filas = await consulta(
+      `SELECT canal, registrada_por_barbero_id AS barbero, registrada_por_usuario_id AS usuario, barbero_id, usuario_id
+       FROM auditoria_autorizaciones WHERE cita_id = $1`,
+      [r.json.cita.id],
+    );
+    assert.deepEqual(filas, [
+      { canal: 'registro_negocio', barbero: null, usuario: registro.json.usuario.id, barbero_id: null, usuario_id: null },
+    ]);
   });
 
   test('la base exige quién declaró la autorización en el canal registro_negocio, y solo en ese canal', async () => {
