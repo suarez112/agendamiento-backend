@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type pg from 'pg';
-import { COBRO, type Periodo, precioPara } from '../../config/planes.js';
+import { buscarPlan, COBRO, type Periodo, precioPara } from '../../config/planes.js';
 import { enTransaccion } from '../../db/pool.js';
 import { ErrorApp, errores } from '../../shared/errores.js';
 import { registro } from '../../shared/registro.js';
@@ -57,9 +57,13 @@ export type DependenciasPagos = {
   proveedor?: ProveedorPago;
   // URL_PAGOS: a dónde se devuelve a la persona después de pagar
   urlPagos?: string;
+  // El proveedor activo cobra en modo de prueba (simulado o llaves de prueba)
+  esDePrueba?: boolean;
 };
 
-export const crearServicioPagos = ({ pool, proveedor, urlPagos }: DependenciasPagos) => {
+export type EstadoPublico = 'aprobado' | 'pendiente' | 'rechazado';
+
+export const crearServicioPagos = ({ pool, proveedor, urlPagos, esDePrueba = false }: DependenciasPagos) => {
   const requerirProveedor = () => {
     if (!proveedor) throw new ErrorApp(503, MENSAJE_SIN_PAGOS);
     return proveedor;
@@ -89,7 +93,7 @@ export const crearServicioPagos = ({ pool, proveedor, urlPagos }: DependenciasPa
     }
     const monto = precioPara(entrada.profesionales, entrada.periodo);
     const montoCentavos = monto * 100;
-    const referencia = `AGD-${Date.now().toString(36)}-${randomBytes(6).toString('hex')}`.toUpperCase();
+    const referencia = `AGD-${Date.now().toString(36)}-${randomBytes(12).toString('hex')}`.toUpperCase();
     const { url } = await pasarela.crearPago({
       referencia,
       montoCentavos,
@@ -185,19 +189,54 @@ export const crearServicioPagos = ({ pool, proveedor, urlPagos }: DependenciasPa
       return { orden: aOrden(g), inconsistente: false };
     });
 
-  // Al volver del pago: pregunta a la pasarela y aplica el resultado. Es seguro repetirla.
-  const confirmar = async (empresaId: string, referencia: string, idExterno?: string) => {
+  // Pregunta a la pasarela y aplica el resultado. Es seguro repetirla.
+  const confirmarFila = async (orden: FilaOrden, idExterno?: string) => {
     const pasarela = requerirProveedor();
-    const orden = await buscarOrden(empresaId, referencia);
     // Solo una orden aprobada es definitiva; una rechazada o anulada se vuelve a preguntar (puede haber un reintento)
     if (orden.estado === 'aprobada') return aOrden(orden);
-    const resultado = await pasarela.consultarPago({ referencia, idExterno: idExterno ?? orden.id_externo });
-    const { orden: final, inconsistente } = await aplicar(referencia, resultado);
+    const resultado = await pasarela.consultarPago({ referencia: orden.referencia, idExterno: idExterno ?? orden.id_externo });
+    const { orden: final, inconsistente } = await aplicar(orden.referencia, resultado);
     if (inconsistente) {
       throw errores.conflicto('El pago no coincide con la orden (monto o referencia). No se activó el plan: comunícate con soporte.');
     }
     return final;
   };
+
+  // Al volver del pago: pregunta a la pasarela y aplica el resultado. Es seguro repetirla.
+  const confirmar = async (empresaId: string, referencia: string, idExterno?: string) => {
+    requerirProveedor();
+    return confirmarFila(await buscarOrden(empresaId, referencia), idExterno);
+  };
+
+  // Resultado público (sin sesión): la referencia es larga y aleatoria, y solo se responde el estado, el nivel y el
+  // vencimiento cuando está aprobada. Nada de montos ni datos de personas.
+  const estadoPublico = async (referencia: string, idExterno?: string) => {
+    requerirProveedor();
+    const f = (await pool.query<FilaOrden>(`SELECT ${COLUMNAS} FROM ordenes_pago WHERE referencia = $1`, [referencia])).rows[0];
+    if (!f) throw errores.noEncontrado('Orden no encontrada');
+    const orden = await confirmarFila(f, idExterno);
+    if (orden.estado === 'pendiente') return { estado: 'pendiente' as EstadoPublico };
+    if (orden.estado !== 'aprobada') return { estado: 'rechazado' as EstadoPublico };
+    const e = (
+      await pool.query<{ plan_equipo: string; suscripcion_fin: string | null }>(
+        "SELECT plan_equipo, to_char(suscripcion_fin, 'YYYY-MM-DD') AS suscripcion_fin FROM empresas WHERE id = $1",
+        [f.empresa_id],
+      )
+    ).rows[0];
+    const plan = e ? buscarPlan(e.plan_equipo) : undefined;
+    return {
+      estado: 'aprobado' as EstadoPublico,
+      nivel: plan ? { id: plan.id, nombre: plan.nombre } : null,
+      vencimiento: e?.suscripcion_fin ?? null,
+    };
+  };
+
+  // Para que la app sepa si debe avisar que los pagos son de prueba. Nunca expone llaves.
+  const configuracion = () => ({
+    disponible: Boolean(proveedor),
+    proveedor: proveedor?.nombre ?? null,
+    esDePrueba: Boolean(proveedor) && esDePrueba,
+  });
 
   const consultar = async (empresaId: string, referencia: string) => aOrden(await buscarOrden(empresaId, referencia));
 
@@ -215,7 +254,7 @@ export const crearServicioPagos = ({ pool, proveedor, urlPagos }: DependenciasPa
     return true;
   };
 
-  return { crearOrden, confirmar, consultar, procesarEvento };
+  return { crearOrden, confirmar, consultar, procesarEvento, estadoPublico, configuracion };
 };
 
 export type ServicioPagos = ReturnType<typeof crearServicioPagos>;

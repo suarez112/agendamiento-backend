@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { COBRO } from '../../config/planes.js';
 import { errores } from '../../shared/errores.js';
 import { parsear } from '../../shared/http/validacion.js';
+import type { Limitadores } from '../../shared/http/limitadores.js';
 import { type Guardias, sesionDe } from '../auth/guardias.js';
 import { SOLO_ADMIN } from '../auth/permisos.js';
 import type { ServicioPagos } from './pagos.servicio.js';
@@ -17,11 +18,13 @@ const esquemaOrden = z.object({
   periodo: z.enum(['mensual', 'anual'], { error: 'El periodo debe ser "mensual" o "anual"' }),
 });
 
+const esquemaEstado = z.object({ id: z.string().trim().min(1).max(100).optional() });
+
 const esquemaConfirmacion = z.object({ idTransaccion: z.string().trim().min(1).max(100).optional() }).optional();
 
 // Pagos de la suscripción. Los administradores pagan también con la suscripción vencida (por eso no llevan la
 // guardia de suscripción vigente, igual que Mi negocio y /suscripcion).
-export const crearRutasPagos = (pagos: ServicioPagos, guardias: Guardias, proveedor?: ProveedorPago & { rutas?: () => Router }) => {
+export const crearRutasPagos = (pagos: ServicioPagos, guardias: Guardias, limitadores: Limitadores, proveedor?: ProveedorPago & { rutas?: () => Router }) => {
   const rutas = Router();
   const soloAdmin = [guardias.requerirSesion, guardias.requerirAdmin(SOLO_ADMIN)];
 
@@ -34,6 +37,17 @@ export const crearRutasPagos = (pagos: ServicioPagos, guardias: Guardias, provee
 
   // Página de pago de pruebas (solo existe con el proveedor simulado, que no arranca en producción)
   if (proveedor?.rutas) rutas.use('/simulado', proveedor.rutas());
+
+  // Públicos (la app los llama al volver de la pasarela, a veces sin sesión)
+  rutas.get('/configuracion', limitadores.estadoPago, (_req, res) => {
+    res.json(pagos.configuracion());
+  });
+
+  // `id` es el id de la transacción que devuelve la pasarela al redirigir. Consulta y confirma con el proveedor.
+  rutas.get('/ordenes/:referencia/estado', limitadores.estadoPago, async (req, res) => {
+    const { id } = parsear(esquemaEstado, req.query);
+    res.json(await pagos.estadoPublico(String(req.params.referencia), id));
+  });
 
   rutas.post('/ordenes', ...soloAdmin, async (req, res) => {
     const datos = parsear(esquemaOrden, req.body);

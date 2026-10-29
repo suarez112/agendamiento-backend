@@ -28,6 +28,12 @@ const LLAVES_WOMPI = {
 export const proveedorDePagoActivo = (e: { NODE_ENV: string; PROVEEDOR_PAGO?: 'simulado' | 'wompi' }) =>
   e.PROVEEDOR_PAGO ?? (e.NODE_ENV === 'production' ? undefined : 'simulado');
 
+// ¿El proveedor activo cobra en modo de prueba? (simulado, o Wompi con la llave pública de prueba)
+export const proveedorDePagoEsDePrueba = (e: { NODE_ENV: string; PROVEEDOR_PAGO?: 'simulado' | 'wompi'; WOMPI_LLAVE_PUBLICA?: string }) => {
+  const activo = proveedorDePagoActivo(e);
+  return activo === 'simulado' || (activo === 'wompi' && Boolean(e.WOMPI_LLAVE_PUBLICA?.startsWith(LLAVES_WOMPI.WOMPI_LLAVE_PUBLICA.prueba)));
+};
+
 // El servidor se niega a arrancar en producción con el proveedor simulado o con llaves de prueba, y con Wompi
 // exige las cuatro llaves (en producción, con el prefijo de producción) y URL_PAGOS.
 const revisarPagos = (

@@ -1,7 +1,7 @@
 import express, { type Express } from 'express';
 import helmet from 'helmet';
 import type pg from 'pg';
-import type { Entorno } from './config/entorno.js';
+import { type Entorno, proveedorDePagoEsDePrueba } from './config/entorno.js';
 import { crearRutasAcceso } from './modules/auth/acceso.js';
 import { crearRutasAuth } from './modules/auth/auth.rutas.js';
 import { crearServicioAuth } from './modules/auth/auth.servicio.js';
@@ -149,7 +149,7 @@ export const crearApp = ({
   app.use('/api/v1/ubicaciones', crearRutasUbicaciones());
   app.use('/api/v1/planes', crearRutasPlanes());
   // Pagos de la suscripción con pasarela (administradores) y webhook de la pasarela
-  app.use('/api/v1/pagos', crearRutasPagos(crearServicioPagos({ pool, proveedor: proveedorPago ?? undefined, urlPagos: entorno.URL_PAGOS }), guardias, proveedorPago ?? undefined));
+  app.use('/api/v1/pagos', crearRutasPagos(crearServicioPagos({ pool, proveedor: proveedorPago ?? undefined, urlPagos: entorno.URL_PAGOS, esDePrueba: proveedorPago ? proveedorPago.nombre === 'simulado' || proveedorDePagoEsDePrueba(entorno) : false }), guardias, limitadores, proveedorPago ?? undefined));
   // Funciones que incluye el plan del negocio de la sesión
   app.use('/api/v1/funciones', crearRutasFunciones(funciones, guardias));
   app.use('/api/v1/categorias', crearRutasCategorias(categorias));
