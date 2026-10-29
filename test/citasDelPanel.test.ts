@@ -15,6 +15,16 @@ import {
   telefonoValido,
 } from './apoyo/servidor.js';
 
+// El negocio que registra la prueba atiende de lunes a sábado. Devuelve la primera fecha desde mañana que no es
+// domingo (siempre a 1-2 días, dentro de la ventana de 14 días de las reservas), para no depender del día en que se corre.
+const proximoDiaLaborable = () => {
+  for (let dias = 1; dias <= 14; dias++) {
+    const fecha = fechaEnDias(dias);
+    if (new Date(`${fecha}T00:00:00Z`).getUTCDay() !== 0) return fecha;
+  }
+  throw new Error('No hay un día laborable dentro de la ventana de reservas');
+};
+
 // Citas creadas desde el panel: el empleado para sí mismo y el administrador para cualquier profesional
 describe('crear citas desde el panel', () => {
   let ctx: Contexto;
@@ -260,8 +270,7 @@ describe('crear citas desde el panel', () => {
     });
     assert.equal(profesional.estado, 201, profesional.texto);
 
-    // El negocio nuevo atiende de lunes a sábado: se busca el primer día que no sea domingo
-    const dia = [2, 3, 4].map(fechaEnDias).find((f) => new Date(`${f}T00:00:00Z`).getUTCDay() !== 0)!;
+    const dia = proximoDiaLaborable();
     const r = await pedir(ctx, '/api/v1/citas/panel', {
       method: 'POST',
       token,
