@@ -166,6 +166,8 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | POST | `/api/v1/pagos/ordenes` | personal admin (los dos tipos), aunque esté vencida. Crea una orden de pago `{ profesionales, periodo }` y devuelve `urlPago` (ver "Pagos de la suscripción") |
 | GET | `/api/v1/pagos/ordenes/:referencia` | personal admin. Estado guardado de su orden |
 | POST | `/api/v1/pagos/ordenes/:referencia/confirmar` | personal admin. Consulta a la pasarela y, si aprobó con el mismo monto y referencia, activa el plan (una sola vez) |
+| GET | `/api/v1/pagos/ordenes/:referencia/estado?id=` | **público**, limitado por IP (`estadoPago`, 30 por 15 min). `id` = transacción que devuelve la pasarela. Consulta y confirma con el proveedor como `confirmar` y responde solo `{ estado: "aprobado" \| "pendiente" \| "rechazado" }` y, si está aprobado, `nivel` `{ id, nombre }` y `vencimiento` (AAAA-MM-DD). Sin montos ni datos personales. La referencia lleva 96 bits aleatorios |
+| GET | `/api/v1/pagos/configuracion` | **público**, limitado. `{ disponible, proveedor, esDePrueba }` (simulado o llaves `*_test_*` = de prueba). Nunca expone llaves |
 | POST | `/api/v1/pagos/webhook` | público, firmado por Wompi; 404 mientras Wompi no esté activo |
 | GET | `/api/v1/funciones` | cualquier sesión del personal o la administradora, aunque esté vencida. Funciones que incluye el plan del negocio (ver "Funciones por plan") |
 | GET | `/api/v1/categorias` | público. Categorías de negocio activas (ver "Categorías de negocio") |

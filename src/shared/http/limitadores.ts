@@ -37,6 +37,7 @@ export type ConfigLimites = {
   recuperacion: number; // recuperar contraseña: solicitudes y restablecer, por IP
   recuperacionPorCorreo: number; // solicitudes de código para un mismo correo
   pqrs: number; // PQRS radicadas por IP
+  estadoPago: number; // consultas públicas del resultado de un pago, por IP
   // Contador por cuenta (base de datos)
   fallosPorCuenta: number; // fallos seguidos de una cuenta antes de bloquearla un rato
   fallosSuperadmin: number; // fallos seguidos de una cuenta del superadmin desde la misma IP
@@ -59,6 +60,7 @@ export const LIMITES_POR_DEFECTO: ConfigLimites = {
   recuperacion: 10,
   recuperacionPorCorreo: 3,
   pqrs: 10,
+  estadoPago: 30,
   fallosPorCuenta: 10,
   fallosSuperadmin: 5,
   bloqueoCuentaMs: 15 * 60_000,
@@ -96,6 +98,7 @@ const MENSAJE_LOGIN = 'Demasiados intentos de inicio de sesión. Intenta de nuev
 
 export const crearLimitadores = (c: ConfigLimites) => ({
   pqrs: limitar(c.ventanaMs, c.pqrs, 'Enviaste varias PQRS seguidas. Intenta de nuevo en unos minutos.'),
+  estadoPago: limitar(c.ventanaMs, c.estadoPago, 'Demasiadas consultas del pago. Intenta de nuevo en unos minutos.'),
   general: limitar(c.ventanaMs, c.general, 'Demasiadas solicitudes. Intenta de nuevo en unos minutos.'),
   loginUnico: limitar(c.ventanaMs, c.loginUnico, MENSAJE_LOGIN, { soloFallidos: true }),
   loginPersonal: limitar(c.ventanaMs, c.loginPersonal, MENSAJE_LOGIN, { soloFallidos: true }),

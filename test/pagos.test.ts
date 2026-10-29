@@ -49,7 +49,7 @@ describe('pagos con proveedor simulado', () => {
     assert.equal(r.json.moneda, 'COP');
     assert.equal(r.json.estado, 'pendiente');
     assert.equal(r.json.proveedor, 'simulado');
-    assert.match(r.json.referencia, /^AGD-[A-Z0-9]+-[A-F0-9]{12}$/);
+    assert.match(r.json.referencia, /^AGD-[A-Z0-9]+-[A-F0-9]{24}$/);
     assert.ok(r.json.urlPago.endsWith(`/api/v1/pagos/simulado/${r.json.referencia}`));
     const [fila] = await filas(ctx, 'SELECT monto_centavos, estado FROM ordenes_pago WHERE referencia = $1', [r.json.referencia]);
     assert.equal(Number(fila.monto_centavos), precioPara(3, 'anual') * 100);
