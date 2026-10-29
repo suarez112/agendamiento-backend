@@ -15,14 +15,18 @@ import {
   telefonoValido,
 } from './apoyo/servidor.js';
 
-// El negocio que registra la prueba atiende de lunes a sábado. Devuelve la primera fecha desde mañana que no es
-// domingo (siempre a 1-2 días, dentro de la ventana de 14 días de las reservas), para no depender del día en que se corre.
-const proximoDiaLaborable = () => {
+// Horario propio de la prueba de la cuenta admin: abierto los 7 días, de 08:00 a 20:00 (no depende del horario por defecto)
+const HORARIO_PRUEBA = [0, 1, 2, 3, 4, 5, 6].map((dia) => ({ dia, abierto: true, apertura: '08:00', cierre: '20:00' }));
+
+// Primera fecha desde mañana en que ese horario está abierto (siempre dentro de la ventana de 14 días de las reservas),
+// para no depender del día en que se corre
+const proximoDiaAbierto = (horario: { dia: number; abierto: boolean }[]) => {
   for (let dias = 1; dias <= 14; dias++) {
     const fecha = fechaEnDias(dias);
-    if (new Date(`${fecha}T00:00:00Z`).getUTCDay() !== 0) return fecha;
+    const diaSemana = new Date(`${fecha}T00:00:00Z`).getUTCDay();
+    if (horario.some((h) => h.dia === diaSemana && h.abierto)) return fecha;
   }
-  throw new Error('No hay un día laborable dentro de la ventana de reservas');
+  throw new Error('El horario no abre ningún día dentro de la ventana de reservas');
 };
 
 // Citas creadas desde el panel: el empleado para sí mismo y el administrador para cualquier profesional
@@ -258,7 +262,7 @@ describe('crear citas desde el panel', () => {
   });
 
   test('una cuenta admin (la de correo) que agenda queda registrada en registrada_por_usuario_id, no en la columna del equipo', async () => {
-    const registro = await registrarEmpresa(ctx, { correo: 'admin.panel.cuenta@central.co' });
+    const registro = await registrarEmpresa(ctx, { correo: 'admin.panel.cuenta@central.co', horario: HORARIO_PRUEBA });
     assert.equal(registro.estado, 201, registro.texto);
     const token = registro.json.token as string;
     const servicio = await pedir(ctx, '/api/v1/servicios', { method: 'POST', token, body: { nombre: 'Corte', duracionMin: 30, precio: 20000 } });
@@ -270,7 +274,7 @@ describe('crear citas desde el panel', () => {
     });
     assert.equal(profesional.estado, 201, profesional.texto);
 
-    const dia = proximoDiaLaborable();
+    const dia = proximoDiaAbierto(HORARIO_PRUEBA);
     const r = await pedir(ctx, '/api/v1/citas/panel', {
       method: 'POST',
       token,
