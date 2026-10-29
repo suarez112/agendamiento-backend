@@ -38,13 +38,16 @@ type Entrada = {
   servicioMasCorto: number;
   // No ofrecer horas anteriores a esta (para hoy: el momento actual)
   desde?: number;
+  // false (panel del negocio): no se ocultan las horas que dejarían un hueco corto; las pegadas siguen marcadas
+  ocultarHuecosCortos?: boolean;
 };
 
 // 1. Siempre se ofrecen las horas "pegadas" (si el servicio cabe completo): el inicio de
 //    cada espacio libre (apertura o fin de una cita o bloqueo) y la hora en que el
 //    servicio termina justo cuando empieza lo siguiente (otra cita, un bloqueo o el cierre).
 // 2. En el resto del espacio libre se ofrecen las horas del intervalo, salvo las que
-//    dejarían, antes o después del servicio, un hueco menor que el servicio más corto.
+//    dejarían, antes o después del servicio, un hueco menor que el servicio más corto
+//    (salvo en el panel del negocio, que las muestra todas).
 export const calcularHoras = (e: Entrada): HoraDisponible[] => {
   const horas = new Map<number, boolean>();
   const agregar = (inicio: number, pegada: boolean) => horas.set(inicio, (horas.get(inicio) ?? false) || pegada);
@@ -58,8 +61,9 @@ export const calcularHoras = (e: Entrada): HoraDisponible[] => {
     for (let inicio = primeraDelIntervalo; inicio <= ultimo; inicio += e.intervalo) {
       const huecoAntes = inicio - desde;
       const huecoDespues = ultimo - inicio;
-      const sirveAntes = huecoAntes === 0 || huecoAntes >= e.servicioMasCorto;
-      const sirveDespues = huecoDespues === 0 || huecoDespues >= e.servicioMasCorto;
+      const ocultar = e.ocultarHuecosCortos ?? true;
+      const sirveAntes = !ocultar || huecoAntes === 0 || huecoAntes >= e.servicioMasCorto;
+      const sirveDespues = !ocultar || huecoDespues === 0 || huecoDespues >= e.servicioMasCorto;
       if (sirveAntes && sirveDespues) agregar(inicio, false);
     }
   }

@@ -92,9 +92,19 @@ export const buscarClienteDelNegocio = async (db: Consultable, empresaId: string
     )
   ).rows[0];
 
-// Cuenta de cliente con ese teléfono (E.164), si la hay: las citas que el negocio agenda a su nombre aparecen en "Mis citas"
-export const buscarCuentaDeClientePorTelefono = async (db: Consultable, telefono: string) =>
-  (await db.query<{ id: string }>(`SELECT id FROM usuarios WHERE rol = 'cliente' AND telefono = $1`, [telefono])).rows[0]?.id ?? null;
+// Cuenta de cliente con ese teléfono (E.164) que YA tiene relación con este negocio (lo guardó o tuvo citas en él).
+// Solo a esa cuenta se le asocia una cita agendada desde el panel; sin relación, la cita queda como de invitado:
+// así un teléfono mal escrito no pone una cita (ni una notificación) en la cuenta de un desconocido.
+export const buscarCuentaDeClienteDelNegocio = async (db: Consultable, empresaId: string, telefono: string) =>
+  (
+    await db.query<{ id: string }>(
+      `SELECT u.id FROM usuarios u
+       WHERE u.rol = 'cliente' AND u.telefono = $2
+         AND (EXISTS (SELECT 1 FROM negocios_guardados g WHERE g.usuario_id = u.id AND g.empresa_id = $1)
+              OR EXISTS (SELECT 1 FROM citas c WHERE c.usuario_id = u.id AND c.empresa_id = $1))`,
+      [empresaId, telefono],
+    )
+  ).rows[0]?.id ?? null;
 
 export const insertarCita = (
   db: Consultable,
