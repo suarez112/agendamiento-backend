@@ -4,7 +4,7 @@ import { parsear } from '../../shared/http/validacion.js';
 import { type Guardias, sesionDe, tokenDe } from '../auth/guardias.js';
 import type { ServicioCuentas } from '../cuentas/cuentas.servicio.js';
 import type { GuardiaSuscripcion } from '../empresas/suscripcion.js';
-import { esquemaCrearCita, esquemaCrearCitaPanel, esquemaHorasDisponibles, esquemaHorasOcupadas, esquemaIdCita } from './citas.esquemas.js';
+import { esquemaCrearCita, esquemaCrearCitaPanel, esquemaHorasDisponibles, esquemaHorasPanel, esquemaHorasOcupadas, esquemaIdCita } from './citas.esquemas.js';
 import { contextoDe } from '../legal/legal.js';
 import type { ServicioCitas } from './citas.servicio.js';
 
@@ -52,6 +52,11 @@ export const crearRutasCitas = (
   rutas.post('/panel', ...sesionVigente, async (req, res) => {
     const datos = parsear(esquemaCrearCitaPanel, req.body);
     res.status(201).json(await citas.crearDesdePanel(sesionDe(res), datos, contextoDe(req)));
+  });
+
+  // Horas libres para agendar desde el panel (sin ocultar las que dejan un hueco corto)
+  rutas.get('/panel/disponibilidad', ...sesionVigente, async (req, res) => {
+    res.json(await citas.horasDisponiblesPanel(sesionDe(res), parsear(esquemaHorasPanel, req.query)));
   });
 
   rutas.patch('/:id/completar', ...sesionVigente, async (req, res) => {

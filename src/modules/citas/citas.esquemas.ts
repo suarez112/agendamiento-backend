@@ -71,6 +71,13 @@ export const esquemaHorasDisponibles = z.object({
   fecha: texto('Falta la fecha').refine(esFechaReal, 'La fecha debe tener el formato AAAA-MM-DD'),
 });
 
+// Horas libres para agendar desde el panel: la empresa sale de la sesión
+export const esquemaHorasPanel = z.object({
+  barberoId: identificador('Falta el identificador del profesional').optional(),
+  servicioId: identificador('Falta el identificador del servicio'),
+  fecha: texto('Falta la fecha').refine(esFechaReal, 'La fecha debe tener el formato AAAA-MM-DD'),
+});
+
 export const esquemaIdCita = z.object({
   id: identificador('Identificador de cita inválido'),
 });

@@ -57,6 +57,27 @@ describe('horas disponibles (cálculo)', () => {
     ]);
   });
 
+  test('panel (ocultarHuecosCortos: false): mismo ejemplo, pero también las horas que dejan un hueco corto, con las pegadas marcadas', () => {
+    const entrada = {
+      apertura: hm(8),
+      cierre: hm(12),
+      ocupados: [{ inicio: hm(9, 10), fin: hm(9, 50) }],
+      duracion: 30,
+      intervalo: 30,
+      servicioMasCorto: 20,
+    };
+    const delCliente = calcularHoras(entrada);
+    const delPanel = calcularHoras({ ...entrada, ocultarHuecosCortos: false });
+    // Se suman 08:30 y 10:00 (dejan 10 min libres); las demás, y su marca de pegada, no cambian
+    assert.deepEqual(
+      delPanel.map((h) => h.inicio),
+      [hm(8), hm(8, 30), hm(8, 40), hm(9, 50), hm(10), hm(10, 30), hm(11), hm(11, 30)],
+    );
+    for (const h of delCliente) assert.deepEqual(delPanel.find((p) => p.inicio === h.inicio), h);
+    assert.equal(delPanel.find((h) => h.inicio === hm(8, 30))?.pegada, false);
+    assert.equal(delPanel.find((h) => h.inicio === hm(8, 40))?.pegada, true);
+  });
+
   test('el almuerzo (bloqueo de 12:00 a 13:00) no deja ofrecer ninguna hora que lo toque', () => {
     for (const duracion of [30, 60, 90]) {
       const horas = calcularHoras({

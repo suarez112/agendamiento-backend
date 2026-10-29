@@ -34,8 +34,14 @@ const validarFecha = (fecha: string, { hoy, ultimo_dia }: { hoy: string; ultimo_
 };
 
 // Horas libres del profesional ese día para la duración del servicio. Es el cálculo que ve el cliente al reservar
-// y el que usa el panel; vacío si el negocio no atiende ese día.
-const horasLibres = async (db: Consultable, datos: repositorio.DatosReserva, p: { barberoId: string; fecha: string }) =>
+// y el que usa el panel; vacío si el negocio no atiende ese día. panel = true (el negocio agenda): se ofrecen todas
+// las horas del intervalo, también las que dejarían un hueco corto; las "pegadas" siguen marcadas como recomendadas.
+const horasLibres = async (
+  db: Consultable,
+  datos: repositorio.DatosReserva,
+  p: { barberoId: string; fecha: string },
+  panel = false,
+) =>
   datos.horario_apertura !== null && datos.horario_cierre !== null
     ? calcularHoras({
         apertura: hora24AMinutos(datos.horario_apertura),
@@ -44,10 +50,22 @@ const horasLibres = async (db: Consultable, datos: repositorio.DatosReserva, p: 
         duracion: datos.duracion_min,
         intervalo: datos.intervalo_minutos,
         servicioMasCorto: Math.min(datos.servicio_mas_corto, datos.duracion_min),
+        ocultarHuecosCortos: !panel,
         // Hoy no se ofrecen las horas que ya pasaron (la hora actual, al siguiente múltiplo de 10)
         desde: p.fecha === datos.hoy ? Math.ceil(datos.minutos_ahora / 10) * 10 : undefined,
       })
     : [];
+
+// Profesional para quien agenda el personal: un empleado solo para sí mismo; un administrador, para quien elija
+// (o para él, si es integrante y no envía barberoId)
+const profesionalDelPanel = (sesion: Sesion, barberoId?: string) => {
+  if (!sesion.esAdmin && barberoId && barberoId !== sesion.barberoId) {
+    throw errores.prohibido('Solo puedes agendar citas para ti. Un administrador puede agendar para cualquier profesional.');
+  }
+  const elegido = sesion.esAdmin ? (barberoId ?? sesion.barberoId) : sesion.barberoId;
+  if (!elegido) throw errores.solicitudInvalida('Elige el profesional en "barberoId"');
+  return elegido;
+};
 
 // notificaciones: avisos push opcionales (nunca hacen fallar la reserva ni la cancelación)
 export const crearServicioCitas = ({
@@ -218,12 +236,8 @@ export const crearServicioCitas = ({
   // no aplica el tope de citas pendientes por teléfono. Cliente existente o nuevo; el negocio confirma que el
   // cliente autorizó el tratamiento de sus datos y eso queda como prueba (canal registro_negocio).
   async crearDesdePanel(sesion: Sesion, datos: DatosCitaPanel, contexto: ContextoPeticion) {
-    const { empresaId, esAdmin } = sesion;
-    if (!esAdmin && datos.barberoId && datos.barberoId !== sesion.barberoId) {
-      throw errores.prohibido('Solo puedes agendar citas para ti. Un administrador puede agendar para cualquier profesional.');
-    }
-    const barberoId = esAdmin ? (datos.barberoId ?? sesion.barberoId) : sesion.barberoId;
-    if (!barberoId) throw errores.solicitudInvalida('Elige el profesional en "barberoId"');
+    const { empresaId } = sesion;
+    const barberoId = profesionalDelPanel(sesion, datos.barberoId);
     const { servicioId, fecha, hora } = datos;
 
     // Cliente: uno existente del negocio, o uno nuevo con nombre y teléfono
@@ -254,16 +268,17 @@ export const crearServicioCitas = ({
     if (inicio < hora24AMinutos(reserva.horario_apertura) || fin > hora24AMinutos(reserva.horario_cierre)) {
       throw errores.solicitudInvalida('La hora elegida está fuera del horario del negocio');
     }
-    // Solo horas que el cálculo de disponibilidad ofrece (no pasadas, dentro del horario y sin choques)
-    if (!(await horasLibres(pool, reserva, { barberoId, fecha })).some((h) => h.inicio === inicio)) {
+    // Solo horas que el panel ofrece (del intervalo del negocio, no pasadas, dentro del horario y sin choques)
+    if (!(await horasLibres(pool, reserva, { barberoId, fecha }, true)).some((h) => h.inicio === inicio)) {
       throw errores.conflicto('Esa hora no está disponible para este profesional y servicio. Elige una de las horas libres.');
     }
     if (await repositorio.telefonoEnListaNegra(pool, empresaId, cliente.telefono)) {
       throw errores.prohibido('Este cliente está en la lista negra del negocio.');
     }
     const horario = { horaInicio: minutosAHHMM(inicio), horaFin: minutosAHHMM(fin) };
-    // Si el cliente tiene cuenta, la cita queda en su "Mis citas" y se le avisa
-    const cuentaId = await repositorio.buscarCuentaDeClientePorTelefono(pool, cliente.telefono);
+    // Si el cliente tiene cuenta Y ya tiene relación con este negocio (lo guardó o tuvo citas), la cita queda en su
+    // "Mis citas" y se le avisa. Si no, queda como de invitado y no se notifica a ninguna cuenta.
+    const cuentaId = await repositorio.buscarCuentaDeClienteDelNegocio(pool, empresaId, cliente.telefono);
 
     // Misma revisión segura que las reservas: el profesional se bloquea y la hora se comprueba dentro de la transacción
     const citaId = randomUUID();
@@ -294,6 +309,7 @@ export const crearServicioCitas = ({
           indicativo: cliente.indicativo,
           empresaId,
           citaId,
+          registradaPor: { barberoId: sesion.barberoId, usuarioId: sesion.usuarioId },
         });
       });
     } catch (error) {
@@ -325,6 +341,27 @@ export const crearServicioCitas = ({
         estado: 'CONFIRMADA',
         zonaHoraria: reserva.zona_horaria,
       },
+    };
+  },
+
+  // Horas que el personal puede ofrecer al agendar desde el panel: las del intervalo del negocio dentro del horario de
+  // ese día y sin choques con citas ni bloqueos. A diferencia de la reserva del cliente no se ocultan las que dejan
+  // un hueco corto; las "pegadas" siguen marcadas como recomendadas. Un empleado solo consulta las suyas.
+  async horasDisponiblesPanel(sesion: Sesion, p: { barberoId?: string; servicioId: string; fecha: string }) {
+    const barberoId = profesionalDelPanel(sesion, p.barberoId);
+    const datos = await repositorio.buscarDatosReserva(pool, { empresaId: sesion.empresaId, barberoId, servicioId: p.servicioId, fecha: p.fecha });
+    if (!datos) throw errores.noEncontrado('Servicio o profesional no encontrado');
+    validarFecha(p.fecha, datos);
+    const horas = await horasLibres(pool, datos, { barberoId, fecha: p.fecha }, true);
+    return {
+      empresaId: sesion.empresaId,
+      barberoId,
+      servicioId: p.servicioId,
+      fecha: p.fecha,
+      zonaHoraria: datos.zona_horaria,
+      duracionMin: datos.duracion_min,
+      intervaloMinutos: datos.intervalo_minutos,
+      horas: horas.map((h) => ({ inicio: minutosAHHMM(h.inicio), hora: minutosAHora12(h.inicio), pegada: h.pegada })),
     };
   },
 

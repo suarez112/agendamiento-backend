@@ -69,17 +69,21 @@ export const registrarAutorizacion = async (
     indicativo?: string | null;
     empresaId?: string | null;
     citaId?: string | null;
+    // Solo canal registro_negocio: quién del negocio declaró la autorización (integrante o cuenta admin).
+    // No es quien aceptó: por eso va en columnas aparte de usuarioId / barberoId.
+    registradaPor?: { barberoId: string | null; usuarioId: string | null };
   },
 ) => {
   const { rows } = await db.query<FilaAuditoria>(
     `INSERT INTO auditoria_autorizaciones
        (usuario_id, barbero_id, correo, telefono, indicativo, empresa_id, cita_id, canal,
-        version_politica, version_terminos, ip, user_agent)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ${VIGENTE('politica_datos')}, ${VIGENTE('terminos')}, $9, $10)
+        version_politica, version_terminos, ip, user_agent, registrada_por_barbero_id, registrada_por_usuario_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ${VIGENTE('politica_datos')}, ${VIGENTE('terminos')}, $9, $10, $11, $12)
      RETURNING canal, version_politica, version_terminos, aceptado_en, ${ZONA_DE_ACEPTACION('empresa_id')} AS zona_horaria`,
     [
       a.usuarioId ?? null, a.barberoId ?? null, a.correo ?? null, a.telefono ?? null, a.indicativo ?? null,
       a.empresaId ?? null, a.citaId ?? null, a.canal, a.contexto.ip, a.contexto.userAgent,
+      a.registradaPor?.barberoId ?? null, a.registradaPor?.usuarioId ?? null,
     ],
   );
   return aAceptacion(rows[0]!);
