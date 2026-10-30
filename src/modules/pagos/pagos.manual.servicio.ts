@@ -173,10 +173,17 @@ export const crearServicioPagosManuales = ({ pool, formas, avisos }: Dependencia
     };
   };
 
-  // Aprobar y rechazar bloquean la orden (FOR UPDATE) y solo actúan si sigue 'pendiente': dos clics o dos solicitudes
+  // Aprobar y rechazar bloquean primero al negocio y después la orden (FOR UPDATE), el mismo orden que crearOrden: si
+  // tomaran los bloqueos al revés, una aprobación y una orden nueva del mismo negocio podrían quedar esperándose
+  // (bloqueo cruzado). Solo actúan si la orden sigue 'pendiente': dos clics o dos solicitudes
   // a la vez no activan dos veces (la segunda espera, ve la orden ya cerrada y responde 409).
   const revisar = async (admin: SesionSuperadmin, referencia: string, aprobar: boolean, motivo: string | undefined) => {
     const resultado = await enTransaccion(pool, async (tx) => {
+      // 1. El negocio (sin bloquear la orden todavía; la orden no cambia de negocio)
+      const dueno = (await tx.query<{ empresa_id: string }>("SELECT empresa_id FROM ordenes_pago WHERE referencia = $1 AND proveedor = 'manual'", [referencia])).rows[0];
+      if (!dueno) throw errores.noEncontrado('Orden no encontrada');
+      await tx.query('SELECT 1 FROM empresas WHERE id = $1 FOR UPDATE', [dueno.empresa_id]);
+      // 2. La orden, ya con el negocio bloqueado
       const f = (
         await tx.query<FilaOrdenManual>(`SELECT ${COLUMNAS} FROM ordenes_pago WHERE referencia = $1 AND proveedor = 'manual' FOR UPDATE`, [referencia])
       ).rows[0];

@@ -301,6 +301,29 @@ describe('pagos manuales (Nequi, llave Bre-B y QR)', () => {
       assert.equal((await pedir(ctx, '/api/v1/pagos/ordenes')).estado, 401);
     });
 
+    test('las consultas sin sesión no gastan el cupo de un administrador (el límite corre después de validar la sesión)', async () => {
+      const limitado = await iniciar({ entorno: { PROVEEDOR_PAGO: 'manual' }, limites: { formasPago: 2 } });
+      try {
+        const token = await crearSuperadmin(limitado);
+        await pedir(limitado, `${SUPER}/formas-pago`, { method: 'PATCH', token, body: FORMAS_VALIDAS });
+        const registro = await registrarEmpresa(limitado, { correo: 'cupo@central.co' });
+        const admin = registro.json.token;
+        // Mucho más tráfico anónimo (y con sesión falsa) que el cupo, sobre las tres rutas
+        for (let i = 0; i < 6; i++) {
+          for (const ruta of ['/api/v1/pagos/formas-pago', '/api/v1/pagos/ordenes', '/api/v1/pagos/formas-pago/qr/nequi']) {
+            assert.equal((await pedir(limitado, ruta)).estado, 401);
+            assert.equal((await pedir(limitado, ruta, { token: 'token-falso' })).estado, 401);
+          }
+        }
+        // El administrador conserva su cupo completo (2); la tercera consulta sí se limita
+        assert.equal((await pedir(limitado, '/api/v1/pagos/formas-pago', { token: admin })).estado, 200);
+        assert.equal((await pedir(limitado, '/api/v1/pagos/formas-pago', { token: admin })).estado, 200);
+        assert.equal((await pedir(limitado, '/api/v1/pagos/formas-pago', { token: admin })).estado, 429);
+      } finally {
+        await limitado.cerrar();
+      }
+    });
+
     test('limita la creación de órdenes por conexión', async () => {
       const limitado = await iniciar({ entorno: { PROVEEDOR_PAGO: 'manual' }, limites: { ordenesPago: 2 } });
       try {
@@ -488,6 +511,36 @@ describe('pagos manuales (Nequi, llave Bre-B y QR)', () => {
       const orden = await crearOrden(n);
       await ctx.pool.query("UPDATE empresas SET suspendida_en = now(), suspension_motivo = 'prueba' WHERE id = $1", [n.id]);
       assert.equal((await rechazar(orden.json.referencia)).estado, 200);
+    });
+
+    test('aprobar toma los bloqueos en el mismo orden que crear una orden: primero el negocio, después la orden', async () => {
+      const n = await registrar();
+      const orden = await crearOrden(n);
+      // Alguien más tiene bloqueado al negocio: la aprobación debe esperar ahí, sin haber tomado ya la orden
+      const retenedor = await ctx.pool.connect();
+      try {
+        await retenedor.query('BEGIN');
+        await retenedor.query('SELECT 1 FROM empresas WHERE id = $1 FOR UPDATE', [n.id]);
+        const aprobando = aprobar(orden.json.referencia);
+        await new Promise((r) => setTimeout(r, 400));
+        // Si la aprobación ya tuviera la orden bloqueada, esto fallaría con "lock_not_available"
+        const libre = await ctx.pool.query('SELECT 1 FROM ordenes_pago WHERE referencia = $1 FOR UPDATE NOWAIT', [orden.json.referencia]);
+        assert.equal(libre.rowCount, 1);
+        await retenedor.query('COMMIT');
+        assert.equal((await aprobando).estado, 200);
+      } finally {
+        retenedor.release();
+      }
+    });
+
+    test('aprobar y crear una orden del mismo negocio a la vez nunca da error del servidor (sin bloqueo cruzado)', async () => {
+      for (let i = 0; i < 8; i++) {
+        const n = await registrar();
+        const orden = await crearOrden(n);
+        const [a, b, c] = await Promise.all([aprobar(orden.json.referencia), crearOrden(n), rechazar(orden.json.referencia)]);
+        for (const r of [a, b, c]) assert.ok(r.estado < 500, `ronda ${i}: ${r.estado} ${r.texto}`);
+        assert.equal(b.estado, 201);
+      }
     });
 
     test('un negocio cancelado no se activa al aprobar', async () => {

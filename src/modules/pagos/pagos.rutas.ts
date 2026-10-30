@@ -81,7 +81,7 @@ export const crearRutasPagos = (
   });
 
   // Las órdenes del propio negocio (la sesión decide el negocio; nunca llega en la URL)
-  rutas.get('/ordenes', limitadores.formasPago, ...soloAdmin, async (_req, res) => {
+  rutas.get('/ordenes', ...soloAdmin, limitadores.formasPago, async (_req, res) => {
     if (!manuales) throw errores.noEncontrado('Ruta no encontrada');
     res.json(await manuales.ordenes.listarDelNegocio(sesionDe(res).empresaId));
   });
@@ -94,12 +94,12 @@ export const crearRutasPagos = (
   });
 
   // Formas de pago manuales activas: solo para administradores de negocio con sesión (nunca públicas)
-  rutas.get('/formas-pago', limitadores.formasPago, ...soloAdmin, async (req, res) => {
+  rutas.get('/formas-pago', ...soloAdmin, limitadores.formasPago, async (req, res) => {
     if (!manuales) throw errores.noEncontrado('Ruta no encontrada');
     res.json(await manuales.formas.activasObligatorias(manuales.urlBase(req)));
   });
 
-  rutas.get('/formas-pago/qr/:tipo', limitadores.formasPago, ...soloAdmin, async (req, res) => {
+  rutas.get('/formas-pago/qr/:tipo', ...soloAdmin, limitadores.formasPago, async (req, res) => {
     if (!manuales) throw errores.noEncontrado('Ruta no encontrada');
     const { tipo } = parsear(esquemaQr, req.params);
     const { imagen, tipo: mime } = await manuales.formas.imagenQr(tipo as TipoQr, true);
