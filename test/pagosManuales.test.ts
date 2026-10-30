@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 import sharp from 'sharp';
 import { precioPara } from '../src/config/planes.js';
+import type { ProveedorPago } from '../src/modules/pagos/proveedor.js';
 import { type Contexto, crearSuperadmin, iniciar, iniciarSesion, pedir, registrarEmpresa } from './apoyo/servidor.js';
 
 const SUPER = '/api/v1/superadmin/pagos';
@@ -464,6 +465,31 @@ describe('pagos manuales (Nequi, llave Bre-B y QR)', () => {
       assert.equal((await rechazar('AGD-NOEXISTE-000000000000000000000000')).estado, 404);
     });
 
+    test('un negocio suspendido no se puede aprobar (la orden sigue pendiente) pero sí rechazar; al reactivarlo se aprueba', async () => {
+      const n = await registrar();
+      const orden = await crearOrden(n);
+      const antes = (await fila('SELECT estado_suscripcion, suscripcion_fin FROM empresas WHERE id = $1', [n.id]))[0];
+      await ctx.pool.query("UPDATE empresas SET suspendida_en = now(), suspension_motivo = 'prueba' WHERE id = $1", [n.id]);
+      const r = await aprobar(orden.json.referencia);
+      assert.equal(r.estado, 409);
+      assert.equal(r.json.error, 'Este negocio está suspendido. Reactívalo primero si quieres aprobar el pago.');
+      const [o] = await fila('SELECT estado, activada_en, revisada_en FROM ordenes_pago WHERE referencia = $1', [orden.json.referencia]);
+      assert.deepEqual([o.estado, o.activada_en, o.revisada_en], ['pendiente', null, null]);
+      assert.deepEqual((await fila('SELECT estado_suscripcion, suscripcion_fin FROM empresas WHERE id = $1', [n.id]))[0], antes);
+      assert.equal((await fila('SELECT 1 FROM activaciones_plan WHERE empresa_id = $1', [n.id])).length, 0);
+      assert.equal((await fila("SELECT 1 FROM notificaciones WHERE usuario_id = $1 AND tipo = 'pago_aprobado'", [n.usuarioId])).length, 0);
+      // Reactivado, la misma orden se aprueba
+      await ctx.pool.query('UPDATE empresas SET suspendida_en = NULL, suspension_motivo = NULL WHERE id = $1', [n.id]);
+      assert.equal((await aprobar(orden.json.referencia)).estado, 200);
+    });
+
+    test('rechazar sigue funcionando con el negocio suspendido', async () => {
+      const n = await registrar();
+      const orden = await crearOrden(n);
+      await ctx.pool.query("UPDATE empresas SET suspendida_en = now(), suspension_motivo = 'prueba' WHERE id = $1", [n.id]);
+      assert.equal((await rechazar(orden.json.referencia)).estado, 200);
+    });
+
     test('un negocio cancelado no se activa al aprobar', async () => {
       const n = await registrar();
       const orden = await crearOrden(n);
@@ -471,5 +497,58 @@ describe('pagos manuales (Nequi, llave Bre-B y QR)', () => {
       assert.equal((await aprobar(orden.json.referencia)).estado, 409);
       assert.equal((await fila('SELECT estado FROM ordenes_pago WHERE referencia = $1', [orden.json.referencia]))[0].estado, 'pendiente');
     });
+  });
+});
+
+// Una orden manual nunca se resuelve por los caminos de la pasarela: ni al confirmar ni en el estado público
+describe('pagos manuales: no pasan por la pasarela', () => {
+  let ctx: Contexto;
+  let consultas: unknown[];
+  let token: string;
+  let empresaId: string;
+
+  before(async () => {
+    consultas = [];
+    // Un proveedor "manual" que, si alguien le pregunta, diría que el pago está aprobado: no debe preguntársele nunca
+    const espia: ProveedorPago = {
+      nombre: 'manual',
+      crearPago: async () => ({ url: '' }),
+      consultarPago: async (c) => {
+        consultas.push(c);
+        return { estado: 'aprobada', referencia: c.referencia, montoCentavos: precioPara(1, 'mensual') * 100, moneda: 'COP', idExterno: 'ext-1' };
+      },
+    };
+    ctx = await iniciar({ proveedorPago: espia });
+    const superadmin = await crearSuperadmin(ctx);
+    await pedir(ctx, SUPER + '/formas-pago', { method: 'PATCH', token: superadmin, body: FORMAS_VALIDAS });
+    const r = await registrarEmpresa(ctx, { correo: 'espia@central.co' });
+    token = r.json.token;
+    empresaId = r.json.empresa.id;
+  });
+  after(() => ctx.cerrar());
+
+  test('confirmar y el estado público solo devuelven lo guardado: no consultan la pasarela ni activan el plan', async () => {
+    const orden = await pedir(ctx, '/api/v1/pagos/ordenes', { method: 'POST', token, body: { periodo: 'mensual' } });
+    assert.equal(orden.estado, 201, orden.texto);
+    const ref = orden.json.referencia;
+
+    const confirmar = await pedir(ctx, `/api/v1/pagos/ordenes/${ref}/confirmar`, { method: 'POST', token, body: { idTransaccion: 'ext-1' } });
+    assert.equal(confirmar.estado, 200, confirmar.texto);
+    assert.equal(confirmar.json.estado, 'pendiente');
+
+    const publico = await pedir(ctx, `/api/v1/pagos/ordenes/${ref}/estado?id=ext-1`);
+    assert.equal(publico.estado, 200, publico.texto);
+    assert.deepEqual(publico.json, { estado: 'pendiente' });
+
+    assert.deepEqual(consultas, [], 'la pasarela no debe recibir ninguna consulta');
+    const [o] = (await ctx.pool.query('SELECT estado, activada_en, id_externo FROM ordenes_pago WHERE referencia = $1', [ref])).rows;
+    assert.deepEqual([o.estado, o.activada_en, o.id_externo], ['pendiente', null, null]);
+    const [e] = (await ctx.pool.query('SELECT estado_suscripcion FROM empresas WHERE id = $1', [empresaId])).rows;
+    assert.equal(e.estado_suscripcion, 'trial');
+    assert.equal((await ctx.pool.query('SELECT 1 FROM activaciones_plan WHERE empresa_id = $1', [empresaId])).rowCount, 0);
+  });
+
+  test('el webhook de la pasarela no existe en modo manual', async () => {
+    assert.equal((await pedir(ctx, '/api/v1/pagos/webhook', { method: 'POST', body: { data: {} } })).estado, 404);
   });
 });

@@ -186,9 +186,16 @@ export const crearServicioPagosManuales = ({ pool, formas, avisos }: Dependencia
       }
       const empresa = await nombreDelNegocio(tx, f.empresa_id);
       if (aprobar) {
-        const estadoEmpresa = (await tx.query<{ estado_suscripcion: string }>('SELECT estado_suscripcion FROM empresas WHERE id = $1', [f.empresa_id])).rows[0];
+        const estadoEmpresa = (
+          await tx.query<{ estado_suscripcion: string; suspendida: boolean }>(
+            'SELECT estado_suscripcion, suspendida_en IS NOT NULL AS suspendida FROM empresas WHERE id = $1',
+            [f.empresa_id],
+          )
+        ).rows[0];
         if (!estadoEmpresa) throw errores.noEncontrado('Establecimiento no encontrado');
         if (estadoEmpresa.estado_suscripcion === 'cancelada') throw errores.conflicto('Este negocio está cancelado y no se puede activar.');
+        // Rechazar sí se puede con el negocio suspendido; aprobar no: la orden se crea sin suspensión y puede cambiar después
+        if (estadoEmpresa.suspendida) throw errores.conflicto('Este negocio está suspendido. Reactívalo primero si quieres aprobar el pago.');
         const activada = await activarPlanEmpresa(tx, f.empresa_id, f.periodo, 'manual', {
           profesionales: f.profesionales,
           precio: Number(f.monto_centavos) / 100,
