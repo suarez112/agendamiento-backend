@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
-import { fechaEnDias } from './apoyo/baseDePrueba.js';
+import { fechaEnDias, fechaHabilEnDias } from './apoyo/baseDePrueba.js';
 import {
   CLAVE_ADMIN,
   CLAVE_CLIENTE,
@@ -336,7 +336,7 @@ describe('eliminar la cuenta', () => {
     const pro = await pedir(ctx, '/api/v1/equipo', { method: 'POST', token, body: { nombre: 'Pro', usuario: 'pro.cierre', clave: 'Clave-segura-1' } });
     const cita = await pedir(ctx, '/api/v1/citas', {
       method: 'POST',
-      body: { empresaId, barberoId: pro.json.id, servicioId: servicio.json.id, fecha: fechaEnDias(2), hora: '10:00 AM', nombre: 'Cliente Del Negocio', telefono: '3100000050', aceptaPoliticaDatos: true, aceptaTerminos: true },
+      body: { empresaId, barberoId: pro.json.id, servicioId: servicio.json.id, fecha: fechaHabilEnDias(2), hora: '10:00 AM', nombre: 'Cliente Del Negocio', telefono: '3100000050', aceptaPoliticaDatos: true, aceptaTerminos: true },
     });
     assert.equal(cita.estado, 201, cita.texto);
     const cliente = (await pedir(ctx, '/api/v1/clientes', { token })).json[0];

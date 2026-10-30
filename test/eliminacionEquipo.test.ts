@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import sharp from 'sharp';
-import { fechaEnDias } from './apoyo/baseDePrueba.js';
+import { fechaHabilEnDias } from './apoyo/baseDePrueba.js';
 import {
   CLAVE_ADMIN,
   CLAVE_CLIENTE,
@@ -72,7 +72,7 @@ describe('eliminar la cuenta: equipo, fotos y notificaciones', () => {
     assert.equal((await pedir(ctx, '/api/v1/dispositivos', { method: 'PUT', token: tokenCarlos, body: { token: 'ExponentPushToken[carlos_celular]' } })).estado, 200);
     const cita = await pedir(ctx, '/api/v1/citas', {
       method: 'POST',
-      body: reservaValida({ empresaId, barberoId: activo.json.id, servicioId: servicio.json.id, fecha: fechaEnDias(2), nombre: 'Cliente Del Cierre', telefono: '3100000501' }),
+      body: reservaValida({ empresaId, barberoId: activo.json.id, servicioId: servicio.json.id, fecha: fechaHabilEnDias(2), nombre: 'Cliente Del Cierre', telefono: '3100000501' }),
     });
     assert.equal(cita.estado, 201, cita.texto);
     await esperarHasta(async () => (await consulta('SELECT 1 FROM notificaciones WHERE barbero_id = $1', [activo.json.id])).length > 0);
@@ -145,7 +145,7 @@ describe('eliminar la cuenta: equipo, fotos y notificaciones', () => {
   test('al borrar la cuenta de un cliente, las notificaciones del personal dejan de nombrarlo', async () => {
     const registro = await registrarCliente(ctx, 'nombrado@correo.com', CLAVE_CLIENTE, { telefono: '3100000502', nombre: 'Cliente Nombrado' });
     assert.equal(registro.estado, 201, registro.texto);
-    const cita = await pedir(ctx, '/api/v1/citas', { method: 'POST', token: registro.json.token, body: reservaValida({ fecha: fechaEnDias(4), hora: '03:00 PM' }) });
+    const cita = await pedir(ctx, '/api/v1/citas', { method: 'POST', token: registro.json.token, body: reservaValida({ fecha: fechaHabilEnDias(4), hora: '03:00 PM' }) });
     assert.equal(cita.estado, 201, cita.texto);
     const citaId = cita.json.cita.id as string;
     await esperarHasta(async () => (await consulta('SELECT 1 FROM notificaciones WHERE cita_id = $1', [citaId])).length > 0);

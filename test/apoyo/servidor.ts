@@ -34,6 +34,9 @@ const LIMITES_PRUEBA: ConfigLimites = {
   recuperacionPorCorreo: 1_000,
   pqrs: 1_000,
   estadoPago: 1_000,
+  ordenesPago: 1_000,
+  formasPago: 1_000,
+  revisionPagos: 1_000,
   fallosPorCuenta: 1_000,
   fallosSuperadmin: 1_000,
   bloqueoCuentaMs: 60_000,
@@ -87,8 +90,10 @@ export const iniciar = async (opciones: Opciones = {}): Promise<Contexto> => {
     };
   }
 
+  // El proveedor de pago lo deciden las pruebas (por defecto, el simulado), no el .env de quien las corre
+  const { PROVEEDOR_PAGO: _delEnv, ...procesoSinProveedor } = process.env;
   const entorno: Entorno = {
-    ...cargarEntorno({ ...process.env, ...datosDb, DB_NAME: base.nombre, NODE_ENV: 'test',
+    ...cargarEntorno({ ...procesoSinProveedor, ...datosDb, DB_NAME: base.nombre, NODE_ENV: 'test',
       JWT_SECRET: SECRETO_PRUEBAS,
       RECUPERACION_SECRET: SECRETO_RECUPERACION_PRUEBAS,
       TOTP_SECRET: SECRETO_TOTP_PRUEBAS,

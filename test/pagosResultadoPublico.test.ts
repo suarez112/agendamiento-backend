@@ -114,8 +114,11 @@ describe('pagos desactivados y límite de consultas', () => {
 });
 
 describe('proveedorDePagoEsDePrueba', () => {
-  test('simulado y llaves de prueba sí; llaves de producción o sin proveedor no', () => {
-    assert.equal(proveedorDePagoEsDePrueba({ NODE_ENV: 'development' }), true);
+  test('simulado y llaves de prueba sí; manual (el valor por defecto) y llaves de producción no', () => {
+    assert.equal(proveedorDePagoEsDePrueba({ NODE_ENV: 'test' }), true);
+    assert.equal(proveedorDePagoEsDePrueba({ NODE_ENV: 'development', PROVEEDOR_PAGO: 'simulado' }), true);
+    assert.equal(proveedorDePagoEsDePrueba({ NODE_ENV: 'development' }), false);
+    assert.equal(proveedorDePagoEsDePrueba({ NODE_ENV: 'development', PROVEEDOR_PAGO: 'manual' }), false);
     assert.equal(proveedorDePagoEsDePrueba({ NODE_ENV: 'development', PROVEEDOR_PAGO: 'wompi', WOMPI_LLAVE_PUBLICA: 'pub_test_abc' }), true);
     assert.equal(proveedorDePagoEsDePrueba({ NODE_ENV: 'production', PROVEEDOR_PAGO: 'wompi', WOMPI_LLAVE_PUBLICA: 'pub_prod_abc' }), false);
     assert.equal(proveedorDePagoEsDePrueba({ NODE_ENV: 'production' }), false);

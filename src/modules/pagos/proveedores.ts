@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { type Entorno, proveedorDePagoActivo } from '../../config/entorno.js';
 import type { ProveedorPago } from './proveedor.js';
+import { crearProveedorManual } from './proveedorManual.js';
 import { crearProveedorSimulado } from './proveedorSimulado.js';
 import { crearProveedorWompi } from './proveedorWompi.js';
 
@@ -22,6 +23,8 @@ export const crearProveedorDePago = (entorno: Entorno, pool: pg.Pool): Proveedor
         secretoEventos: entorno.WOMPI_SECRETO_EVENTOS!,
         secretoIntegridad: entorno.WOMPI_SECRETO_INTEGRIDAD!,
       });
+    case 'manual':
+      return crearProveedorManual();
     default:
       return undefined;
   }

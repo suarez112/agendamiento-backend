@@ -13,6 +13,13 @@ process.env.NODE_ENV = 'test';
 // así las pruebas no fallan cerca de la medianoche ni en otra zona horaria.
 export const fechaEnDias = (dias: number) => sumarDiasAFecha(hoyEn(ZONA_POR_DEFECTO), dias);
 
+// Igual que fechaEnDias, pero si cae en domingo (los negocios de prueba cierran ese día) pasa al lunes:
+// así una reserva de prueba no falla según el día de la semana en que se corra la suite.
+export const fechaHabilEnDias = (dias: number) => {
+  const fecha = fechaEnDias(dias);
+  return new Date(`${fecha}T12:00:00Z`).getUTCDay() === 0 ? sumarDiasAFecha(fecha, 1) : fecha;
+};
+
 export const FECHA_FUTURA = fechaEnDias(7);
 
 // Datos conocidos: dos negocios para probar el aislamiento entre ellos

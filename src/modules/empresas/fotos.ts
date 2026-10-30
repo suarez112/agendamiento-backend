@@ -34,7 +34,7 @@ type Extension = 'jpg' | 'png' | 'webp';
 
 // El tipo real se decide por los primeros bytes del archivo, no por el nombre ni
 // por el Content-Type que manda el cliente (ambos se pueden falsificar).
-const extensionPorContenido = (datos: Buffer): Extension | undefined => {
+export const extensionPorContenido = (datos: Buffer): Extension | undefined => {
   if (datos.length >= 3 && datos[0] === 0xff && datos[1] === 0xd8 && datos[2] === 0xff) return 'jpg';
   if (datos.length >= 8 && datos.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
     return 'png';

@@ -3,7 +3,7 @@ import { type Periodo, planParaPersonas, precioPara } from '../../config/planes.
 import { contarEquipoCobrable, marcarCargosPagados } from './cobro.js';
 
 export type { Periodo };
-export type OrigenActivacion = 'panel' | 'comando' | 'pasarela';
+export type OrigenActivacion = 'panel' | 'comando' | 'pasarela' | 'manual';
 
 // Lo que realmente se cobró (pasarela): profesionales cubiertos y precio pagado. Sin esto, salen del equipo de hoy.
 export type PagoRecibido = { profesionales: number; precio: number };

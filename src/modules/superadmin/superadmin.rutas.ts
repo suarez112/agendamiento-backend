@@ -6,6 +6,10 @@ import { ipDe } from '../../shared/http/ip.js';
 import type { Limitadores } from '../../shared/http/limitadores.js';
 import { parsear } from '../../shared/http/validacion.js';
 import { tokenDe } from '../auth/guardias.js';
+import { normalizarTelefono, TELEFONO_INVALIDO } from '../../shared/telefonos.js';
+import type { ServicioFormasPago, TipoQr } from '../pagos/formasPago.servicio.js';
+import type { ServicioPagosManuales } from '../pagos/pagos.manual.servicio.js';
+import { recibirQr } from '../pagos/recibirQr.js';
 import type { ServicioCategorias } from '../categorias/categorias.servicio.js';
 import { ESTADOS_PQRS, TIPOS_PQRS } from '../pqrs/pqrs.repositorio.js';
 import { ESTADOS_NEGOCIO } from './superadmin.repositorio.js';
@@ -127,6 +131,55 @@ const esquemaEditarCategoria = z
   )
   .refine((d) => d.nombre !== undefined || d.activa !== undefined, { error: 'Envía al menos un dato para actualizar' });
 
+// ---- Pagos manuales (Nequi, llave Bre-B y código QR) ----
+
+const MENSAJE_BOOLEANO = (campo: string) => `El campo "${campo}" debe ser true o false`;
+const esquemaFormasPago = z
+  .object(
+    {
+      titular: texto('titular', 100).optional(),
+      whatsapp: z.string({ error: 'El campo "whatsapp" debe ser texto' }).trim().min(1, obligatorio('whatsapp')).max(25, TELEFONO_INVALIDO).optional(),
+      indicativo: z.string().trim().max(4).optional(),
+      nequiNumero: z
+        .union([z.string().transform((n) => n.replace(/[\s-]/g, '')).pipe(z.string().regex(/^3\d{9}$/, 'El número de Nequi debe ser un celular colombiano de 10 dígitos (ej. 3001234567)')), z.null()], {
+          error: 'El número de Nequi debe ser un celular colombiano de 10 dígitos (ej. 3001234567)',
+        })
+        .optional(),
+      llaveBreb: z
+        .union([z.string().trim().min(3, 'La llave Bre-B debe tener entre 3 y 60 caracteres').max(60, 'La llave Bre-B debe tener entre 3 y 60 caracteres').regex(/^[^\u0000-\u001f\u007f]+$/, 'La llave Bre-B tiene caracteres no permitidos'), z.null()], {
+          error: 'La llave Bre-B debe tener entre 3 y 60 caracteres',
+        })
+        .optional(),
+      nequiActivo: z.boolean({ error: MENSAJE_BOOLEANO('nequiActivo') }).optional(),
+      llaveBrebActiva: z.boolean({ error: MENSAJE_BOOLEANO('llaveBrebActiva') }).optional(),
+      qrActivo: z.boolean({ error: MENSAJE_BOOLEANO('qrActivo') }).optional(),
+    },
+    { error: 'Envía los datos de las formas de pago' },
+  )
+  .transform((d, ctx) => {
+    const { indicativo, whatsapp, ...resto } = d;
+    if (whatsapp === undefined) return resto;
+    const normalizado = normalizarTelefono(whatsapp, indicativo);
+    if (!normalizado) {
+      ctx.addIssue({ code: 'custom', message: TELEFONO_INVALIDO, path: ['whatsapp'] });
+      return z.NEVER;
+    }
+    return { ...resto, whatsapp: normalizado.telefono };
+  })
+  .refine((d) => Object.values(d).some((v) => v !== undefined), { error: 'Envía al menos un dato para actualizar' });
+
+const esquemaTipoQr = z.object({ tipo: z.enum(['nequi', 'breb'], { error: 'El código QR debe ser "nequi" o "breb"' }) });
+
+const ESTADOS_ORDEN = ['pendiente', 'aprobada', 'rechazada', 'anulada'] as const;
+const esquemaListaOrdenes = esquemaPagina.extend({
+  estado: filtro(z.enum(ESTADOS_ORDEN, { error: `El estado debe ser uno de: ${ESTADOS_ORDEN.join(', ')}` })).default('pendiente'),
+});
+const esquemaReferencia = z.object({
+  referencia: z.string({ error: 'Referencia inválida' }).trim().min(1, 'Referencia inválida').max(40, 'Referencia inválida').transform((r) => r.toUpperCase()),
+});
+const esquemaAprobar = z.object({ motivo: motivoOpcional }).optional();
+const esquemaRechazar = z.object({ motivo: texto('motivo', 300) }, { error: obligatorio('motivo') });
+
 const sesionDe = (res: { locals: Record<string, unknown> }): SesionSuperadmin => {
   const sesion = res.locals.superadmin as SesionSuperadmin | undefined;
   if (!sesion) throw errores.noAutenticado('Sesión no válida. Inicia sesión de nuevo.');
@@ -138,6 +191,7 @@ export const crearRutasSuperadmin = (
   servicio: ServicioSuperadmin,
   categorias: ServicioCategorias,
   limitadores: Limitadores,
+  pagos: { formas: ServicioFormasPago; ordenes: ServicioPagosManuales },
 ) => {
   const rutas = Router();
 
@@ -231,6 +285,47 @@ export const crearRutasSuperadmin = (
   rutas.patch('/categorias/:id', async (req, res) => {
     const { id } = parsear(esquemaId('Identificador de categoría inválido'), req.params);
     res.json(await categorias.actualizar(sesionDe(res), id, parsear(esquemaEditarCategoria, req.body)));
+  });
+
+  // Pagos manuales: solo el superadmin configura las formas de pago y aprueba o rechaza las órdenes
+  rutas.get('/pagos/formas-pago', async (_req, res) => {
+    res.json(await pagos.formas.ver());
+  });
+
+  rutas.patch('/pagos/formas-pago', limitadores.revisionPagos, async (req, res) => {
+    res.json(await pagos.formas.guardar(sesionDe(res), parsear(esquemaFormasPago, req.body)));
+  });
+
+  rutas.put('/pagos/formas-pago/qr/:tipo', limitadores.revisionPagos, recibirQr, async (req, res) => {
+    const { tipo } = parsear(esquemaTipoQr, req.params);
+    res.json(await pagos.formas.guardarQr(sesionDe(res), tipo as TipoQr, req.file!.buffer));
+  });
+
+  rutas.delete('/pagos/formas-pago/qr/:tipo', limitadores.revisionPagos, async (req, res) => {
+    const { tipo } = parsear(esquemaTipoQr, req.params);
+    res.json(await pagos.formas.borrarQr(sesionDe(res), tipo as TipoQr));
+  });
+
+  rutas.get('/pagos/formas-pago/qr/:tipo', async (req, res) => {
+    const { tipo } = parsear(esquemaTipoQr, req.params);
+    const { imagen, tipo: mime } = await pagos.formas.imagenQr(tipo as TipoQr, false);
+    res.set({ 'Content-Type': mime, 'Content-Disposition': 'inline' }).send(imagen);
+  });
+
+  rutas.get('/pagos/ordenes', async (req, res) => {
+    const { pagina, limite, estado } = parsear(esquemaListaOrdenes, req.query);
+    const { total, datos } = await pagos.ordenes.listarParaSuperadmin({ estado, limite, desplazamiento: (pagina - 1) * limite });
+    res.json({ total, pagina, limite, datos });
+  });
+
+  rutas.post('/pagos/ordenes/:referencia/aprobar', limitadores.revisionPagos, async (req, res) => {
+    const { referencia } = parsear(esquemaReferencia, req.params);
+    res.json(await pagos.ordenes.aprobar(sesionDe(res), referencia, parsear(esquemaAprobar, req.body)?.motivo));
+  });
+
+  rutas.post('/pagos/ordenes/:referencia/rechazar', limitadores.revisionPagos, async (req, res) => {
+    const { referencia } = parsear(esquemaReferencia, req.params);
+    res.json(await pagos.ordenes.rechazar(sesionDe(res), referencia, parsear(esquemaRechazar, req.body).motivo));
   });
 
   rutas.get('/actividad', async (req, res) => {
