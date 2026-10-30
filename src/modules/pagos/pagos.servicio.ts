@@ -72,6 +72,7 @@ export const crearServicioPagos = ({ pool, proveedor, urlPagos, esDePrueba = fal
   // Crea la orden con el precio que sale de las reglas actuales (src/config/planes.ts) y devuelve dónde pagar
   const crearOrden = async (empresaId: string, entrada: { profesionales: number; periodo: Periodo }) => {
     const pasarela = requerirProveedor();
+    if (pasarela.nombre === 'manual') throw errores.solicitudInvalida('Con los pagos manuales la orden solo lleva el periodo: el monto lo calcula el servidor');
     if (!urlPagos) throw new ErrorApp(503, 'Los pagos no están configurados: falta URL_PAGOS en el servidor.');
     if (entrada.profesionales > COBRO.maxProfesionales) {
       throw errores.solicitudInvalida(`Un negocio puede tener hasta ${COBRO.maxProfesionales} profesionales`);
@@ -192,8 +193,9 @@ export const crearServicioPagos = ({ pool, proveedor, urlPagos, esDePrueba = fal
   // Pregunta a la pasarela y aplica el resultado. Es seguro repetirla.
   const confirmarFila = async (orden: FilaOrden, idExterno?: string) => {
     const pasarela = requerirProveedor();
-    // Solo una orden aprobada es definitiva; una rechazada o anulada se vuelve a preguntar (puede haber un reintento)
-    if (orden.estado === 'aprobada') return aOrden(orden);
+    // Solo una orden aprobada es definitiva; una rechazada o anulada se vuelve a preguntar (puede haber un reintento).
+    // Una orden manual no tiene pasarela a la que preguntar: su estado lo decide el superadmin.
+    if (orden.estado === 'aprobada' || orden.proveedor === 'manual') return aOrden(orden);
     const resultado = await pasarela.consultarPago({ referencia: orden.referencia, idExterno: idExterno ?? orden.id_externo });
     const { orden: final, inconsistente } = await aplicar(orden.referencia, resultado);
     if (inconsistente) {

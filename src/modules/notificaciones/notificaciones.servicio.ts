@@ -142,6 +142,20 @@ export const crearServicioNotificaciones = ({
   return {
     ...avisos,
 
+    // Resultado de un pago manual, a los administradores del negocio. El texto no lleva el motivo ni montos: la push
+    // pasa por Expo (un tercero); el motivo se consulta en la orden. Nunca lanza error: la decisión ya se guardó.
+    avisarPagoManual: (empresaId: string, aprobado: boolean) =>
+      seguro(aprobado ? 'pago_aprobado' : 'pago_rechazado', async () => {
+        await notificar(aprobado ? 'pago_aprobado' : 'pago_rechazado', await repositorio.administradoresDe(pool, empresaId), {
+          tipo: aprobado ? 'pago_aprobado' : 'pago_rechazado',
+          titulo: aprobado ? 'Pago aprobado' : 'Pago rechazado',
+          texto: aprobado
+            ? 'Verificamos tu pago y tu suscripción ya está activa.'
+            : 'No pudimos verificar tu pago. Revisa el motivo en la orden de pago y envíanos el comprobante de nuevo.',
+          citaId: null,
+        });
+      }),
+
     // Centro de notificaciones de la app
     async listar(titular: Titular, p: { soloNoLeidas: boolean; pagina: number; limite: number }) {
       const [filas, cifras] = await Promise.all([

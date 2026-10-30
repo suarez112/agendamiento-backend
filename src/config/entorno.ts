@@ -24,12 +24,13 @@ const LLAVES_WOMPI = {
   WOMPI_SECRETO_INTEGRIDAD: { produccion: 'prod_integrity_', prueba: 'test_integrity_' },
 } as const;
 
-// Proveedor de pago que queda activo: el elegido, o "simulado" fuera de producción. undefined = pagos desactivados.
-export const proveedorDePagoActivo = (e: { NODE_ENV: string; PROVEEDOR_PAGO?: 'simulado' | 'wompi' }) =>
-  e.PROVEEDOR_PAGO ?? (e.NODE_ENV === 'production' ? undefined : 'simulado');
+// Proveedor de pago que queda activo: el elegido, o "manual" (Nequi, llave Bre-B o QR con comprobante por WhatsApp)
+// si no se elige ninguno; en las pruebas (NODE_ENV=test) el valor por defecto es "simulado".
+export const proveedorDePagoActivo = (e: { NODE_ENV: string; PROVEEDOR_PAGO?: 'simulado' | 'wompi' | 'manual' }) =>
+  e.PROVEEDOR_PAGO ?? (e.NODE_ENV === 'test' ? 'simulado' : 'manual');
 
 // ¿El proveedor activo cobra en modo de prueba? (simulado, o Wompi con la llave pública de prueba)
-export const proveedorDePagoEsDePrueba = (e: { NODE_ENV: string; PROVEEDOR_PAGO?: 'simulado' | 'wompi'; WOMPI_LLAVE_PUBLICA?: string }) => {
+export const proveedorDePagoEsDePrueba = (e: { NODE_ENV: string; PROVEEDOR_PAGO?: 'simulado' | 'wompi' | 'manual'; WOMPI_LLAVE_PUBLICA?: string }) => {
   const activo = proveedorDePagoActivo(e);
   return activo === 'simulado' || (activo === 'wompi' && Boolean(e.WOMPI_LLAVE_PUBLICA?.startsWith(LLAVES_WOMPI.WOMPI_LLAVE_PUBLICA.prueba)));
 };
@@ -39,7 +40,7 @@ export const proveedorDePagoEsDePrueba = (e: { NODE_ENV: string; PROVEEDOR_PAGO?
 const revisarPagos = (
   e: {
     NODE_ENV: string;
-    PROVEEDOR_PAGO?: 'simulado' | 'wompi';
+    PROVEEDOR_PAGO?: 'simulado' | 'wompi' | 'manual';
     URL_PAGOS?: string;
   } & Partial<Record<keyof typeof LLAVES_WOMPI, string>>,
   ctx: z.RefinementCtx,
@@ -121,10 +122,10 @@ const esquemaEntorno = esquemaBaseDeDatos
       .transform((base) => (/^https?:\/\//.test(base) ? base : `https://${base}`).replace(/\/+$/, '')),
     // Token de acceso de Expo para enviar notificaciones push (opcional: sin él también funciona)
     EXPO_ACCESS_TOKEN: z.string().min(1).optional(),
-    // Pagos de la suscripción. PROVEEDOR_PAGO: "simulado" (solo desarrollo; es el valor por defecto fuera de
-    // producción) o "wompi". En producción no hay valor por defecto y "simulado" impide arrancar: sin
-    // PROVEEDOR_PAGO los pagos en línea quedan desactivados (la activación sigue siendo manual).
-    PROVEEDOR_PAGO: z.enum(['simulado', 'wompi'], { error: 'debe ser simulado o wompi' }).optional(),
+    // Pagos de la suscripción. PROVEEDOR_PAGO: "manual" (Nequi, llave Bre-B o QR con comprobante por WhatsApp; es el
+    // valor por defecto), "wompi" (pasarela) o "simulado" (solo desarrollo y pruebas; es el valor por defecto en
+    // las pruebas y en producción impide arrancar).
+    PROVEEDOR_PAGO: z.enum(['simulado', 'wompi', 'manual'], { error: 'debe ser manual, wompi o simulado' }).optional(),
     // A dónde vuelve la persona después de pagar (la app o su página web): se le agrega /<referencia>
     URL_PAGOS: z
       .url({ protocol: /^https?$/, error: 'debe ser una dirección http:// o https://' })

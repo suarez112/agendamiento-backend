@@ -27,13 +27,15 @@ const LLAVES_PRUEBA = {
 const cargar = (extra: Record<string, string>) => cargarEntorno({ ...BASE, ...extra } as NodeJS.ProcessEnv);
 
 describe('pagos: configuración del entorno', () => {
-  test('fuera de producción el proveedor por defecto es el simulado', () => {
-    assert.equal(proveedorDePagoActivo(cargar({ NODE_ENV: 'development' })), 'simulado');
+  test('el proveedor por defecto es el manual (Nequi, llave Bre-B o QR); en las pruebas, el simulado', () => {
+    assert.equal(proveedorDePagoActivo(cargar({ NODE_ENV: 'development' })), 'manual');
+    assert.equal(proveedorDePagoActivo(cargar({ NODE_ENV: 'production' })), 'manual');
     assert.equal(proveedorDePagoActivo(cargar({ NODE_ENV: 'test' })), 'simulado');
   });
 
-  test('en producción no hay proveedor por defecto: los pagos quedan desactivados y el servidor arranca', () => {
-    assert.equal(proveedorDePagoActivo(cargar({ NODE_ENV: 'production' })), undefined);
+  test('PROVEEDOR_PAGO=manual se acepta en producción sin llaves ni URL_PAGOS; wompi sigue disponible', () => {
+    assert.equal(cargar({ NODE_ENV: 'production', PROVEEDOR_PAGO: 'manual' }).PROVEEDOR_PAGO, 'manual');
+    assert.throws(() => cargar({ NODE_ENV: 'production', PROVEEDOR_PAGO: 'otro' }), /PROVEEDOR_PAGO: debe ser manual, wompi o simulado/);
   });
 
   test('en producción se niega a arrancar con el proveedor simulado', () => {

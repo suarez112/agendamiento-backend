@@ -25,6 +25,8 @@ const RECUPERACION = 'b'.repeat(40);
 const TOTP = 'c'.repeat(40);
 const base = (extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: 'test', JWT_SECRET: JWT, ...extra };
+  // El proveedor de pago del .env de quien corre las pruebas no debe influir en estas
+  delete env.PROVEEDOR_PAGO;
   if (!('RECUPERACION_SECRET' in extra)) delete env.RECUPERACION_SECRET;
   if (!('TOTP_SECRET' in extra)) delete env.TOTP_SECRET;
   return env;
