@@ -320,6 +320,7 @@ describe('pagos manuales (Nequi, llave Bre-B y QR)', () => {
   describe('verificación del superadmin', () => {
     test('la lista de pendientes trae negocio, plan, periodo, monto, fecha y contacto del administrador', async () => {
       const n = await registrar();
+      await ctx.pool.query("UPDATE empresas SET whatsapp_contacto = '+573157778899' WHERE id = $1", [n.id]);
       const orden = await crearOrden(n, { periodo: 'anual' });
       const lista = await pedir(ctx, `${SUPER}/ordenes`, { token: superadmin });
       assert.equal(lista.estado, 200);
@@ -333,6 +334,7 @@ describe('pagos manuales (Nequi, llave Bre-B y QR)', () => {
       assert.match(item.creadaEn, /-05:00$/);
       assert.equal(item.contacto.administradora, 'Ana Pérez');
       assert.match(item.contacto.correo, /@central\.co$/);
+      assert.equal(item.contacto.whatsapp, '+573157778899');
       assert.ok(lista.json.datos.every((o: { estado: string }) => o.estado === 'pendiente'));
       assert.equal((await pedir(ctx, `${SUPER}/ordenes?estado=otra`, { token: superadmin })).estado, 400);
     });

@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { type RequestHandler, Router } from 'express';
 import { z } from 'zod';
 import { COBRO } from '../../config/planes.js';
 import { errores } from '../../shared/errores.js';
@@ -43,6 +43,10 @@ export const crearRutasPagos = (
 ) => {
   const rutas = Router();
   const soloAdmin = [guardias.requerirSesion, guardias.requerirAdmin(SOLO_ADMIN)];
+  // El tope de órdenes es de los pagos manuales y va después de las guardias: así no lo gasta quien no tiene sesión
+  // ni cambia el comportamiento de las pasarelas
+  const limitarOrdenesManuales: RequestHandler = (req, res, next) =>
+    proveedor?.nombre === 'manual' ? limitadores.ordenesPago(req, res, next) : next();
 
   // Webhook de la pasarela (público: la firma es la autenticación). Mientras no haya proveedor con webhook activo, 404.
   rutas.post('/webhook', async (req, res) => {
@@ -66,7 +70,7 @@ export const crearRutasPagos = (
   });
 
   // Con el proveedor manual no se acepta un monto ni un número de profesionales: solo el periodo
-  rutas.post('/ordenes', limitadores.ordenesPago, ...soloAdmin, async (req, res) => {
+  rutas.post('/ordenes', ...soloAdmin, limitarOrdenesManuales, async (req, res) => {
     if (proveedor?.nombre === 'manual' && manuales) {
       const { periodo } = parsear(esquemaOrdenManual, req.body);
       res.status(201).json(await manuales.ordenes.crearOrden(sesionDe(res).empresaId, { periodo }, manuales.urlBase(req)));
