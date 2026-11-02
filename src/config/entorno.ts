@@ -17,6 +17,9 @@ const esquemaBaseDeDatos = z.object({
   DB_POOL_MAX: z.coerce.number().int().positive().default(10),
 });
 
+// Una variable opcional escrita en blanco (por ejemplo, dejada vacía en el panel de Render) cuenta como no definida
+const vaciaComoAusente = (valor: unknown) => (typeof valor === 'string' && valor.trim() === '' ? undefined : valor);
+
 const LLAVES_WOMPI = {
   WOMPI_LLAVE_PUBLICA: { produccion: 'pub_prod_', prueba: 'pub_test_' },
   WOMPI_LLAVE_PRIVADA: { produccion: 'prv_prod_', prueba: 'prv_test_' },
@@ -121,16 +124,19 @@ const esquemaEntorno = esquemaBaseDeDatos
       .default('agendaya.app')
       .transform((base) => (/^https?:\/\//.test(base) ? base : `https://${base}`).replace(/\/+$/, '')),
     // Token de acceso de Expo para enviar notificaciones push (opcional: sin él también funciona)
-    EXPO_ACCESS_TOKEN: z.string().min(1).optional(),
+    EXPO_ACCESS_TOKEN: z.preprocess(vaciaComoAusente, z.string().min(1).optional()),
     // Pagos de la suscripción. PROVEEDOR_PAGO: "manual" (Nequi, llave Bre-B o QR con comprobante por WhatsApp; es el
     // valor por defecto), "wompi" (pasarela) o "simulado" (solo desarrollo y pruebas; es el valor por defecto en
     // las pruebas y en producción impide arrancar).
     PROVEEDOR_PAGO: z.enum(['simulado', 'wompi', 'manual'], { error: 'debe ser manual, wompi o simulado' }).optional(),
     // A dónde vuelve la persona después de pagar (la app o su página web): se le agrega /<referencia>
-    URL_PAGOS: z
-      .url({ protocol: /^https?$/, error: 'debe ser una dirección http:// o https://' })
-      .transform((url) => url.replace(/\/+$/, ''))
-      .optional(),
+    URL_PAGOS: z.preprocess(
+      vaciaComoAusente,
+      z
+        .url({ protocol: /^https?$/, error: 'debe ser una dirección http:// o https://' })
+        .transform((url) => url.replace(/\/+$/, ''))
+        .optional(),
+    ),
     // Llaves de Wompi (solo con PROVEEDOR_PAGO=wompi): publica, privada, secreto de eventos y secreto de integridad
     WOMPI_LLAVE_PUBLICA: z.string().trim().min(1).optional(),
     WOMPI_LLAVE_PRIVADA: z.string().trim().min(1).optional(),
