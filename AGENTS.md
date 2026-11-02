@@ -160,7 +160,7 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 
 | Método | Ruta | Acceso |
 | --- | --- | --- |
-| GET | `/salud` | público, fuera de `/api` (sin límite general). Comprobación de salud de Render: **200** `{ "estado": "ok" }` si la base responde; si no, **503** `{ "error": "Servicio no disponible" }` (sin detalles) |
+| GET | `/salud` | público, fuera de `/api` (sin límite general). Comprobación de salud de Render: **200** `{ "estado": "ok" }` si la base responde; si no responde o tarda más de 3 segundos, **503** `{ "error": "Servicio no disponible" }` (sin detalles) |
 | POST | `/api/v1/login` | público, limitado. **Login único**: administradora, personal o cliente con cuenta. Cuerpo `{ usuario: "correo o usuario", clave }` |
 | POST | `/api/v1/auth/login` | público, limitado. Personal (barberos). Cuerpo `{ usuario, clave }` (se mantiene) |
 | POST | `/api/v1/logout` | cualquier sesión (personal, administradora o cliente con cuenta). Cierra la sesión en el servidor (ver "Límites, bloqueos y sesiones") |

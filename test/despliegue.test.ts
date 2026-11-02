@@ -50,6 +50,26 @@ test('GET /salud responde 503 sin detalles si la base de datos no contesta', asy
   }
 });
 
+test('GET /salud responde 503 a tiempo si la base acepta la conexión pero nunca contesta', async () => {
+  const poolColgado = { query: () => new Promise(() => {}) } as unknown as pg.Pool;
+  const app = express();
+  app.use('/salud', crearRutaSalud(poolColgado, { tiempoMaximoMs: 100 }));
+  const servidor = await new Promise<ReturnType<typeof app.listen>>((resolver) => {
+    const s = app.listen(0, '127.0.0.1', () => resolver(s));
+  });
+  try {
+    const { port } = servidor.address() as AddressInfo;
+    const inicio = Date.now();
+    const r = await fetch(`http://127.0.0.1:${port}/salud`, { signal: AbortSignal.timeout(2_000) });
+    assert.equal(r.status, 503);
+    assert.deepEqual(await r.json(), { error: 'Servicio no disponible' });
+    assert.ok(Date.now() - inicio < 1_000, 'debe responder cerca del tiempo máximo, no quedarse esperando');
+  } finally {
+    servidor.closeAllConnections();
+    await new Promise((r) => servidor.close(r));
+  }
+});
+
 describe('variables opcionales vacías', () => {
   const BASE = {
     NODE_ENV: 'production',
