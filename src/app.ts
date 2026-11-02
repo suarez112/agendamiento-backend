@@ -60,6 +60,7 @@ import type { ProveedorPago } from './modules/pagos/proveedor.js';
 import { crearEnviadorCorreo, type EnviadorCorreo } from './shared/correo.js';
 import { crearEnviadorPush, type EnviadorPush } from './shared/push.js';
 import { crearCors } from './shared/http/cors.js';
+import { crearRutaSalud } from './shared/http/salud.js';
 import { AJUSTE_CLOUDFLARE } from './shared/http/ip.js';
 import { type ConfigLimites, crearLimitadores, LIMITES_POR_DEFECTO } from './shared/http/limitadores.js';
 import { manejadorErrores, rutaNoEncontrada } from './shared/http/manejadorErrores.js';
@@ -131,6 +132,7 @@ export const crearApp = ({
   app.use(helmet());
   app.use(crearCors(entorno));
   app.use(express.json({ limit: '10kb' }));
+  app.use('/salud', crearRutaSalud(pool));
   app.use('/api', limitadores.general);
 
   // Fotos subidas (empresas, equipo y productos). Los nombres son aleatorios y nunca se reutilizan, así que se
