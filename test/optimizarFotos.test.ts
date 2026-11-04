@@ -160,6 +160,28 @@ describe('optimizar las fotos ya guardadas', () => {
     assert.deepEqual(readFileSync(join(subidas, 'barberos', antigua.archivo)), antigua.datos);
   });
 
+  test('si la conversión de una foto falla, esa queda como estaba, no deja archivos de sobra y sigue con las demás', async () => {
+    const falla = await fotoAntigua('barberos', 'barb_a', await imagen(2000, 2500, 'jpeg'), 'jpg');
+    const buena = await fotoAntigua('empresas', 'emp_a', await imagen(3000, 2000, 'png'), 'png');
+    const { pendientes } = await revisarFotos(ctx.pool, subidas);
+    assert.equal(pendientes.length, 2);
+    // Entre la revisión y la conversión el archivo se daña: conserva la firma JPEG pero no se puede decodificar
+    const danada = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(200, 7)]);
+    writeFileSync(join(subidas, 'barberos', falla.archivo), danada);
+
+    const r = await convertirFotos(ctx.pool, pendientes, { carpetaSubidas: subidas, carpetaRespaldo: respaldo });
+    assert.deepEqual([r.convertidas, r.cambiadas, r.fallidas], [1, 0, 1]);
+    // La que falló: misma ruta, mismo archivo, sin WebP nuevo ni línea en cambios.csv
+    assert.equal(await rutaDe('barberos', 'barb_a'), falla.ruta);
+    assert.deepEqual(readdirSync(join(subidas, 'barberos')), [falla.archivo]);
+    assert.deepEqual(readFileSync(join(subidas, 'barberos', falla.archivo)), danada);
+    const cambios = readFileSync(join(respaldo, 'cambios.csv'), 'utf8').trim().split('\n');
+    assert.equal(cambios.length, 2);
+    assert.ok(cambios[1].startsWith(`empresas,emp_a,${buena.ruta},`));
+    // La otra sí se convirtió
+    assert.match(await rutaDe('empresas', 'emp_a'), /\.webp$/);
+  });
+
   test('una foto que usan dos filas: la original se conserva hasta convertir la última que la usa', async () => {
     const compartida = await fotoAntigua('barberos', 'barb_a', await imagen(2000, 2500, 'jpeg'), 'jpg');
     await consulta(`UPDATE barberos SET foto_url = $1 WHERE id = 'barb_a2'`, [compartida.ruta]);
@@ -229,7 +251,7 @@ describe('optimizar las fotos ya guardadas', () => {
         proceso.stdin.end(entrada);
       });
     const actividad = async () =>
-      (await consulta(`SELECT superadmin_correo, accion, detalle FROM actividad_superadmin WHERE accion = 'cmd_optimizar_fotos'`));
+      (await consulta(`SELECT superadmin_correo, accion, detalle FROM actividad_superadmin WHERE accion = 'cmd_optimizar_fotos' ORDER BY id`));
 
     test('muestra cuántas hay y, sin un sí, no cambia nada ni deja registro', async () => {
       const antigua = await fotoAntigua('barberos', 'barb_a', await imagen(2000, 2500, 'jpeg'), 'jpg');
@@ -262,6 +284,20 @@ describe('optimizar las fotos ya guardadas', () => {
       assert.match(otra.salida, /No hay fotos por convertir/);
       assert.doesNotMatch(otra.salida, /¿Convertir/);
       assert.equal((await actividad()).length, 1);
+    });
+
+    test('si una foto no se puede convertir, lo dice y sale con código 1 sin cambiarla', async () => {
+      const antigua = await fotoAntigua('barberos', 'barb_a', await imagen(2000, 2500, 'jpeg'), 'jpg');
+      // No se puede escribir cambios.csv: la conversión de esa foto falla
+      mkdirSync(join(respaldo, 'cambios.csv'), { recursive: true });
+      const r = await ejecutar([`--respaldo=${respaldo}`], 's\n');
+      assert.equal(r.codigo, 1, r.salida);
+      assert.match(r.salida, /✔ Convertidas: 0 de 1/);
+      assert.match(r.salida, /⚠ 1 no se pudieron convertir y quedaron como estaban/);
+      assert.equal(await rutaDe('barberos', 'barb_a'), antigua.ruta);
+      assert.deepEqual(readdirSync(join(subidas, 'barberos')), [antigua.archivo]);
+      // Queda anotado con la cifra de fallidas (el registro más reciente)
+      assert.equal((await actividad()).at(-1)!.detalle.fallidas, 1);
     });
 
     test('rechaza argumentos desconocidos y una copia dentro de la carpeta de fotos', async () => {
