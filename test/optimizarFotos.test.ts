@@ -146,6 +146,30 @@ describe('optimizar las fotos ya guardadas', () => {
     assert.deepEqual(readFileSync(join(respaldo, 'barberos', antigua.archivo)), antigua.datos);
   });
 
+  test('una foto que usan dos filas: la original se conserva hasta convertir la última que la usa', async () => {
+    const compartida = await fotoAntigua('barberos', 'barb_a', await imagen(2000, 2500, 'jpeg'), 'jpg');
+    await consulta(`UPDATE barberos SET foto_url = $1 WHERE id = 'barb_a2'`, [compartida.ruta]);
+    const { pendientes } = await revisarFotos(ctx.pool, subidas);
+    assert.equal(pendientes.length, 2);
+
+    // Solo la primera: la otra fila sigue apuntando a la original, que no se borra
+    const primera = await convertirFotos(ctx.pool, [pendientes[0]], { carpetaSubidas: subidas, carpetaRespaldo: respaldo });
+    assert.deepEqual([primera.convertidas, primera.fallidas], [1, 0]);
+    assert.equal(await rutaDe('barberos', pendientes[1].id), compartida.ruta);
+    assert.ok(existsSync(join(subidas, 'barberos', compartida.archivo)));
+
+    // La segunda también se convierte y entonces sí sale de la carpeta pública
+    const segunda = await convertirFotos(ctx.pool, [pendientes[1]], { carpetaSubidas: subidas, carpetaRespaldo: respaldo });
+    assert.deepEqual([segunda.convertidas, segunda.fallidas], [1, 0]);
+    for (const id of ['barb_a', 'barb_a2']) {
+      const ruta = await rutaDe('barberos', id);
+      assert.match(ruta, /\.webp$/);
+      assert.ok(existsSync(join(subidas, ruta.replace('/uploads/', ''))), ruta);
+    }
+    assert.equal(existsSync(join(subidas, 'barberos', compartida.archivo)), false);
+    assert.deepEqual(readFileSync(join(respaldo, 'barberos', compartida.archivo)), compartida.datos);
+  });
+
   test('la copia nunca puede quedar dentro de la carpeta pública de fotos', async () => {
     assert.equal(respaldoDentroDeSubidas(subidas, join(subidas, 'respaldo')), true);
     assert.equal(respaldoDentroDeSubidas(subidas, subidas), true);

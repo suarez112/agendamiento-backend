@@ -92,6 +92,12 @@ export const revisarFotos = async (db: Consultable, carpetaSubidas: string): Pro
   return { fotos, pendientes: fotos.filter((f) => f.estado === 'pendiente') };
 };
 
+// ¿Alguna fila (de cualquiera de los tres tipos) apunta todavía a esta ruta?
+const rutaEnUso = async (db: Consultable, ruta: string) => {
+  const sql = TIPOS.map((tipo) => `SELECT 1 FROM ${tipo} WHERE foto_url = $1`).join(' UNION ALL ');
+  return ((await db.query(`${sql} LIMIT 1`, [ruta])).rowCount ?? 0) > 0;
+};
+
 const anotarCambio = async (respaldo: string, columnas: string[]) => {
   const archivo = join(respaldo, ARCHIVO_CAMBIOS);
   // El encabezado solo la primera vez ('wx' falla si ya existe)
@@ -150,8 +156,9 @@ export const convertirFotos = async (
       resumen.convertidas++;
       resumen.bytesAntes += datos.length;
       resumen.bytesDespues += procesada.length;
-      // 4. La original ya tiene copia: se quita de la carpeta pública (si falla, solo ocupa espacio)
-      await unlink(original).catch(() => undefined);
+      // 4. La original ya tiene copia: se quita de la carpeta pública, salvo que otra fila todavía la use (se borrará
+      // al convertir la última). Si falla, solo ocupa espacio
+      if (!(await rutaEnUso(db, foto.ruta))) await unlink(original).catch(() => undefined);
     } catch {
       if (nuevaEscrita) await unlink(nueva).catch(() => undefined);
       resumen.fallidas++;
