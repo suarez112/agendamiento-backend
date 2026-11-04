@@ -11,7 +11,7 @@ una receta que le dice a Render qué crear). No necesitas saber de servidores.
 | Base de datos PostgreSQL (plan Basic 256 MB, Virginia) | `agendality-db` | Guarda todos los datos. Solo la ve tu servicio (red interna) |
 | Disco de 1 GB | `subidas` | Guarda las fotos que suben los negocios. Sin disco se borrarían en cada despliegue |
 
-**Qué pasa en cada despliegue** (cada vez que se une algo a `main` en GitHub):
+**Qué pasa en cada despliegue** (solo cuando tú lo lanzas con **Manual Deploy**; unir a `main` no publica nada, ver la sección 5):
 
 1. Render descarga el código y lo compila (`npm ci --include=dev && npm run build`).
 2. Aplica las migraciones pendientes de la base (`npm run db:migrate`). Si una falla, el despliegue se detiene y **la versión anterior
@@ -121,7 +121,27 @@ escrito en el código).
 Si pierdes la contraseña o el celular: `NODE_ENV=development npm run dev:restablecer-superadmin -- tu-correo@agendality.com`
 (agrega `--totp` para una clave nueva del segundo paso) y otra vez `rm -rf secretos-superadmin`.
 
-## 5. Si algo falla: ver los registros
+## 5. Desplegar a mano y revertir
+
+El despliegue automático está apagado (`autoDeployTrigger: "off"` en `render.yaml`): unir un Pull Request a `main` **no publica
+nada**. Tú decides cuándo.
+
+**Antes de desplegar migraciones nuevas** (archivos nuevos en `db/migraciones/`), saca una copia de la base:
+
+1. Base `agendality-db` → **Recovery** → **Create export**. Cuando termine, descarga el archivo (`.dir.tar.gz`) desde la tabla de esa
+   página. Render lo guarda 7 días; guárdalo tú también.
+2. Anota la hora: con **Point-in-Time Recovery** (misma página, **Restore Database**) puedes crear una base **nueva** con los datos de
+   ese momento (de los últimos días, nunca de los últimos 10 minutos).
+
+**Desplegar**: servicio `agendality-api` → **Manual Deploy** → **Deploy latest commit**. Sigue el avance en **Events** y, al terminar,
+comprueba `https://api.agendality.com/salud`.
+
+**Revertir (Rollback)**: servicio → **Deploys** (o **Events**) → en un despliegue anterior que funcionaba, **Rollback** → **Rollback
+to this deploy**. Vuelve el código, pero **no deshace las migraciones** ni las fotos del disco: si una migración dañó datos, restaura
+con la copia del paso anterior. Un Rollback desde el panel deja el despliegue automático apagado (aquí ya lo está); no lo actives en
+**Settings**.
+
+## 6. Si algo falla: ver los registros
 
 | Qué pasó | Dónde mirar |
 | --- | --- |

@@ -9,6 +9,8 @@ services:
     plan: starter
     region: virginia
     branch: main
+    # Merging into main does not publish: deploy by hand with Manual Deploy (docs/despliegue-render.md)
+    autoDeployTrigger: "off"
     # Dev dependencies are needed: tsc builds dist/ and tsx runs the migrations (some are .ts files)
     buildCommand: npm ci --include=dev && npm run build
     # Runs on every deploy, after the build and before the new version receives traffic.
