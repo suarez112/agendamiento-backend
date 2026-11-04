@@ -144,6 +144,20 @@ describe('optimizar las fotos ya guardadas', () => {
     // Solo queda la original (con su copia): la versión convertida se borró
     assert.deepEqual(readdirSync(join(subidas, 'barberos')), [antigua.archivo]);
     assert.deepEqual(readFileSync(join(respaldo, 'barberos', antigua.archivo)), antigua.datos);
+    // No se anotó un cambio que no ocurrió
+    assert.equal(existsSync(join(respaldo, 'cambios.csv')), false);
+  });
+
+  test('si no se puede anotar el cambio en cambios.csv, esa foto no se toca', async () => {
+    const antigua = await fotoAntigua('barberos', 'barb_a', await imagen(2000, 2500, 'jpeg'), 'jpg');
+    // Una carpeta con el nombre de la lista impide escribirla
+    mkdirSync(join(respaldo, 'cambios.csv'), { recursive: true });
+
+    const r = await optimizar();
+    assert.deepEqual([r.convertidas, r.cambiadas, r.fallidas], [0, 0, 1]);
+    assert.equal(await rutaDe('barberos', 'barb_a'), antigua.ruta);
+    assert.deepEqual(readdirSync(join(subidas, 'barberos')), [antigua.archivo]);
+    assert.deepEqual(readFileSync(join(subidas, 'barberos', antigua.archivo)), antigua.datos);
   });
 
   test('una foto que usan dos filas: la original se conserva hasta convertir la última que la usa', async () => {

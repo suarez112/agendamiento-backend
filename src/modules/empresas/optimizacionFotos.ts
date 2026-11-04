@@ -3,7 +3,8 @@ import { constants } from 'node:fs';
 import { appendFile, copyFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import sharp from 'sharp';
-import type { Consultable } from '../../db/pool.js';
+import type pg from 'pg';
+import { type Consultable, enTransaccion } from '../../db/pool.js';
 import { PREFIJO_SUBIDAS, procesarFoto, rutaFoto, TAMANOS_FOTO, type TipoFoto } from './fotos.js';
 
 // Optimiza las fotos que ya estaban guardadas antes de que las subidas se redujeran al tamaño de pantalla
@@ -106,10 +107,10 @@ const anotarCambio = async (respaldo: string, columnas: string[]) => {
 };
 
 // Convierte las fotos pendientes. Por cada una: 1) copia la original al respaldo, 2) guarda la versión WebP con un
-// nombre nuevo, 3) cambia la ruta en la base solo si la fila sigue apuntando a la original y 4) borra la original de la
-// carpeta pública. Si algo falla en una foto, esa foto queda como estaba y se sigue con las demás.
+// nombre nuevo, 3) si la fila sigue apuntando a la original, anota el cambio en cambios.csv y cambia la ruta en la base
+// y 4) borra la original de la carpeta pública si ya nadie la usa. Si algo falla en una foto, esa foto queda como estaba y se sigue con las demás.
 export const convertirFotos = async (
-  db: Consultable,
+  db: pg.Pool,
   pendientes: FotoGuardada[],
   opciones: { carpetaSubidas: string; carpetaRespaldo: string },
 ): Promise<Resumen> => {
@@ -139,20 +140,27 @@ export const convertirFotos = async (
       const procesada = await procesarFoto(datos, foto.tipo);
       await writeFile(nueva, procesada, { flag: 'wx' });
       nuevaEscrita = true;
-      // 3. La base pasa a la foto nueva solo si nadie la cambió mientras tanto
-      const cambio = await db.query(`UPDATE ${foto.tipo} SET foto_url = $1 WHERE id = $2 AND foto_url = $3`, [
-        rutaNueva,
-        foto.id,
-        foto.ruta,
-      ]);
-      if (!cambio.rowCount) {
+      // 3. Con la fila bloqueada: si nadie la cambió mientras tanto, se anota el cambio en cambios.csv y DESPUÉS se
+      // actualiza la base. Así toda foto convertida se puede deshacer; si no se puede anotar, la transacción se
+      // deshace y la foto queda como estaba. (Si la base fallara después de anotar, la línea sobra pero es inofensiva:
+      // devolver la ruta anterior a esa fila no cambia nada.)
+      const convertida = await enTransaccion(db, async (cliente) => {
+        const fila = await cliente.query<{ foto_url: string | null }>(
+          `SELECT foto_url FROM ${foto.tipo} WHERE id = $1 FOR UPDATE`,
+          [foto.id],
+        );
+        if (fila.rows[0]?.foto_url !== foto.ruta) return false;
+        await anotarCambio(respaldo, [foto.tipo, foto.id, foto.ruta, rutaNueva]);
+        await cliente.query(`UPDATE ${foto.tipo} SET foto_url = $1 WHERE id = $2`, [rutaNueva, foto.id]);
+        return true;
+      });
+      if (!convertida) {
         await unlink(nueva);
         resumen.cambiadas++;
         continue;
       }
       // Desde aquí la base apunta a la foto nueva: un error posterior nunca debe borrarla
       nuevaEscrita = false;
-      await anotarCambio(respaldo, [foto.tipo, foto.id, foto.ruta, rutaNueva]);
       resumen.convertidas++;
       resumen.bytesAntes += datos.length;
       resumen.bytesDespues += procesada.length;
