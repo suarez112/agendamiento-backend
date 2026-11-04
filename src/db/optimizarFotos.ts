@@ -10,23 +10,31 @@ import {
 import { confirmar, registrarComandoSinFallar } from './comandos.js';
 import { crearPool } from './pool.js';
 
-// npm run fotos:optimizar [-- --respaldo=CARPETA]
+// npm run fotos:optimizar [-- --simulacro] [--respaldo=CARPETA]
 // Convierte a WebP y reduce al tamaño de pantalla las fotos ya guardadas (negocios, equipo y productos) y actualiza su
 // ruta en la base. Primero muestra cuántas hay por convertir y pide confirmación; antes de tocar cada foto copia la
 // original a la carpeta de respaldo (por defecto <CARPETA_SUBIDAS>-respaldo/<fecha y hora>, fuera de la carpeta
 // pública). Se puede correr varias veces: lo que ya está optimizado no se toca. Nunca se ejecuta solo (no lo llaman
 // el arranque, el build ni las migraciones). Funciona también en producción, siempre con confirmación, y queda en la
-// actividad del superadmin (B-6).
+// actividad del superadmin (B-6). Con --simulacro solo muestra qué fotos convertiría, sin preguntar ni cambiar nada.
 dotenv.config({ quiet: true });
 
-const USO = `Uso: npm run fotos:optimizar [-- --respaldo=CARPETA]
+const USO = `Uso: npm run fotos:optimizar [-- --simulacro] [--respaldo=CARPETA]
 
+  --simulacro         solo muestra qué fotos convertiría; no pregunta ni cambia nada
   --respaldo=CARPETA  dónde guardar la copia de las originales
                       (por defecto <CARPETA_SUBIDAS>-respaldo/<fecha y hora>)`;
 
 const argumentos = process.argv.slice(2);
-const opcionRespaldo = argumentos.find((a) => a.startsWith('--respaldo='))?.slice('--respaldo='.length).trim();
-if (argumentos.length > 1 || (argumentos.length === 1 && !opcionRespaldo)) {
+const opcionesRespaldo = argumentos.filter((a) => a.startsWith('--respaldo='));
+const opcionRespaldo = opcionesRespaldo[0]?.slice('--respaldo='.length).trim();
+const simulacro = argumentos.includes('--simulacro');
+const valido =
+  argumentos.every((a) => a === '--simulacro' || a.startsWith('--respaldo=')) &&
+  argumentos.filter((a) => a === '--simulacro').length <= 1 &&
+  opcionesRespaldo.length <= 1 &&
+  (opcionesRespaldo.length === 0 || !!opcionRespaldo);
+if (!valido) {
   console.error(USO);
   process.exit(1);
 }
@@ -61,11 +69,19 @@ try {
     console.log('✔ No hay fotos por convertir. No se cambió nada.');
   } else {
     const peso = pendientes.reduce((total, f) => total + f.bytes, 0);
-    const aceptado = await confirmar(
-      `¿Convertir ${pendientes.length} foto(s) (${megas(peso)}) a WebP y reducirlas al tamaño de pantalla? ` +
-        `Antes se copiarán las originales a ${carpetaRespaldo}.`,
-    );
-    if (!aceptado) {
+    if (simulacro) {
+      // Solo muestra qué haría: nunca pregunta ni convierte
+      for (const f of pendientes) console.log(`  ${f.tipo} ${f.id} ${f.ruta} (${megas(f.bytes)})`);
+      console.log(
+        `Simulacro: se convertirían ${pendientes.length} foto(s) (${megas(peso)}) a WebP, con copia de las originales en ` +
+          `${carpetaRespaldo}. No se cambió nada.`,
+      );
+    } else if (
+      !(await confirmar(
+        `¿Convertir ${pendientes.length} foto(s) (${megas(peso)}) a WebP y reducirlas al tamaño de pantalla? ` +
+          `Antes se copiarán las originales a ${carpetaRespaldo}.`,
+      ))
+    ) {
       console.log('Cancelado: no se cambió nada.');
     } else {
       const r = await convertirFotos(pool, pendientes, { carpetaSubidas, carpetaRespaldo });

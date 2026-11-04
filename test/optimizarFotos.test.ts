@@ -300,10 +300,37 @@ describe('optimizar las fotos ya guardadas', () => {
       assert.equal((await actividad()).at(-1)!.detalle.fallidas, 1);
     });
 
+    test('con --simulacro muestra qué haría, foto por foto, sin preguntar ni cambiar nada', async () => {
+      const antigua = await fotoAntigua('barberos', 'barb_a', await imagen(2000, 2500, 'jpeg'), 'jpg');
+      await fotoAntigua('empresas', 'emp_a', await imagen(300, 225, 'webp'), 'webp');
+      const antes = fotografia();
+      const registros = (await actividad()).length;
+      // Aunque llegue un "s", el simulacro no pregunta
+      const r = await ejecutar(['--simulacro', `--respaldo=${respaldo}`], 's\n');
+      assert.equal(r.codigo, 0, r.salida);
+      assert.match(r.salida, /por convertir: 1/);
+      assert.match(r.salida, /ya optimizadas: 1/);
+      assert.ok(r.salida.includes(`barberos barb_a ${antigua.ruta}`), r.salida);
+      assert.match(r.salida, /Simulacro: se convertirían 1 foto\(s\) \(\d+\.\d\d MB\)/);
+      assert.match(r.salida, /No se cambió nada/);
+      assert.doesNotMatch(r.salida, /¿Convertir|✔ Convertidas/);
+      assert.equal(await rutaDe('barberos', 'barb_a'), antigua.ruta);
+      assert.deepEqual(fotografia(), antes);
+      assert.equal((await actividad()).length, registros);
+      // Sin pendientes dice lo mismo de siempre
+      await consulta(`UPDATE barberos SET foto_url = NULL WHERE id = 'barb_a'`);
+      const nada = await ejecutar(['--simulacro'], '');
+      assert.equal(nada.codigo, 0, nada.salida);
+      assert.match(nada.salida, /No hay fotos por convertir/);
+    });
+
     test('rechaza argumentos desconocidos y una copia dentro de la carpeta de fotos', async () => {
       const desconocido = await ejecutar(['--ya'], '');
       assert.equal(desconocido.codigo, 1);
       assert.match(desconocido.salida, /Uso: npm run fotos:optimizar/);
+      const repetido = await ejecutar(['--simulacro', '--simulacro'], '');
+      assert.equal(repetido.codigo, 1);
+      assert.match(repetido.salida, /--simulacro/);
       const adentro = await ejecutar([`--respaldo=${join(subidas, 'copia')}`], 's\n');
       assert.equal(adentro.codigo, 1);
       assert.match(adentro.salida, /no puede estar dentro de la carpeta de fotos/);
