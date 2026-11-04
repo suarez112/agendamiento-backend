@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import dotenv from 'dotenv';
 import { cargarEntornoBaseDeDatos } from '../config/entorno.js';
 import {
@@ -74,7 +75,7 @@ try {
       for (const f of pendientes) console.log(`  ${f.tipo} ${f.id} ${f.ruta} (${megas(f.bytes)})`);
       console.log(
         `Simulacro: se convertirían ${pendientes.length} foto(s) (${megas(peso)}) a WebP, con copia de las originales en ` +
-          `${carpetaRespaldo}. No se cambió nada.`,
+          `${opcionRespaldo ? carpetaRespaldo : `${resolve(carpetaSubidas)}-respaldo/<fecha y hora de la corrida>`}. No se cambió nada.`,
       );
     } else if (
       !(await confirmar(

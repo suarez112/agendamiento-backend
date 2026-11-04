@@ -108,7 +108,8 @@ const anotarCambio = async (respaldo: string, columnas: string[]) => {
 
 // Convierte las fotos pendientes. Por cada una: 1) copia la original al respaldo, 2) guarda la versión WebP con un
 // nombre nuevo, 3) si la fila sigue apuntando a la original, anota el cambio en cambios.csv y cambia la ruta en la base
-// y 4) borra la original de la carpeta pública si ya nadie la usa. Si algo falla en una foto, esa foto queda como estaba y se sigue con las demás.
+// y 4) borra la original de la carpeta pública si ya nadie la usa. Si algo falla en una foto, esa foto queda como
+// estaba y se sigue con las demás.
 export const convertirFotos = async (
   db: pg.Pool,
   pendientes: FotoGuardada[],
@@ -166,7 +167,9 @@ export const convertirFotos = async (
       resumen.bytesDespues += procesada.length;
       // 4. La original ya tiene copia: se quita de la carpeta pública, salvo que otra fila todavía la use (se borrará
       // al convertir la última). Si falla, solo ocupa espacio
-      if (!(await rutaEnUso(db, foto.ruta))) await unlink(original).catch(() => undefined);
+      // (si la consulta falla, se conserva: la foto ya quedó convertida y no debe contarse como fallida)
+      const enUso = await rutaEnUso(db, foto.ruta).catch(() => true);
+      if (!enUso) await unlink(original).catch(() => undefined);
     } catch {
       if (nuevaEscrita) await unlink(nueva).catch(() => undefined);
       resumen.fallidas++;

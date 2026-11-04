@@ -317,6 +317,10 @@ describe('optimizar las fotos ya guardadas', () => {
       assert.equal(await rutaDe('barberos', 'barb_a'), antigua.ruta);
       assert.deepEqual(fotografia(), antes);
       assert.equal((await actividad()).length, registros);
+      // Sin --respaldo no inventa una carpeta con una hora que la corrida real no usará
+      const sinCarpeta = await ejecutar(['--simulacro'], '');
+      assert.match(sinCarpeta.salida, /-respaldo\/<fecha y hora de la corrida>\. No se cambió nada/);
+      assert.deepEqual(fotografia(), antes);
       // Sin pendientes dice lo mismo de siempre
       await consulta(`UPDATE barberos SET foto_url = NULL WHERE id = 'barb_a'`);
       const nada = await ejecutar(['--simulacro'], '');
