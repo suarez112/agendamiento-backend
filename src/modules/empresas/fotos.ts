@@ -10,17 +10,30 @@ import { registro } from '../../shared/registro.js';
 
 // Fotos subidas (empresas, equipo y productos): se guardan en
 // <CARPETA_SUBIDAS>/<tipo> con un nombre aleatorio y la base solo guarda su ruta
-// pública (/uploads/<tipo>/<archivo>). Toda foto nueva se valida como imagen real, se reduce a 1080 px
-// de lado como máximo, se convierte a WebP y pierde sus metadatos (EXIF, incluida la ubicación GPS).
-// Las fotos que ya estaban guardadas no se tocan.
+// pública (/uploads/<tipo>/<archivo>). Toda foto nueva se valida como imagen real, se reduce al tamaño con que
+// la app la muestra (TAMANOS_FOTO), se convierte a WebP y pierde sus metadatos (EXIF, incluida la ubicación GPS).
+// Las fotos que ya estaban guardadas siguen sirviendo tal cual; npm run fotos:optimizar las convierte aparte.
 
 export const PREFIJO_SUBIDAS = '/uploads';
 export const MAX_BYTES_FOTO = 5 * 1024 * 1024;
-export const MAX_LADO_FOTO = 1080;
+export const CALIDAD_WEBP = 80;
 // Tope de píxeles al decodificar: una imagen pequeña en bytes puede ser enorme al abrirla
 const MAX_PIXELES = 40_000_000;
 
 export type TipoFoto = 'empresas' | 'barberos' | 'productos';
+
+// Caja máxima (en píxeles) de cada tipo de foto: la imagen cabe dentro sin recortarse ni agrandarse.
+// Sale del tamaño con que la app la muestra, con margen para pantallas nítidas (2x a 3x):
+// - barberos: tarjeta vertical 4:5 al 48 % del ancho (unos 180 dp en un celular, hasta 365 dp en la web) y círculos
+//   de 40 a 56 dp. 720 × 900 cubre la tarjeta en un celular a 3x y en la web a 2x.
+// - empresas: casi todo el ancho de la pantalla (16:9 en el perfil, 4:3 en Mi negocio; unos 410 dp en un celular y
+//   hasta 760 dp en la web). 1200 × 900 cubre un celular a 3x.
+// - productos: sin cambios (1080 de lado).
+export const TAMANOS_FOTO: Record<TipoFoto, { ancho: number; alto: number }> = {
+  barberos: { ancho: 720, alto: 900 },
+  empresas: { ancho: 1200, alto: 900 },
+  productos: { ancho: 1080, alto: 1080 },
+};
 
 const MENSAJE_TIPO = 'La foto debe ser una imagen JPG, PNG o WEBP';
 const MENSAJE_TAMANO = 'La foto no puede pesar más de 5 MB';
@@ -28,7 +41,7 @@ const MENSAJE_CAMPO = 'Envía la imagen en el campo "foto" (multipart/form-data)
 
 const TIPOS_PERMITIDOS = new Set(['image/jpeg', 'image/png', 'image/webp']);
 // Para empresas, igual que la restricción empresas_foto_url_valida de la migración 004
-const rutaFoto = (tipo: TipoFoto) => new RegExp(`^${PREFIJO_SUBIDAS}/${tipo}/([a-f0-9-]{36}\\.(jpg|png|webp))$`);
+export const rutaFoto = (tipo: TipoFoto) => new RegExp(`^${PREFIJO_SUBIDAS}/${tipo}/([a-f0-9-]{36}\\.(jpg|png|webp))$`);
 
 type Extension = 'jpg' | 'png' | 'webp';
 
@@ -49,6 +62,24 @@ export const extensionPorContenido = (datos: Buffer): Extension | undefined => {
   return undefined;
 };
 
+// Convierte una imagen al formato que se guarda: aplica la orientación del EXIF (rotate) para que no quede girada al
+// perder ese dato, la reduce a la caja de su tipo (sin agrandarla), la pasa a WebP y descarta los metadatos (sharp no
+// los copia a la salida). Lanza 400 si no es JPG/PNG/WEBP real o no se puede decodificar.
+export const procesarFoto = async (datos: Buffer, tipo: TipoFoto): Promise<Buffer> => {
+  if (!extensionPorContenido(datos)) throw errores.solicitudInvalida(MENSAJE_TIPO);
+  const { ancho, alto } = TAMANOS_FOTO[tipo];
+  try {
+    return await sharp(datos, { limitInputPixels: MAX_PIXELES, failOn: 'error' })
+      .rotate()
+      .resize(ancho, alto, { fit: 'inside', withoutEnlargement: true })
+      .webp({ quality: CALIDAD_WEBP })
+      .toBuffer();
+  } catch {
+    // Archivo con la firma de una imagen pero dañado o que no se puede decodificar
+    throw errores.solicitudInvalida(MENSAJE_TIPO);
+  }
+};
+
 export const crearAlmacenFotos = (carpetaSubidas: string, tipo: TipoFoto) => {
   const carpeta = resolve(carpetaSubidas, tipo);
   mkdirSync(carpeta, { recursive: true });
@@ -58,23 +89,9 @@ export const crearAlmacenFotos = (carpetaSubidas: string, tipo: TipoFoto) => {
   return {
     carpeta,
 
-    // Guarda la imagen y devuelve su ruta pública. Rechaza lo que no sea JPG/PNG/WEBP real.
-    // Se redimensiona (máximo 1080 px de lado, sin agrandar), se convierte a WebP y se descartan
-    // los metadatos: sharp no los copia a la salida. rotate() aplica antes la orientación del EXIF,
-    // para que la foto no quede girada al perder ese dato.
+    // Guarda la imagen ya procesada (procesarFoto) y devuelve su ruta pública
     async guardar(datos: Buffer): Promise<string> {
-      if (!extensionPorContenido(datos)) throw errores.solicitudInvalida(MENSAJE_TIPO);
-      let procesada: Buffer;
-      try {
-        procesada = await sharp(datos, { limitInputPixels: MAX_PIXELES, failOn: 'error' })
-          .rotate()
-          .resize(MAX_LADO_FOTO, MAX_LADO_FOTO, { fit: 'inside', withoutEnlargement: true })
-          .webp({ quality: 80 })
-          .toBuffer();
-      } catch {
-        // Archivo con la firma de una imagen pero dañado o que no se puede decodificar
-        throw errores.solicitudInvalida(MENSAJE_TIPO);
-      }
+      const procesada = await procesarFoto(datos, tipo);
       const archivo = `${randomUUID()}.webp`;
       await writeFile(join(carpeta, archivo), procesada, { flag: 'wx' });
       return `${prefijo}/${archivo}`;

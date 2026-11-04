@@ -8,6 +8,8 @@ dist/
 
 # Fotos subidas por los negocios (CARPETA_SUBIDAS)
 uploads/
+# Copias de las fotos originales que guarda npm run fotos:optimizar (<CARPETA_SUBIDAS>-respaldo)
+uploads-respaldo/
 
 # Códigos QR del segundo paso del superadmin (dev:crear-superadmin y dev:restablecer-superadmin)
 secretos-superadmin/
