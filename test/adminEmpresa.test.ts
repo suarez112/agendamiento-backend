@@ -246,6 +246,57 @@ describe('administración de la empresa', () => {
     assert.equal(propio.json.id, 'emp_a');
   });
 
+  // Mi negocio muestra el WhatsApp guardado, para que el panel lo cargue en el formulario
+  test('Mi negocio devuelve el WhatsApp de contacto guardado, solo al administrador de ese negocio', async () => {
+    const sinNumero = await verEmpresa(tokenA);
+    assert.equal(sinNumero.estado, 200);
+    assert.equal(sinNumero.json.whatsappContacto, null);
+    assert.equal(sinNumero.json.whatsappUrl, null);
+
+    const guardar = await editarEmpresa(tokenA, { whatsappContacto: '300 123 4567' });
+    assert.equal(guardar.estado, 200);
+    assert.equal(guardar.json.whatsappContacto, '+573001234567');
+    assert.equal(guardar.json.whatsappUrl, 'https://wa.me/573001234567');
+
+    const leido = await verEmpresa(tokenA);
+    assert.equal(leido.json.whatsappContacto, '+573001234567');
+    assert.equal(leido.json.whatsappUrl, 'https://wa.me/573001234567');
+    const { rows } = await ctx.pool.query('SELECT whatsapp_contacto FROM empresas WHERE id = $1', [empresaA]);
+    assert.equal(rows[0].whatsapp_contacto, '+573001234567');
+
+    // Otro negocio no ve ese número: ve el suyo (ninguno)
+    const otro = await verEmpresa(tokenB);
+    assert.equal(otro.json.id, empresaB);
+    assert.equal(otro.json.whatsappContacto, null);
+    assert.equal(otro.json.whatsappUrl, null);
+
+    // Ni el cliente, ni un empleado, ni alguien sin sesión reciben el número: solo el error
+    const empleado = await iniciarSesion(ctx, 'barbero.a', 'clave-a');
+    for (const [token, estado] of [[tokenCliente, 403], [empleado, 403], [undefined, 401]] as const) {
+      const r = await verEmpresa(token as string);
+      assert.equal(r.estado, estado);
+      assert.deepEqual(Object.keys(r.json), ['error']);
+    }
+
+    // null lo quita
+    const quitar = await editarEmpresa(tokenA, { whatsappContacto: null });
+    assert.equal(quitar.estado, 200);
+    assert.equal(quitar.json.whatsappContacto, null);
+    assert.equal(quitar.json.whatsappUrl, null);
+  });
+
+  // El perfil para clientes no cambia con lo que devuelve Mi negocio
+  test('el perfil público del negocio conserva sus mismos campos', async () => {
+    const r = await pedir(ctx, '/api/v1/empresas/perfil/EMPB');
+    assert.equal(r.estado, 200);
+    assert.deepEqual(Object.keys(r.json).sort(), [
+      'anticipacionCancelacionHoras', 'categoria', 'ciudad', 'codigoAcceso', 'colorPrimario', 'colorSecundario',
+      'departamento', 'diasAtencion', 'direccion', 'fotoUrl', 'googleMapsUrl', 'horario', 'horarioApertura',
+      'horarioCierre', 'id', 'intervaloMinutos', 'logoUrl', 'nombre', 'pais', 'recibiendoReservas',
+      'whatsappContacto', 'whatsappUrl', 'zonaHoraria',
+    ]);
+  });
+
   test('un cambio de rol aplica de inmediato', async () => {
     const otro = await registrarEmpresa(ctx, { correo: 'admin@c.co' });
     await ctx.pool.query("UPDATE usuarios SET rol = 'cliente', empresa_id = NULL WHERE id = $1", [otro.json.usuario.id]);

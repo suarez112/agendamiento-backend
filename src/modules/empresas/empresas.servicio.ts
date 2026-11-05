@@ -334,6 +334,8 @@ const armarPerfil = ({ perfil: p, horario: h }: PerfilConHorario, urlBase: strin
   precisionUbicacion: numeroONulo(p.precision_ubicacion),
   googleMapsUrl: enlaceGoogleMaps(p),
   intervaloMinutos: p.intervalo_minutos,
+  whatsappContacto: p.whatsapp_contacto,
+  whatsappUrl: enlaceWhatsapp(p.whatsapp_contacto),
   estadoSuscripcion: p.estado_suscripcion,
   pais: p.pais,
   zonaHoraria: p.zona_horaria,
