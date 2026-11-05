@@ -240,6 +240,9 @@ export const crearServicioCitas = ({
     const { empresaId } = sesion;
     const barberoId = profesionalDelPanel(sesion, datos.barberoId);
     const { servicioId, fecha, hora } = datos;
+    // Antes de guardar: un empleado sin permiso no recibe el teléfono (tampoco el de un cliente existente elegido
+    // por su id). Si la opción no se puede leer, cuenta como apagada, así nunca hay un 500 con la cita ya guardada
+    const verTelefonos = await puedeVerTelefonos(pool, sesion);
 
     // Cliente: uno existente del negocio, o uno nuevo con nombre y teléfono
     const nuevo = datos.nombre !== undefined || datos.telefono !== undefined;
@@ -324,8 +327,6 @@ export const crearServicioCitas = ({
     void notificaciones?.avisarCitaNueva(citaId);
     void notificaciones?.avisarCitaCreadaPorNegocio(citaId);
 
-    // Un empleado sin permiso no recibe el teléfono, tampoco el de un cliente existente que eligió por su id
-    const verTelefonos = await puedeVerTelefonos(pool, sesion);
     return {
       mensaje: 'Cita agendada',
       cita: {

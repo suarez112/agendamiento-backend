@@ -267,6 +267,27 @@ describe('barrido: el teléfono de los clientes no llega a un empleado sin permi
     assert.equal(await telefonoEnAgenda(tokenEmpleado), null);
   });
 
+  test('si la opción no se puede leer: la cita del panel se guarda, responde 201 con el teléfono en null (nunca 500)', async () => {
+    await opcion(true); // aunque estuviera encendida, sin poder leerla no se muestra
+    // Simula una falla al leer la opción: la columna deja de existir mientras dura la prueba
+    await ctx.pool.query('ALTER TABLE empresas RENAME COLUMN empleados_ven_telefono TO empleados_ven_telefono_x');
+    try {
+      const panel = await citaDelPanel(tokenEmpleado);
+      assert.equal(panel.estado, 201, panel.texto);
+      assert.equal(panel.json.cita.telefono, null);
+      assert.equal(panel.json.cita.indicativo, null);
+      assert.ok(!filtra(panel.texto));
+      const guardada = await ctx.pool.query('SELECT estado FROM citas WHERE id = $1', [panel.json.cita.id]);
+      assert.equal(guardada.rows[0]?.estado, 'CONFIRMADA');
+      assert.equal(await telefonoEnAgenda(tokenEmpleado), null);
+      // Los administradores no dependen de la opción: lo siguen viendo
+      assert.equal(await telefonoEnAgenda(tokenAdmin), TELEFONO);
+    } finally {
+      await ctx.pool.query('ALTER TABLE empresas RENAME COLUMN empleados_ven_telefono_x TO empleados_ven_telefono');
+      await opcion(false);
+    }
+  });
+
   test('la opción encendida en otro negocio no le da permiso al empleado', async () => {
     const tokenAdminB = await iniciarSesion(ctx, 'admin.b', 'clave-b');
     const r = await pedir(ctx, RUTA, { method: 'PUT', token: tokenAdminB, body: { empleadosVenTelefono: true } });
