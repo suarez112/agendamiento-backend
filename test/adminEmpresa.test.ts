@@ -246,6 +246,91 @@ describe('administración de la empresa', () => {
     assert.equal(propio.json.id, 'emp_a');
   });
 
+  // Mi negocio muestra el WhatsApp guardado, para que el panel lo cargue en el formulario
+  test('Mi negocio devuelve el WhatsApp de contacto guardado, solo al administrador de ese negocio', async () => {
+    const sinNumero = await verEmpresa(tokenA);
+    assert.equal(sinNumero.estado, 200);
+    assert.equal(sinNumero.json.whatsappContacto, null);
+    assert.equal(sinNumero.json.whatsappUrl, null);
+
+    const guardar = await editarEmpresa(tokenA, { whatsappContacto: '300 123 4567' });
+    assert.equal(guardar.estado, 200);
+    assert.equal(guardar.json.whatsappContacto, '+573001234567');
+    assert.equal(guardar.json.whatsappUrl, 'https://wa.me/573001234567');
+
+    const leido = await verEmpresa(tokenA);
+    assert.equal(leido.json.whatsappContacto, '+573001234567');
+    assert.equal(leido.json.whatsappUrl, 'https://wa.me/573001234567');
+    const { rows } = await ctx.pool.query('SELECT whatsapp_contacto FROM empresas WHERE id = $1', [empresaA]);
+    assert.equal(rows[0].whatsapp_contacto, '+573001234567');
+
+    // Otro negocio no ve ese número: ve el suyo (ninguno)
+    const otro = await verEmpresa(tokenB);
+    assert.equal(otro.json.id, empresaB);
+    assert.equal(otro.json.whatsappContacto, null);
+    assert.equal(otro.json.whatsappUrl, null);
+
+    // Ni el cliente, ni un empleado, ni alguien sin sesión reciben el número: solo el error
+    const empleado = await iniciarSesion(ctx, 'barbero.a', 'clave-a');
+    for (const [token, estado] of [[tokenCliente, 403], [empleado, 403], [undefined, 401]] as const) {
+      const r = await verEmpresa(token as string);
+      assert.equal(r.estado, estado);
+      assert.deepEqual(Object.keys(r.json), ['error']);
+    }
+
+    // null lo quita
+    const quitar = await editarEmpresa(tokenA, { whatsappContacto: null });
+    assert.equal(quitar.estado, 200);
+    assert.equal(quitar.json.whatsappContacto, null);
+    assert.equal(quitar.json.whatsappUrl, null);
+  });
+
+  // Mi negocio muestra la anticipación guardada, para que el panel no la muestre vacía
+  test('Mi negocio devuelve la anticipación para cancelar o reprogramar, y editar otro dato no la cambia', async (t) => {
+    // Al terminar, B vuelve a quedar como estaba, para que ninguna otra prueba dependa del orden
+    const original = (await ctx.pool.query(
+      'SELECT direccion, anticipacion_cancelacion_horas, guia_horario_revisado_en FROM empresas WHERE id = $1',
+      [empresaB],
+    )).rows[0];
+    t.after(() =>
+      ctx.pool.query(
+        `UPDATE empresas SET direccion = $2, anticipacion_cancelacion_horas = $3, guia_horario_revisado_en = $4
+         WHERE id = $1`,
+        [empresaB, original.direccion, original.anticipacion_cancelacion_horas, original.guia_horario_revisado_en],
+      ),
+    );
+
+    const porDefecto = await verEmpresa(tokenB);
+    assert.equal(porDefecto.estado, 200);
+    assert.equal(porDefecto.json.anticipacionCancelacionHoras, 3);
+
+    const guardar = await editarEmpresa(tokenB, { anticipacionCancelacionHoras: 12 });
+    assert.equal(guardar.estado, 200);
+    assert.equal(guardar.json.anticipacionCancelacionHoras, 12);
+
+    const otroDato = await editarEmpresa(tokenB, { direccion: 'Calle 5 # 6-7' });
+    assert.equal(otroDato.estado, 200);
+    assert.equal(otroDato.json.anticipacionCancelacionHoras, 12);
+    assert.equal((await verEmpresa(tokenB)).json.anticipacionCancelacionHoras, 12);
+    const { rows } = await ctx.pool.query('SELECT anticipacion_cancelacion_horas FROM empresas WHERE id = $1', [empresaB]);
+    assert.equal(rows[0].anticipacion_cancelacion_horas, 12);
+
+    // La otra empresa conserva la suya
+    assert.equal((await verEmpresa(tokenA)).json.anticipacionCancelacionHoras, 3);
+  });
+
+  // El perfil para clientes no cambia con lo que devuelve Mi negocio
+  test('el perfil público del negocio conserva sus mismos campos', async () => {
+    const r = await pedir(ctx, '/api/v1/empresas/perfil/EMPB');
+    assert.equal(r.estado, 200);
+    assert.deepEqual(Object.keys(r.json).sort(), [
+      'anticipacionCancelacionHoras', 'categoria', 'ciudad', 'codigoAcceso', 'colorPrimario', 'colorSecundario',
+      'departamento', 'diasAtencion', 'direccion', 'fotoUrl', 'googleMapsUrl', 'horario', 'horarioApertura',
+      'horarioCierre', 'id', 'intervaloMinutos', 'logoUrl', 'nombre', 'pais', 'recibiendoReservas',
+      'whatsappContacto', 'whatsappUrl', 'zonaHoraria',
+    ]);
+  });
+
   test('un cambio de rol aplica de inmediato', async () => {
     const otro = await registrarEmpresa(ctx, { correo: 'admin@c.co' });
     await ctx.pool.query("UPDATE usuarios SET rol = 'cliente', empresa_id = NULL WHERE id = $1", [otro.json.usuario.id]);
