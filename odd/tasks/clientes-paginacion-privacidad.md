@@ -20,10 +20,11 @@ Decisions confirmed by the user (L2):
 ## Tasks
 
 - [x] T0 — S5: migration number check. Route: inline. Evidence in L3.
-- [ ] T1 — S1: pagination + search in `GET /clientes`. Route: inline (single unit, no Writer trigger). Commit: pending.
-- [ ] T2 — S2: migration 034 + `GET`/`PUT /admin/empresa/privacidad-clientes`. Route: inline. Commit: pending.
-- [ ] T3 — S3, S4: hide phone for employees in every employee-reachable response + sweep tests. Route: inline; independent verifier after (Risk item 2). Commit: pending.
-- [ ] T4 — S6: docs (AGENTS.md, README.md). Bundled with each task's commit.
+- [x] T1 — S1: pagination + search in `GET /clientes`. Route: inline (single unit, no Writer trigger). Commit: 47e02ce. RED 6/8 failing → GREEN 8/8. Assess: medium, under_budget.
+- [x] T2 — S2: migration 034 + `GET`/`PUT /admin/empresa/privacidad-clientes`. Route: inline. Commit: 9fba517. RED 0/5 → GREEN 5/5.
+- [x] T3 — S3, S4: hide phone for employees in every employee-reachable response + sweep tests. Route: inline. Commit: 57d6ade. RED 4/10 failing → GREEN 10/10. Full suite 483/483, typecheck OK. Assess (escalated item 2): high, review_due.
+- [ ] T3-V — independent verifier (Risk item 2): running.
+- [x] T4 — S6: docs in AGENTS.md, bundled with each commit (README.md defers API docs to AGENTS.md; `docs/` holds no API reference).
 
 ## Log
 
@@ -31,3 +32,5 @@ Decisions confirmed by the user (L2):
 - L2 (2026-11-05, user): "Sí, arranca con tu plan. Dos ajustes: 1) Antes de crear la migración 034, comprueba que ninguna otra rama o PR pendiente (por ejemplo la de clientes filtrados por empleado) use ese mismo número. Si hay riesgo de choque, dímelo. 2) En las pruebas de barrido, incluye el caso de cambiar la opción de apagada a encendida y de encendida a apagada, y comprueba que el cambio se nota de inmediato para el empleado, sin esperar ni reiniciar. Como pediste, no apliques la migración sobre agendamiento_db sin avisarme. Sin push."
 - L3 (T0): no local branch, remote branch or PR head (refs/pull/1..13) contains a migration numbered 034 or higher. Local-only branch `feat/clientes-panel-empleado` (commit 7e6e561, unpushed) adds no migration, but adds `GET /citas/panel/clientes`, which returns `telefono`/`indicativo` to employees: if merged after this feature it must apply the same phone rule. It also edits `crearDesdePanel` in `citas.servicio.ts` (likely text conflict).
 - L4: employee-reachable responses with client phones at base: `GET /citas/agenda` (`telefono`) and `POST /citas/panel` (`cita.telefono`, `cita.indicativo`). Notifications carry no phone; no client WhatsApp link exists.
+- L5 (T1): `q=100%` matched phones containing "100"; phone search now applies only when `q` looks like a number (digits, spaces, `+ - . ( )`).
+- L6: migration 034 not applied to `agendamiento_db` (user). Until it is, the running dev server (working tree code) answers 500 to employees on `GET /citas/agenda` and `POST /citas/panel`, and to admins on `/admin/empresa/privacidad-clientes`, because they read the new column (admins skip that read in agenda/panel).

@@ -136,7 +136,17 @@ describe('paginación y búsqueda de clientes', () => {
       assert.equal(r.json.error, MENSAJE_LIMITE);
     }
     assert.equal((await listar('?limite=50')).estado, 200);
-    for (const cursor of ['basura', 'eyJ4IjoxfQ', Buffer.from('{"f":"no-fecha","n":"a","i":"b"}').toString('base64url')]) {
+    const armarCursor = (f: unknown, n = 'a', i = 'b') => Buffer.from(JSON.stringify({ f, n, i })).toString('base64url');
+    for (const cursor of [
+      'basura',
+      'eyJ4IjoxfQ',
+      Buffer.from('{"f":"no-fecha","n":"a","i":"b"}').toString('base64url'),
+      // Fechas que no existen y caracteres nulos (antes respondían 500)
+      armarCursor('2026-02-30'),
+      armarCursor('0000-01-01'),
+      armarCursor(null, 'a\u0000b'),
+      armarCursor('2026-01-10', 'a', 'b\u0000'),
+    ]) {
       const r = await listar(`?cursor=${cursor}`);
       assert.equal(r.estado, 400, `cursor=${cursor}`);
       assert.equal(r.json.error, 'El cursor no es válido. Vuelve a pedir la primera página.');
@@ -144,6 +154,9 @@ describe('paginación y búsqueda de clientes', () => {
     const larga = await listar(`?q=${'a'.repeat(101)}`);
     assert.equal(larga.estado, 400);
     assert.equal(larga.json.error, 'La búsqueda puede tener hasta 100 caracteres');
+    const nulo = await listar('?q=a%00b');
+    assert.equal(nulo.estado, 400);
+    assert.equal(nulo.json.error, 'La búsqueda debe ser un texto');
   });
 
   test('sigue siendo solo para administradores, también con parámetros', async () => {

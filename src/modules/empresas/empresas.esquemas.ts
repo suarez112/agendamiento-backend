@@ -211,7 +211,7 @@ export const esquemaPrivacidadClientes = z.object(
   { error: MENSAJE_PRIVACIDAD },
 );
 
-const MENSAJE_INTERVALO =`El intervalo debe ser ${INTERVALOS_MINUTOS.join(', ')} minutos`;
+const MENSAJE_INTERVALO = `El intervalo debe ser ${INTERVALOS_MINUTOS.join(', ')} minutos`;
 
 // Cada cuántos minutos pueden agendar los clientes
 export const esquemaIntervalo = z.object(

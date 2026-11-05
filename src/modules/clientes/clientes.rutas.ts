@@ -16,7 +16,11 @@ const MENSAJE_LIMITE = 'El límite debe ser un número entero entre 1 y 50';
 const esquemaPagina = z.object({
   limite: z.coerce.number({ error: MENSAJE_LIMITE }).int(MENSAJE_LIMITE).min(1, MENSAJE_LIMITE).max(50, MENSAJE_LIMITE).default(20),
   cursor: z.string({ error: CURSOR_INVALIDO }).min(1, CURSOR_INVALIDO).max(500, CURSOR_INVALIDO).optional(),
-  q: z.string({ error: 'La búsqueda debe ser un texto' }).max(100, 'La búsqueda puede tener hasta 100 caracteres').optional(),
+  q: z
+    .string({ error: 'La búsqueda debe ser un texto' })
+    .max(100, 'La búsqueda puede tener hasta 100 caracteres')
+    .refine((q) => !q.includes('\u0000'), 'La búsqueda debe ser un texto')
+    .optional(),
 });
 // Con cualquiera de estos parámetros la respuesta es una página; sin ninguno, la lista completa de siempre
 const PARAMETROS_PAGINA = ['limite', 'cursor', 'q'];

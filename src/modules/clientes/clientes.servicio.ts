@@ -45,8 +45,17 @@ const leerCursor = (cursor: string): PosicionCliente => {
     throw errores.solicitudInvalida(CURSOR_INVALIDO);
   }
   const { f, n, i } = (datos ?? {}) as Record<string, unknown>;
-  const fechaValida = f === null || (typeof f === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(f) && !Number.isNaN(Date.parse(f)));
-  if (!fechaValida || typeof n !== 'string' || n.length > 200 || typeof i !== 'string' || !i || i.length > 64) {
+  // La fecha debe existir de verdad (Date.parse acepta "2026-02-30") y en un año que PostgreSQL acepte
+  const fechaValida =
+    f === null ||
+    (typeof f === 'string' &&
+      /^\d{4}-\d{2}-\d{2}$/.test(f) &&
+      f >= '0001-01-01' &&
+      !Number.isNaN(Date.parse(f)) &&
+      new Date(`${f}T00:00:00Z`).toISOString().slice(0, 10) === f);
+  // Un carácter nulo haría fallar la consulta en PostgreSQL
+  const textoValido = (t: unknown, max: number): t is string => typeof t === 'string' && t.length <= max && !t.includes('\u0000');
+  if (!fechaValida || !textoValido(n, 200) || !textoValido(i, 64) || !i) {
     throw errores.solicitudInvalida(CURSOR_INVALIDO);
   }
   return { fecha: f as string | null, nombre: n, id: i };
