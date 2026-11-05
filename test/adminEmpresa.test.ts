@@ -285,6 +285,27 @@ describe('administración de la empresa', () => {
     assert.equal(quitar.json.whatsappUrl, null);
   });
 
+  // Mi negocio muestra la anticipación guardada, para que el panel no la muestre vacía
+  test('Mi negocio devuelve la anticipación para cancelar o reprogramar, y editar otro dato no la cambia', async () => {
+    const porDefecto = await verEmpresa(tokenB);
+    assert.equal(porDefecto.estado, 200);
+    assert.equal(porDefecto.json.anticipacionCancelacionHoras, 3);
+
+    const guardar = await editarEmpresa(tokenB, { anticipacionCancelacionHoras: 12 });
+    assert.equal(guardar.estado, 200);
+    assert.equal(guardar.json.anticipacionCancelacionHoras, 12);
+
+    const otroDato = await editarEmpresa(tokenB, { direccion: 'Calle 5 # 6-7' });
+    assert.equal(otroDato.estado, 200);
+    assert.equal(otroDato.json.anticipacionCancelacionHoras, 12);
+    assert.equal((await verEmpresa(tokenB)).json.anticipacionCancelacionHoras, 12);
+    const { rows } = await ctx.pool.query('SELECT anticipacion_cancelacion_horas FROM empresas WHERE id = $1', [empresaB]);
+    assert.equal(rows[0].anticipacion_cancelacion_horas, 12);
+
+    // La otra empresa conserva la suya
+    assert.equal((await verEmpresa(tokenA)).json.anticipacionCancelacionHoras, 3);
+  });
+
   // El perfil para clientes no cambia con lo que devuelve Mi negocio
   test('el perfil público del negocio conserva sus mismos campos', async () => {
     const r = await pedir(ctx, '/api/v1/empresas/perfil/EMPB');

@@ -336,6 +336,7 @@ const armarPerfil = ({ perfil: p, horario: h }: PerfilConHorario, urlBase: strin
   intervaloMinutos: p.intervalo_minutos,
   whatsappContacto: p.whatsapp_contacto,
   whatsappUrl: enlaceWhatsapp(p.whatsapp_contacto),
+  anticipacionCancelacionHoras: p.anticipacion_cancelacion_horas,
   estadoSuscripcion: p.estado_suscripcion,
   pais: p.pais,
   zonaHoraria: p.zona_horaria,
