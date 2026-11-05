@@ -286,7 +286,20 @@ describe('administración de la empresa', () => {
   });
 
   // Mi negocio muestra la anticipación guardada, para que el panel no la muestre vacía
-  test('Mi negocio devuelve la anticipación para cancelar o reprogramar, y editar otro dato no la cambia', async () => {
+  test('Mi negocio devuelve la anticipación para cancelar o reprogramar, y editar otro dato no la cambia', async (t) => {
+    // Al terminar, B vuelve a quedar como estaba, para que ninguna otra prueba dependa del orden
+    const original = (await ctx.pool.query(
+      'SELECT direccion, anticipacion_cancelacion_horas, guia_horario_revisado_en FROM empresas WHERE id = $1',
+      [empresaB],
+    )).rows[0];
+    t.after(() =>
+      ctx.pool.query(
+        `UPDATE empresas SET direccion = $2, anticipacion_cancelacion_horas = $3, guia_horario_revisado_en = $4
+         WHERE id = $1`,
+        [empresaB, original.direccion, original.anticipacion_cancelacion_horas, original.guia_horario_revisado_en],
+      ),
+    );
+
     const porDefecto = await verEmpresa(tokenB);
     assert.equal(porDefecto.estado, 200);
     assert.equal(porDefecto.json.anticipacionCancelacionHoras, 3);
