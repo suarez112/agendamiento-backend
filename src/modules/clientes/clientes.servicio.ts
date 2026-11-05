@@ -3,7 +3,7 @@ import { errores } from '../../shared/errores.js';
 import { aIsoEnZona } from '../../shared/zonaHoraria.js';
 import { buscarZonaHoraria } from '../empresas/empresas.repositorio.js';
 import * as repositorio from './clientes.repositorio.js';
-import type { FilaCliente, FilaListaNegra, PosicionCliente } from './clientes.repositorio.js';
+import type { FilaCliente, FilaListaNegra } from './clientes.repositorio.js';
 
 const CLIENTE_NO_ENCONTRADO = 'Cliente no encontrado';
 
@@ -32,33 +32,22 @@ const armarEntrada = (e: FilaListaNegra, zona: string) => ({
 
 export const CURSOR_INVALIDO = 'El cursor no es válido. Vuelve a pedir la primera página.';
 
-// El cursor es opaco para la app: la posición del último cliente de la página en JSON y base64url.
-// No da acceso a nada: solo indica desde dónde seguir dentro del negocio de la sesión.
-const codificarCursor = (c: FilaCliente) =>
-  Buffer.from(JSON.stringify({ f: c.fecha_ultima_cita, n: c.nombre, i: c.id })).toString('base64url');
+// El cursor es opaco para la app y solo lleva el id del último cliente de la página (base64url): mide siempre lo
+// mismo, sin importar lo largo del nombre. Su posición (fecha y nombre) se lee de la base, siempre dentro del
+// negocio de la sesión; un id de otro negocio o que ya no existe es un cursor inválido.
+const codificarCursor = (c: FilaCliente) => Buffer.from(c.id).toString('base64url');
 
-const leerCursor = (cursor: string): PosicionCliente => {
-  let datos: unknown;
-  try {
-    datos = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
-  } catch {
-    throw errores.solicitudInvalida(CURSOR_INVALIDO);
-  }
-  const { f, n, i } = (datos ?? {}) as Record<string, unknown>;
-  // La fecha debe existir de verdad (Date.parse acepta "2026-02-30") y en un año que PostgreSQL acepte
-  const fechaValida =
-    f === null ||
-    (typeof f === 'string' &&
-      /^\d{4}-\d{2}-\d{2}$/.test(f) &&
-      f >= '0001-01-01' &&
-      !Number.isNaN(Date.parse(f)) &&
-      new Date(`${f}T00:00:00Z`).toISOString().slice(0, 10) === f);
-  // Un carácter nulo haría fallar la consulta en PostgreSQL
-  const textoValido = (t: unknown, max: number): t is string => typeof t === 'string' && t.length <= max && !t.includes('\u0000');
-  if (!fechaValida || !textoValido(n, 200) || !textoValido(i, 64) || !i) {
-    throw errores.solicitudInvalida(CURSOR_INVALIDO);
-  }
-  return { fecha: f as string | null, nombre: n, id: i };
+const leerCursor = (cursor: string) => {
+  const id = Buffer.from(cursor, 'base64url').toString('utf8');
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) throw errores.solicitudInvalida(CURSOR_INVALIDO);
+  return id;
+};
+
+const posicionDelCursor = async (pool: pg.Pool, empresaId: string, cursor?: string) => {
+  if (cursor === undefined) return null;
+  const posicion = await repositorio.buscarPosicionCliente(pool, empresaId, leerCursor(cursor));
+  if (!posicion) throw errores.solicitudInvalida(CURSOR_INVALIDO);
+  return posicion;
 };
 
 export const crearServicioClientes = ({ pool }: { pool: pg.Pool }) => ({
@@ -70,7 +59,7 @@ export const crearServicioClientes = ({ pool }: { pool: pg.Pool }) => ({
   async listarPagina(empresaId: string, p: { limite: number; cursor?: string; q?: string }) {
     const filas = await repositorio.listarClientesPagina(pool, empresaId, {
       limite: p.limite,
-      despues: p.cursor === undefined ? null : leerCursor(p.cursor),
+      despues: await posicionDelCursor(pool, empresaId, p.cursor),
       buscar: p.q?.trim() || null,
     });
     const pagina = filas.slice(0, p.limite);

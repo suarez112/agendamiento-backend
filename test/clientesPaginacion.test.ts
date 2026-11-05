@@ -146,6 +146,11 @@ describe('paginación y búsqueda de clientes', () => {
       armarCursor('0000-01-01'),
       armarCursor(null, 'a\u0000b'),
       armarCursor('2026-01-10', 'a', 'b\u0000'),
+      // El cursor lleva solo el id: uno que no existe, el de un cliente de otro negocio o con un carácter nulo
+      Buffer.from('no_existe').toString('base64url'),
+      Buffer.from('cli_b').toString('base64url'),
+      Buffer.from('pag_01\u0000').toString('base64url'),
+      'x'.repeat(101),
     ]) {
       const r = await listar(`?cursor=${cursor}`);
       assert.equal(r.estado, 400, `cursor=${cursor}`);
@@ -157,6 +162,27 @@ describe('paginación y búsqueda de clientes', () => {
     const nulo = await listar('?q=a%00b');
     assert.equal(nulo.estado, 400);
     assert.equal(nulo.json.error, 'La búsqueda debe ser un texto');
+  });
+
+  test('un cliente con un nombre muy largo y con tildes no rompe la paginación (el cursor no lleva el nombre)', async () => {
+    const largo = 'Ñandú José María Álvarez Peñaloza '.repeat(15).trim(); // ~500 caracteres, muchos de 2 bytes
+    await ctx.pool.query(
+      `INSERT INTO clientes (id, empresa_id, telefono, indicativo, nombre, total_citas, fecha_ultima_cita)
+       VALUES ('pag_largo', 'emp_a', '+573129999999', '57', $1, 1, $2), ('pag_tras_largo', 'emp_a', '+573129999998', '57', $3, 1, $2)`,
+      [largo, fechaEnDias(-10), `${largo} Z`],
+    );
+    try {
+      const primera = await listar(`?q=${encodeURIComponent('Ñandú')}&limite=1`);
+      assert.equal(primera.estado, 200, primera.texto);
+      assert.deepEqual(primera.json.datos.map((c: { id: string }) => c.id), ['pag_largo']);
+      assert.ok(primera.json.siguienteCursor.length <= 100, 'el cursor mide lo mismo sin importar el nombre');
+      const segunda = await listar(`?q=${encodeURIComponent('Ñandú')}&limite=1&cursor=${encodeURIComponent(primera.json.siguienteCursor)}`);
+      assert.equal(segunda.estado, 200, segunda.texto);
+      assert.deepEqual(segunda.json.datos.map((c: { id: string }) => c.id), ['pag_tras_largo']);
+      assert.equal(segunda.json.siguienteCursor, null);
+    } finally {
+      await ctx.pool.query("DELETE FROM clientes WHERE id IN ('pag_largo', 'pag_tras_largo')");
+    }
   });
 
   test('sigue siendo solo para administradores, también con parámetros', async () => {

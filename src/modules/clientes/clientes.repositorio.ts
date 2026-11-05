@@ -53,6 +53,15 @@ export const listarClientes = async (db: Consultable, empresaId: string) =>
 // Posición del último cliente de una página: mismo orden que la lista completa, con el id como desempate
 export type PosicionCliente = { fecha: string | null; nombre: string; id: string };
 
+// Posición de un cliente del negocio en el orden de la lista (para seguir la paginación desde él)
+export const buscarPosicionCliente = async (db: Consultable, empresaId: string, id: string) =>
+  (
+    await db.query<PosicionCliente>(
+      `SELECT to_char(fecha_ultima_cita, 'YYYY-MM-DD') AS fecha, nombre, id FROM clientes WHERE id = $1 AND empresa_id = $2`,
+      [id, empresaId],
+    )
+  ).rows[0];
+
 // Escapa los comodines de LIKE para buscar el texto tal cual ("100%" no trae a todos)
 const textoLiteral = (texto: string) => texto.replace(/[\\%_]/g, (c) => `\\${c}`);
 

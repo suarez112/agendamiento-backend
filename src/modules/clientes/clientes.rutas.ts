@@ -15,7 +15,7 @@ const esquemaAgregar = z.object(
 const MENSAJE_LIMITE = 'El límite debe ser un número entero entre 1 y 50';
 const esquemaPagina = z.object({
   limite: z.coerce.number({ error: MENSAJE_LIMITE }).int(MENSAJE_LIMITE).min(1, MENSAJE_LIMITE).max(50, MENSAJE_LIMITE).default(20),
-  cursor: z.string({ error: CURSOR_INVALIDO }).min(1, CURSOR_INVALIDO).max(500, CURSOR_INVALIDO).optional(),
+  cursor: z.string({ error: CURSOR_INVALIDO }).min(1, CURSOR_INVALIDO).max(100, CURSOR_INVALIDO).optional(),
   q: z
     .string({ error: 'La búsqueda debe ser un texto' })
     .max(100, 'La búsqueda puede tener hasta 100 caracteres')
