@@ -5,6 +5,7 @@ import { errores } from '../../shared/errores.js';
 import { aIsoEnZona } from '../../shared/zonaHoraria.js';
 import { esE164 } from '../../shared/telefonos.js';
 import type { Sesion } from '../auth/auth.servicio.js';
+import { puedeVerTelefonos, telefonoVisible } from '../clientes/privacidad.js';
 import type { FilaUsuario } from '../cuentas/cuentas.repositorio.js';
 import { buscarSuscripcion } from '../empresas/empresas.repositorio.js';
 import { SIN_RESERVAS } from '../empresas/suscripcion.js';
@@ -323,13 +324,15 @@ export const crearServicioCitas = ({
     void notificaciones?.avisarCitaNueva(citaId);
     void notificaciones?.avisarCitaCreadaPorNegocio(citaId);
 
+    // Un empleado sin permiso no recibe el teléfono, tampoco el de un cliente existente que eligió por su id
+    const verTelefonos = await puedeVerTelefonos(pool, sesion);
     return {
       mensaje: 'Cita agendada',
       cita: {
         id: citaId,
         cliente: cliente.nombre,
-        telefono: cliente.telefono,
-        indicativo: cliente.indicativo,
+        telefono: telefonoVisible(cliente.telefono, verTelefonos),
+        indicativo: telefonoVisible(cliente.indicativo, verTelefonos),
         servicio: reserva.servicio,
         barberoId,
         barberoNombre: reserva.barbero,
@@ -391,13 +394,18 @@ export const crearServicioCitas = ({
     }));
   },
 
-  // El administrador ve a todo su equipo; un barbero solo ve sus propias citas
-  async agenda({ empresaId, barberoId, esAdmin }: Sesion) {
-    const filas = await repositorio.listarAgenda(pool, empresaId, esAdmin ? null : barberoId);
+  // El administrador ve a todo su equipo; un barbero solo ve sus propias citas. El teléfono del cliente solo llega
+  // a un empleado si el negocio lo permite (puedeVerTelefonos); si no, null
+  async agenda(sesion: Sesion) {
+    const { empresaId, barberoId, esAdmin } = sesion;
+    const [filas, verTelefonos] = await Promise.all([
+      repositorio.listarAgenda(pool, empresaId, esAdmin ? null : barberoId),
+      puedeVerTelefonos(pool, sesion),
+    ]);
     return filas.map((r) => ({
       id: r.id,
       cliente: r.cliente,
-      telefono: r.telefono,
+      telefono: telefonoVisible(r.telefono, verTelefonos),
       servicio: r.servicio,
       barberoId: r.barbero_id,
       barberoNombre: r.barbero_nombre,

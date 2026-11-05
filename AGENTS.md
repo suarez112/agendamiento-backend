@@ -53,6 +53,7 @@ src/
   modules/empresas/guia.ts        guía inicial del negocio (3 pasos)
   modules/empresas/fotos.ts       subida de fotos: valida, reduce al tamaño de pantalla de cada tipo (TAMANOS_FOTO), convierte a WebP y quita el EXIF (sharp)
   modules/empresas/optimizacionFotos.ts + db/optimizarFotos.ts   npm run fotos:optimizar: convierte las fotos ya guardadas (ver "Comandos de desarrollador")
+  modules/clientes/privacidad.ts  quién del personal recibe el teléfono de los clientes (puedeVerTelefonos; ver "Teléfono de los clientes para los empleados")
   modules/citas/politica.ts       anticipación mínima para cancelar o reprogramar (mensajes)
   modules/cuentas/recuperacion.servicio.ts  recuperar la contraseña con un código por correo
   db/activarPlan.ts, db/simularVencimiento.ts, db/pqrs.ts, db/crearSuperadmin.ts, db/restablecerSuperadmin.ts, db/eliminarSuperadmin.ts   comandos de desarrollador (ver "Comandos de desarrollador")
@@ -215,7 +216,7 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | GET | `/api/v1/citas/ocupadas?empresaId=` | público (sin datos de clientes) |
 | GET | `/api/v1/citas/disponibilidad?empresaId=&barberoId=&servicioId=&fecha=` | público. Horas libres de un profesional para un servicio ese día (ver "Horas disponibles") |
 | GET | `/api/v1/citas/bloqueos?empresaId=` | público. Horarios bloqueados del equipo, semanales y de una fecha (sin el motivo) |
-| GET | `/api/v1/citas/agenda` | sesión del personal (admin: todo el negocio; empleado: sus citas), suscripción vigente |
+| GET | `/api/v1/citas/agenda` | sesión del personal (admin: todo el negocio; empleado: sus citas), suscripción vigente. Al empleado, `telefono` en `null` salvo que el negocio lo permita (ver "Teléfono de los clientes para los empleados") |
 | PATCH | `/api/v1/citas/:id/completar` | sesión del personal: el barbero de la cita, o la cuenta admin (cualquier cita del negocio), suscripción vigente |
 | PATCH | `/api/v1/citas/:id/cancelar` | sesión del personal, solo admin del negocio, suscripción vigente (402 si no) |
 | POST | `/api/v1/cuentas/registro/empresa` | público, limitado. Crea empresa + administrador. Exige aceptar la política y los términos |
@@ -585,6 +586,16 @@ Todos usan `Authorization: Bearer <token>` del barbero o de la cuenta admin. El 
 
 Un teléfono de la lista negra (se comparan solo los dígitos; los dos están en E.164) no puede reservar: `POST /api/v1/citas` responde **403** `No es posible agendar con este número. Comunícate con el negocio.`
 
+#### Teléfono de los clientes para los empleados
+
+Opción del negocio **"los empleados pueden ver el teléfono de los clientes"** (`empresas.empleados_ven_telefono`, migración 034), **apagada por defecto**. Solo un administrador la consulta y la cambia: `GET`/`PUT /admin/empresa/privacidad-clientes` (ver "Contrato de cuentas…").
+
+- **Apagada**: a un **empleado** (integrante con rol Empleado) el backend **no le envía** el teléfono ni el indicativo de ningún cliente: llegan en `null` (el campo se mantiene). Hoy eso aplica a `GET /citas/agenda` (`telefono`) y a la respuesta de `POST /citas/panel` (`cita.telefono` y `cita.indicativo`, también si eligió un cliente existente por `clienteId` o escribió el número). No hay enlaces de WhatsApp de clientes en ninguna respuesta, y las notificaciones nunca llevan teléfonos ni nombres. Las rutas con datos de clientes (`/clientes`, su historial, su búsqueda `q`, lista negra, reportes, calendario de bloqueos) siguen siendo solo para administradores (403 al empleado).
+- **Encendida**: el empleado recibe el teléfono en esas respuestas, solo de sus propias citas (como siempre).
+- **Administradores** (integrante con rol Administrador o cuenta de administración): lo ven siempre, con la opción apagada o encendida.
+- **Aplica de inmediato**: la opción y el rol se leen de la base en cada solicitud (`puedeVerTelefonos`, `src/modules/clientes/privacidad.ts`), así que el cambio se nota en la siguiente solicitud del empleado, con el mismo token, sin cerrar sesión ni reiniciar. Si no se puede leer la opción, no se muestra el teléfono.
+- **Regla para código nuevo**: toda respuesta al personal que incluya el teléfono, el indicativo o un enlace de WhatsApp de un cliente debe pasar por `puedeVerTelefonos` + `telefonoVisible`, y su ruta se agrega al barrido de `test/privacidadTelefonos.test.ts`, que recorre todas las rutas que puede usar un empleado y comprueba que con la opción apagada ninguna respuesta trae el número (y que con la opción encendida sí lo detecta, como control).
+
 #### Equipo (solo admin)
 
 Forma de un profesional: `{ "id", "nombre", "usuario", "rol": "admin" | "empleado", "esAdmin": false, "atiendeClientes": true, "especialidad": "Barbero" | null, "porcentajeGanancia": 50, "foto": "<url>" | null }`.
@@ -753,7 +764,7 @@ Sesión del personal (integrante o cuenta admin) con la suscripción vigente (40
 - **Horas y choques**: la hora debe ser una de las horas libres del panel (si no, **409** `Esa hora no está disponible para este profesional y servicio. Elige una de las horas libres.`), dentro del horario (400), de hoy a 14 días (400) y sin choque: la revisión final va en una transacción con el profesional bloqueado (409 `Esa hora ya está ocupada…` o `El profesional no atiende en ese horario…`), igual que `POST /citas`.
 - **No aplica** el tope de citas pendientes por teléfono. Sí se respeta la lista negra (**403** `Este cliente está en la lista negra del negocio.`).
 - **Cuenta del cliente**: la cita se asocia a una cuenta de cliente (aparece en su "Mis citas", `citas.usuario_id`, y se le notifica `cita_creada_por_negocio`, ver "Qué se avisa y a quién") **solo si** esa cuenta tiene el mismo teléfono **y ya tiene relación con este negocio**: lo guardó (`negocios_guardados`) o tuvo citas en él. Si no, la cita queda como de invitado y no se notifica a ninguna cuenta (así un teléfono mal escrito no pone una cita en la cuenta de otra persona). Al profesional y a los administradores les llega `cita_nueva`.
-- **201** `{ "mensaje": "Cita agendada", "cita": { …misma forma que POST /citas… } }`.
+- **201** `{ "mensaje": "Cita agendada", "cita": { …misma forma que POST /citas… } }`. A un empleado, `cita.telefono` y `cita.indicativo` llegan en `null` si el negocio no le permite ver teléfonos (ver "Teléfono de los clientes para los empleados").
 
 #### Cartera
 
