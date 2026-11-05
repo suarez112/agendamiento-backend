@@ -203,7 +203,15 @@ export const esquemaActualizarEmpresa = conWhatsappNormalizado(conUbicacionValid
 export type PerfilEmpresa = z.output<typeof esquemaPerfilEmpresa>;
 export type CambiosEmpresa = z.output<typeof esquemaActualizarEmpresa>;
 
-const MENSAJE_INTERVALO = `El intervalo debe ser ${INTERVALOS_MINUTOS.join(', ')} minutos`;
+const MENSAJE_PRIVACIDAD = 'Envía "empleadosVenTelefono": true o false';
+
+// ¿Los empleados pueden ver el teléfono de los clientes?
+export const esquemaPrivacidadClientes = z.object(
+  { empleadosVenTelefono: z.boolean({ error: MENSAJE_PRIVACIDAD }) },
+  { error: MENSAJE_PRIVACIDAD },
+);
+
+const MENSAJE_INTERVALO =`El intervalo debe ser ${INTERVALOS_MINUTOS.join(', ')} minutos`;
 
 // Cada cuántos minutos pueden agendar los clientes
 export const esquemaIntervalo = z.object(

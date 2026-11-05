@@ -161,6 +161,7 @@ Puerto por defecto `4000` (`PORT`). Rutas bajo `/api/v1`.
 - Migración 031: `auditoria_autorizaciones` admite el canal `registro_negocio` (citas creadas desde el panel) y `avisos_prueba.dia` admite 15 (aviso al vencer la prueba). La tabla de auditoría sigue siendo de solo inserción: solo se amplió la lista de canales válidos. No cambia datos existentes.
 - Migración 032: `auditoria_autorizaciones.registrada_por_barbero_id` y `registrada_por_usuario_id` (quién del negocio declaró la autorización en el canal `registro_negocio`; columnas aparte de `usuario_id` / `barbero_id`, que identifican a quien aceptó). Un CHECK exige exactamente una de las dos en `registro_negocio` y ninguna en los otros canales (`NOT VALID`: no revisa las filas que ya existían). Las filas anteriores quedan en `NULL`. No cambia datos existentes.
 - Migración 033: **pagos manuales**. Tabla `formas_pago_manual` (una sola fila: titular, WhatsApp en E.164, número de Nequi, llave Bre-B, imágenes de los dos QR guardadas en la base como `bytea` de hasta 1 MB, un interruptor por forma de pago y quién la cambió y cuándo; un CHECK exige al menos una forma activa y que cada forma activa tenga sus datos). `ordenes_pago` gana `revisada_por_id`, `revisada_por_correo`, `revisada_en` y `motivo_revision`, y un índice único que impide dos órdenes manuales pendientes del mismo negocio. `activaciones_plan.origen` admite `manual`. No cambia datos existentes.
+- Migración 034: `empresas.empleados_ven_telefono` (boolean, por defecto `false`): si los empleados del negocio ven el teléfono de los clientes (ver "Teléfono de los clientes para los empleados"). Todos los negocios, también los que ya existían, quedan con la opción apagada. Solo agrega la columna; no cambia ni borra datos.
 - **Publicar una versión nueva de la política, los términos o el aviso**: una migración nueva que inserte filas en `documentos_legales` con otra `version` (nunca edites las filas publicadas). La más reciente de cada tipo es la vigente; los clientes con cuenta aceptan la política y los términos nuevos en su próxima reserva. Conviene publicar los tres tipos juntos con el mismo número.
 
 ## Endpoints
@@ -249,6 +250,7 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | POST | `/api/v1/admin/empresa/guia/ocultar` / `/guia/mostrar` | personal admin. Oculta o vuelve a mostrar la guía |
 | GET | `/api/v1/admin/empresa/intervalo` | personal admin, aunque esté vencida. Cada cuántos minutos pueden agendar los clientes |
 | PUT | `/api/v1/admin/empresa/intervalo` | personal admin, aunque esté vencida. Cambia ese intervalo |
+| GET / PUT | `/api/v1/admin/empresa/privacidad-clientes` | personal admin, aunque esté vencida. ¿Los empleados ven el teléfono de los clientes? (ver "Teléfono de los clientes para los empleados") |
 | GET | `/api/v1/admin/empresa/prueba` | personal admin, aunque esté vencida (se mantiene; usa `/suscripcion`) |
 | GET | `/api/v1/admin/empresa` | personal admin, aunque esté vencida ("Mi negocio") |
 | PATCH | `/api/v1/admin/empresa` | personal admin, aunque esté vencida |
@@ -478,6 +480,10 @@ Ambos se envían como `Authorization: Bearer <token>`.
 - GET responde **200** `{ "intervaloMinutos": 30, "opciones": [10, 20, 30, 40, 50, 60] }`. Por defecto 30.
 - PUT recibe `{ "intervaloMinutos": 20 }` y responde **200** `{ "mensaje": "Intervalo de horarios actualizado", "intervaloMinutos": 20, "opciones": […] }`. **400** `El intervalo debe ser 10, 20, 30, 40, 50, 60 minutos` si no es una de las opciones. Aplica de inmediato a las horas disponibles; las citas ya agendadas no cambian.
 - También viene como `intervaloMinutos` en `GET`/`PATCH /admin/empresa` y en `GET /empresas/perfil/:codigo`.
+
+**GET `/api/v1/admin/empresa/privacidad-clientes`** y **PUT `/api/v1/admin/empresa/privacidad-clientes`** (solo administradores: integrante con rol Administrador o cuenta de administración; funcionan aunque la suscripción esté vencida): la opción "los empleados pueden ver el teléfono de los clientes".
+- GET responde **200** `{ "empleadosVenTelefono": false }`. **Apagada por defecto** (migración 034).
+- PUT recibe `{ "empleadosVenTelefono": true }` y responde **200** `{ "mensaje": "Ahora los empleados pueden ver el teléfono de los clientes", "empleadosVenTelefono": true }` (o `Los empleados ya no ven el teléfono de los clientes` con `false`). **400** `Envía "empleadosVenTelefono": true o false`; **403** a un empleado. Cada cambio queda en el registro del servidor (`privacidad_clientes_cambiada`, con quién lo cambió; sin datos de clientes). Aplica de inmediato en la siguiente solicitud del empleado (ver "Teléfono de los clientes para los empleados").
 
 **GET `/api/v1/admin/empresa/prueba`** (se mantiene para la app de antes; usa `/suscripcion`): días de prueba que le quedan a la empresa.
 

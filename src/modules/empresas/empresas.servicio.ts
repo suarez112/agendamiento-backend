@@ -1,6 +1,8 @@
 import type pg from 'pg';
 import { CODIGO_PG, enTransaccion, esErrorPg } from '../../db/pool.js';
 import { errores } from '../../shared/errores.js';
+import { registro } from '../../shared/registro.js';
+import type { Sesion } from '../auth/auth.servicio.js';
 import { aIsoEnZona } from '../../shared/zonaHoraria.js';
 import { type CambiosEmpresa, ubicacionOficial } from './empresas.esquemas.js';
 import * as repositorio from './empresas.repositorio.js';
@@ -181,6 +183,31 @@ export const crearServicioEmpresas = ({
       const nuevo = await repositorio.cambiarIntervalo(pool, empresaId, minutos);
       if (nuevo === undefined) throw errores.noEncontrado('Establecimiento no encontrado');
       return { mensaje: 'Intervalo de horarios actualizado', intervaloMinutos: nuevo, opciones: INTERVALOS_MINUTOS };
+    },
+
+    // ¿Los empleados ven el teléfono de los clientes? Apagado por defecto; los administradores siempre lo ven
+    async privacidadClientes(empresaId: string) {
+      const valor = await repositorio.buscarEmpleadosVenTelefono(pool, empresaId);
+      if (valor === undefined) throw errores.noEncontrado('Establecimiento no encontrado');
+      return { empleadosVenTelefono: valor };
+    },
+
+    async cambiarPrivacidadClientes(sesion: Sesion, valor: boolean) {
+      const nuevo = await repositorio.cambiarEmpleadosVenTelefono(pool, sesion.empresaId, valor);
+      if (nuevo === undefined) throw errores.noEncontrado('Establecimiento no encontrado');
+      // Queda en el registro del servidor quién lo cambió (solo identificadores, sin datos de clientes)
+      registro.info('privacidad_clientes_cambiada', {
+        empresaId: sesion.empresaId,
+        barberoId: sesion.barberoId,
+        usuarioId: sesion.usuarioId,
+        empleadosVenTelefono: nuevo,
+      });
+      return {
+        mensaje: nuevo
+          ? 'Ahora los empleados pueden ver el teléfono de los clientes'
+          : 'Los empleados ya no ven el teléfono de los clientes',
+        empleadosVenTelefono: nuevo,
+      };
     },
 
     // Para el registro y "Mi negocio": el código ya viene validado y en mayúsculas
