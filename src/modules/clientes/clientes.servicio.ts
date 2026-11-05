@@ -30,9 +30,43 @@ const armarEntrada = (e: FilaListaNegra, zona: string) => ({
   zonaHoraria: zona,
 });
 
+export const CURSOR_INVALIDO = 'El cursor no es válido. Vuelve a pedir la primera página.';
+
+// El cursor es opaco para la app y solo lleva el id del último cliente de la página (base64url): mide siempre lo
+// mismo, sin importar lo largo del nombre. Su posición (fecha y nombre) se lee de la base, siempre dentro del
+// negocio de la sesión; un id de otro negocio o que ya no existe es un cursor inválido.
+const codificarCursor = (c: FilaCliente) => Buffer.from(c.id).toString('base64url');
+
+const leerCursor = (cursor: string) => {
+  const id = Buffer.from(cursor, 'base64url').toString('utf8');
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) throw errores.solicitudInvalida(CURSOR_INVALIDO);
+  return id;
+};
+
+const posicionDelCursor = async (pool: pg.Pool, empresaId: string, cursor?: string) => {
+  if (cursor === undefined) return null;
+  const posicion = await repositorio.buscarPosicionCliente(pool, empresaId, leerCursor(cursor));
+  if (!posicion) throw errores.solicitudInvalida(CURSOR_INVALIDO);
+  return posicion;
+};
+
 export const crearServicioClientes = ({ pool }: { pool: pg.Pool }) => ({
   async listar(empresaId: string) {
     return (await repositorio.listarClientes(pool, empresaId)).map(armarCliente);
+  },
+
+  // Una página de clientes, en el mismo orden que la lista completa. siguienteCursor = null en la última.
+  async listarPagina(empresaId: string, p: { limite: number; cursor?: string; q?: string }) {
+    const filas = await repositorio.listarClientesPagina(pool, empresaId, {
+      limite: p.limite,
+      despues: await posicionDelCursor(pool, empresaId, p.cursor),
+      buscar: p.q?.trim() || null,
+    });
+    const pagina = filas.slice(0, p.limite);
+    return {
+      datos: pagina.map(armarCliente),
+      siguienteCursor: filas.length > p.limite ? codificarCursor(pagina[pagina.length - 1]!) : null,
+    };
   },
 
   // Datos del cliente y todas sus citas en el negocio

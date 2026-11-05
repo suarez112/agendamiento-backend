@@ -50,6 +50,67 @@ export const listarClientes = async (db: Consultable, empresaId: string) =>
     )
   ).rows;
 
+// Posición del último cliente de una página: mismo orden que la lista completa, con el id como desempate
+export type PosicionCliente = { fecha: string | null; nombre: string; id: string };
+
+// Posición de un cliente del negocio en el orden de la lista (para seguir la paginación desde él)
+export const buscarPosicionCliente = async (db: Consultable, empresaId: string, id: string) =>
+  (
+    await db.query<PosicionCliente>(
+      `SELECT to_char(fecha_ultima_cita, 'YYYY-MM-DD') AS fecha, nombre, id FROM clientes WHERE id = $1 AND empresa_id = $2`,
+      [id, empresaId],
+    )
+  ).rows[0];
+
+// Escapa los comodines de LIKE para buscar el texto tal cual ("100%" no trae a todos)
+const textoLiteral = (texto: string) => texto.replace(/[\\%_]/g, (c) => `\\${c}`);
+
+// Una página de clientes (keyset): los que van después de "despues" en el orden de la lista. "buscar" filtra por
+// nombre (sin distinguir mayúsculas) o, si es un número, por los dígitos del teléfono. Trae limite + 1 filas para saber si hay más.
+export const listarClientesPagina = async (
+  db: Consultable,
+  empresaId: string,
+  p: { limite: number; despues: PosicionCliente | null; buscar: string | null },
+) => {
+  const parametros: unknown[] = [empresaId];
+  const condiciones = ['c.empresa_id = $1'];
+  const param = (valor: unknown) => `$${parametros.push(valor)}`;
+
+  if (p.buscar) {
+    const nombre = `c.nombre ILIKE ${param(`%${textoLiteral(p.buscar)}%`)} ESCAPE '\\'`;
+    // Se busca también por teléfono solo si el texto parece un número ("300 123-4567", "+57 300"): así "100%"
+    // o "Sala 2" buscan solo en el nombre
+    const digitos = /^[\d\s+().-]+$/.test(p.buscar) ? p.buscar.replace(/\D/g, '') : '';
+    condiciones.push(
+      digitos
+        ? `(${nombre} OR regexp_replace(c.telefono, '[^0-9]', '', 'g') LIKE ${param(`%${digitos}%`)})`
+        : nombre,
+    );
+  }
+  if (p.despues) {
+    const mismoOrden = `(c.nombre, c.id) > (${param(p.despues.nombre)}::varchar, ${param(p.despues.id)}::varchar)`;
+    if (p.despues.fecha === null) {
+      condiciones.push(`(c.fecha_ultima_cita IS NULL AND ${mismoOrden})`);
+    } else {
+      const fecha = param(p.despues.fecha);
+      condiciones.push(
+        `(c.fecha_ultima_cita < ${fecha}::date OR c.fecha_ultima_cita IS NULL
+          OR (c.fecha_ultima_cita = ${fecha}::date AND ${mismoOrden}))`,
+      );
+    }
+  }
+  const limite = param(p.limite + 1);
+  return (
+    await db.query<FilaCliente>(
+      `SELECT ${COLUMNAS_CLIENTE} ${DESDE_CLIENTES}
+       WHERE ${condiciones.join(' AND ')}
+       ORDER BY c.fecha_ultima_cita DESC NULLS LAST, c.nombre, c.id
+       LIMIT ${limite}`,
+      parametros,
+    )
+  ).rows;
+};
+
 export const buscarCliente = async (db: Consultable, id: string, empresaId: string) =>
   (
     await db.query<FilaCliente>(`SELECT ${COLUMNAS_CLIENTE} ${DESDE_CLIENTES} WHERE c.id = $1 AND c.empresa_id = $2`, [

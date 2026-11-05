@@ -4,7 +4,12 @@ import type { Limitadores } from '../../shared/http/limitadores.js';
 import { parsear } from '../../shared/http/validacion.js';
 import { type Guardias, sesionDe } from '../auth/guardias.js';
 import { SOLO_ADMIN } from '../auth/permisos.js';
-import { esquemaActualizarEmpresa, esquemaCodigoNegocio, esquemaIntervalo } from './empresas.esquemas.js';
+import {
+  esquemaActualizarEmpresa,
+  esquemaCodigoNegocio,
+  esquemaIntervalo,
+  esquemaPrivacidadClientes,
+} from './empresas.esquemas.js';
 import type { ServicioEmpresas } from './empresas.servicio.js';
 import type { ServicioGuia } from './guia.js';
 import { recibirFoto, type UrlBase } from './fotos.js';
@@ -64,6 +69,16 @@ export const crearRutasAdminEmpresa = (empresas: ServicioEmpresas, guardias: Gua
   rutas.put('/intervalo', ...soloAdmin, async (req, res) => {
     const { intervaloMinutos } = parsear(esquemaIntervalo, req.body);
     res.json(await empresas.cambiarIntervalo(sesionDe(res).empresaId, intervaloMinutos));
+  });
+
+  // ¿Los empleados pueden ver el teléfono de los clientes? Solo un administrador la consulta y la cambia
+  rutas.get('/privacidad-clientes', ...soloAdmin, async (_req, res) => {
+    res.json(await empresas.privacidadClientes(sesionDe(res).empresaId));
+  });
+
+  rutas.put('/privacidad-clientes', ...soloAdmin, async (req, res) => {
+    const { empleadosVenTelefono } = parsear(esquemaPrivacidadClientes, req.body);
+    res.json(await empresas.cambiarPrivacidadClientes(sesionDe(res), empleadosVenTelefono));
   });
 
   // Guía inicial: avance en 3 pasos (servicio, horario y enlace compartido)

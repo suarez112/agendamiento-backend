@@ -124,6 +124,22 @@ export const cambiarIntervalo = async (db: Consultable, empresaId: string, minut
     )
   ).rows[0]?.intervalo_minutos;
 
+// ¿Los empleados del negocio pueden ver el teléfono de los clientes? (migración 034; undefined = no existe)
+export const buscarEmpleadosVenTelefono = async (db: Consultable, empresaId: string) =>
+  (
+    await db.query<{ empleados_ven_telefono: boolean }>('SELECT empleados_ven_telefono FROM empresas WHERE id = $1', [
+      empresaId,
+    ])
+  ).rows[0]?.empleados_ven_telefono;
+
+export const cambiarEmpleadosVenTelefono = async (db: Consultable, empresaId: string, valor: boolean) =>
+  (
+    await db.query<{ empleados_ven_telefono: boolean }>(
+      'UPDATE empresas SET empleados_ven_telefono = $2 WHERE id = $1 RETURNING empleados_ven_telefono',
+      [empresaId, valor],
+    )
+  ).rows[0]?.empleados_ven_telefono;
+
 // Vista pública del negocio: los clientes la buscan con el código de acceso
 export const buscarPerfilEmpresaPorCodigo = async (db: Consultable, codigo: string) =>
   (

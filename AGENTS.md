@@ -53,6 +53,7 @@ src/
   modules/empresas/guia.ts        guía inicial del negocio (3 pasos)
   modules/empresas/fotos.ts       subida de fotos: valida, reduce al tamaño de pantalla de cada tipo (TAMANOS_FOTO), convierte a WebP y quita el EXIF (sharp)
   modules/empresas/optimizacionFotos.ts + db/optimizarFotos.ts   npm run fotos:optimizar: convierte las fotos ya guardadas (ver "Comandos de desarrollador")
+  modules/clientes/privacidad.ts  quién del personal recibe el teléfono de los clientes (puedeVerTelefonos; ver "Teléfono de los clientes para los empleados")
   modules/citas/politica.ts       anticipación mínima para cancelar o reprogramar (mensajes)
   modules/cuentas/recuperacion.servicio.ts  recuperar la contraseña con un código por correo
   db/activarPlan.ts, db/simularVencimiento.ts, db/pqrs.ts, db/crearSuperadmin.ts, db/restablecerSuperadmin.ts, db/eliminarSuperadmin.ts   comandos de desarrollador (ver "Comandos de desarrollador")
@@ -161,6 +162,7 @@ Puerto por defecto `4000` (`PORT`). Rutas bajo `/api/v1`.
 - Migración 031: `auditoria_autorizaciones` admite el canal `registro_negocio` (citas creadas desde el panel) y `avisos_prueba.dia` admite 15 (aviso al vencer la prueba). La tabla de auditoría sigue siendo de solo inserción: solo se amplió la lista de canales válidos. No cambia datos existentes.
 - Migración 032: `auditoria_autorizaciones.registrada_por_barbero_id` y `registrada_por_usuario_id` (quién del negocio declaró la autorización en el canal `registro_negocio`; columnas aparte de `usuario_id` / `barbero_id`, que identifican a quien aceptó). Un CHECK exige exactamente una de las dos en `registro_negocio` y ninguna en los otros canales (`NOT VALID`: no revisa las filas que ya existían). Las filas anteriores quedan en `NULL`. No cambia datos existentes.
 - Migración 033: **pagos manuales**. Tabla `formas_pago_manual` (una sola fila: titular, WhatsApp en E.164, número de Nequi, llave Bre-B, imágenes de los dos QR guardadas en la base como `bytea` de hasta 1 MB, un interruptor por forma de pago y quién la cambió y cuándo; un CHECK exige al menos una forma activa y que cada forma activa tenga sus datos). `ordenes_pago` gana `revisada_por_id`, `revisada_por_correo`, `revisada_en` y `motivo_revision`, y un índice único que impide dos órdenes manuales pendientes del mismo negocio. `activaciones_plan.origen` admite `manual`. No cambia datos existentes.
+- Migración 034: `empresas.empleados_ven_telefono` (boolean, por defecto `false`): si los empleados del negocio ven el teléfono de los clientes (ver "Teléfono de los clientes para los empleados"). Todos los negocios, también los que ya existían, quedan con la opción apagada. Solo agrega la columna; no cambia ni borra datos.
 - **Publicar una versión nueva de la política, los términos o el aviso**: una migración nueva que inserte filas en `documentos_legales` con otra `version` (nunca edites las filas publicadas). La más reciente de cada tipo es la vigente; los clientes con cuenta aceptan la política y los términos nuevos en su próxima reserva. Conviene publicar los tres tipos juntos con el mismo número.
 
 ## Endpoints
@@ -214,7 +216,7 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | GET | `/api/v1/citas/ocupadas?empresaId=` | público (sin datos de clientes) |
 | GET | `/api/v1/citas/disponibilidad?empresaId=&barberoId=&servicioId=&fecha=` | público. Horas libres de un profesional para un servicio ese día (ver "Horas disponibles") |
 | GET | `/api/v1/citas/bloqueos?empresaId=` | público. Horarios bloqueados del equipo, semanales y de una fecha (sin el motivo) |
-| GET | `/api/v1/citas/agenda` | sesión del personal (admin: todo el negocio; empleado: sus citas), suscripción vigente |
+| GET | `/api/v1/citas/agenda` | sesión del personal (admin: todo el negocio; empleado: sus citas), suscripción vigente. Al empleado, `telefono` en `null` salvo que el negocio lo permita (ver "Teléfono de los clientes para los empleados") |
 | PATCH | `/api/v1/citas/:id/completar` | sesión del personal: el barbero de la cita, o la cuenta admin (cualquier cita del negocio), suscripción vigente |
 | PATCH | `/api/v1/citas/:id/cancelar` | sesión del personal, solo admin del negocio, suscripción vigente (402 si no) |
 | POST | `/api/v1/cuentas/registro/empresa` | público, limitado. Crea empresa + administrador. Exige aceptar la política y los términos |
@@ -249,6 +251,7 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | POST | `/api/v1/admin/empresa/guia/ocultar` / `/guia/mostrar` | personal admin. Oculta o vuelve a mostrar la guía |
 | GET | `/api/v1/admin/empresa/intervalo` | personal admin, aunque esté vencida. Cada cuántos minutos pueden agendar los clientes |
 | PUT | `/api/v1/admin/empresa/intervalo` | personal admin, aunque esté vencida. Cambia ese intervalo |
+| GET / PUT | `/api/v1/admin/empresa/privacidad-clientes` | personal admin, aunque esté vencida. ¿Los empleados ven el teléfono de los clientes? (ver "Teléfono de los clientes para los empleados") |
 | GET | `/api/v1/admin/empresa/prueba` | personal admin, aunque esté vencida (se mantiene; usa `/suscripcion`) |
 | GET | `/api/v1/admin/empresa` | personal admin, aunque esté vencida ("Mi negocio") |
 | PATCH | `/api/v1/admin/empresa` | personal admin, aunque esté vencida |
@@ -257,7 +260,7 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | POST | `/api/v1/mi-cuenta/negocios` | cuenta de cliente, limitado. Guarda un negocio con su código |
 | DELETE | `/api/v1/mi-cuenta/negocios/:id` | cuenta de cliente. Quita un negocio de la lista |
 | GET | `/api/v1/mi-cuenta/citas` | cuenta de cliente. Citas que reservó con su sesión |
-| GET | `/api/v1/clientes` | personal admin, suscripción vigente. Clientes del negocio |
+| GET | `/api/v1/clientes?limite=&cursor=&q=` | personal admin, suscripción vigente. Clientes del negocio; con `limite`, `cursor` o `q`, por páginas y con búsqueda (ver "Clientes") |
 | GET | `/api/v1/clientes/:id/historial` | personal admin, suscripción vigente |
 | GET | `/api/v1/clientes/lista-negra` | personal admin, suscripción vigente |
 | POST | `/api/v1/clientes/lista-negra` | personal admin, suscripción vigente |
@@ -479,6 +482,10 @@ Ambos se envían como `Authorization: Bearer <token>`.
 - PUT recibe `{ "intervaloMinutos": 20 }` y responde **200** `{ "mensaje": "Intervalo de horarios actualizado", "intervaloMinutos": 20, "opciones": […] }`. **400** `El intervalo debe ser 10, 20, 30, 40, 50, 60 minutos` si no es una de las opciones. Aplica de inmediato a las horas disponibles; las citas ya agendadas no cambian.
 - También viene como `intervaloMinutos` en `GET`/`PATCH /admin/empresa` y en `GET /empresas/perfil/:codigo`.
 
+**GET `/api/v1/admin/empresa/privacidad-clientes`** y **PUT `/api/v1/admin/empresa/privacidad-clientes`** (solo administradores: integrante con rol Administrador o cuenta de administración; funcionan aunque la suscripción esté vencida): la opción "los empleados pueden ver el teléfono de los clientes".
+- GET responde **200** `{ "empleadosVenTelefono": false }`. **Apagada por defecto** (migración 034).
+- PUT recibe `{ "empleadosVenTelefono": true }` y responde **200** `{ "mensaje": "Ahora los empleados pueden ver el teléfono de los clientes", "empleadosVenTelefono": true }` (o `Los empleados ya no ven el teléfono de los clientes` con `false`). **400** `Envía "empleadosVenTelefono": true o false`; **403** a un empleado. Cada cambio queda en el registro del servidor (`privacidad_clientes_cambiada`, con quién lo cambió; sin datos de clientes). Aplica de inmediato en la siguiente solicitud del empleado (ver "Teléfono de los clientes para los empleados").
+
 **GET `/api/v1/admin/empresa/prueba`** (se mantiene para la app de antes; usa `/suscripcion`): días de prueba que le quedan a la empresa.
 
 - Responde **200** `{ "estadoSuscripcion": "trial", "trialEndsAt": "<fecha ISO>", "diasRestantes": 12, "pruebaVencida": false }`.
@@ -564,6 +571,7 @@ Todos usan `Authorization: Bearer <token>` del barbero o de la cuenta admin. El 
    "enListaNegra": false, "listaNegraId": null }]
 ```
 
+- **Páginas y búsqueda** (opcional): con cualquiera de `limite`, `cursor` o `q` la respuesta es una página, **200** `{ "datos": [ …misma forma… ], "siguienteCursor": "…" | null }`, en el mismo orden (con el `id` como desempate, así recorrer las páginas no repite ni salta clientes). `limite` de 1 a 50, por defecto 20 (**400** `El límite debe ser un número entero entre 1 y 50`). `cursor` = el `siguienteCursor` de la página anterior, tal cual (solo lleva el id del último cliente, así mide siempre lo mismo aunque el nombre sea largo; si ese cliente ya no existe o es de otro negocio, **400** `El cursor no es válido. Vuelve a pedir la primera página.`); `null` = no hay más. `q` (hasta 100 caracteres; **400** `La búsqueda puede tener hasta 100 caracteres`) busca en el nombre sin distinguir mayúsculas y, si el texto parece un número (solo dígitos, espacios, `+`, `-`, `.` o paréntesis), también en los dígitos del teléfono (`300 123-4567` encuentra `+573001234567`); `%` y `_` se buscan como texto. Para seguir una búsqueda se envían el mismo `q` y el cursor. **Sin ninguno de esos parámetros responde la lista completa, igual que siempre.** Ejemplo: `/clientes?q=juan&limite=20`, luego `/clientes?q=juan&limite=20&cursor=<siguienteCursor>`. Código: `listarClientesPagina` (`clientes.repositorio.ts`); pruebas en `test/clientesPaginacion.test.ts`.
 - `estado`: `"activo"` si el cliente tiene una cita no cancelada desde hace 45 días hasta hoy, o una cita próxima (fecha en la zona del negocio; una visita de hoy cuenta como activo). Si no, `"inactivo"`. Se calcula en cada consulta a partir de sus citas.
 - `citasCompletadas` y `citasCanceladas`: cuántas citas del cliente en el negocio están en cada estado. `totalCitas` son las reservas que hizo.
 - `fechaUltimaCita`: la fecha más lejana que ha reservado (puede ser futura); reservar una fecha anterior ya no la hace retroceder.
@@ -577,6 +585,16 @@ Todos usan `Authorization: Bearer <token>` del barbero o de la cuenta admin. El 
 **DELETE `/api/v1/clientes/lista-negra/:id`** (`:id` = `id` de la lista negra, o `listaNegraId` del cliente): **200** `{ "mensaje": "Cliente quitado de la lista negra" }`. **404** `Ese registro no está en la lista negra`.
 
 Un teléfono de la lista negra (se comparan solo los dígitos; los dos están en E.164) no puede reservar: `POST /api/v1/citas` responde **403** `No es posible agendar con este número. Comunícate con el negocio.`
+
+#### Teléfono de los clientes para los empleados
+
+Opción del negocio **"los empleados pueden ver el teléfono de los clientes"** (`empresas.empleados_ven_telefono`, migración 034), **apagada por defecto**. Solo un administrador la consulta y la cambia: `GET`/`PUT /admin/empresa/privacidad-clientes` (ver "Contrato de cuentas…").
+
+- **Apagada**: a un **empleado** (integrante con rol Empleado) el backend **no le envía** el teléfono ni el indicativo de ningún cliente: llegan en `null` (el campo se mantiene). Hoy eso aplica a `GET /citas/agenda` (`telefono`) y a la respuesta de `POST /citas/panel` (`cita.telefono` y `cita.indicativo`, también si eligió un cliente existente por `clienteId` o escribió el número). No hay enlaces de WhatsApp de clientes en ninguna respuesta, y las notificaciones nunca llevan teléfonos ni nombres. Las rutas con datos de clientes (`/clientes`, su historial, su búsqueda `q`, lista negra, reportes, calendario de bloqueos) siguen siendo solo para administradores (403 al empleado).
+- **Encendida**: el empleado recibe el teléfono en esas respuestas, solo de sus propias citas (como siempre).
+- **Administradores** (integrante con rol Administrador o cuenta de administración): lo ven siempre, con la opción apagada o encendida.
+- **Aplica de inmediato**: la opción y el rol se leen de la base en cada solicitud (`puedeVerTelefonos`, `src/modules/clientes/privacidad.ts`), así que el cambio se nota en la siguiente solicitud del empleado, con el mismo token, sin cerrar sesión ni reiniciar. Si no se puede leer la opción, no se muestra el teléfono y la respuesta sigue normal (nunca un 500; queda `privacidad_clientes_no_leida` en el registro). En `POST /citas/panel` se consulta antes de guardar la cita.
+- **Regla para código nuevo**: toda respuesta al personal que incluya el teléfono, el indicativo o un enlace de WhatsApp de un cliente debe pasar por `puedeVerTelefonos` + `telefonoVisible`, y su ruta se agrega al barrido de `test/privacidadTelefonos.test.ts`, que recorre todas las rutas que puede usar un empleado y comprueba que con la opción apagada ninguna respuesta trae el número (y que con la opción encendida sí lo detecta, como control).
 
 #### Equipo (solo admin)
 
@@ -746,7 +764,7 @@ Sesión del personal (integrante o cuenta admin) con la suscripción vigente (40
 - **Horas y choques**: la hora debe ser una de las horas libres del panel (si no, **409** `Esa hora no está disponible para este profesional y servicio. Elige una de las horas libres.`), dentro del horario (400), de hoy a 14 días (400) y sin choque: la revisión final va en una transacción con el profesional bloqueado (409 `Esa hora ya está ocupada…` o `El profesional no atiende en ese horario…`), igual que `POST /citas`.
 - **No aplica** el tope de citas pendientes por teléfono. Sí se respeta la lista negra (**403** `Este cliente está en la lista negra del negocio.`).
 - **Cuenta del cliente**: la cita se asocia a una cuenta de cliente (aparece en su "Mis citas", `citas.usuario_id`, y se le notifica `cita_creada_por_negocio`, ver "Qué se avisa y a quién") **solo si** esa cuenta tiene el mismo teléfono **y ya tiene relación con este negocio**: lo guardó (`negocios_guardados`) o tuvo citas en él. Si no, la cita queda como de invitado y no se notifica a ninguna cuenta (así un teléfono mal escrito no pone una cita en la cuenta de otra persona). Al profesional y a los administradores les llega `cita_nueva`.
-- **201** `{ "mensaje": "Cita agendada", "cita": { …misma forma que POST /citas… } }`.
+- **201** `{ "mensaje": "Cita agendada", "cita": { …misma forma que POST /citas… } }`. A un empleado, `cita.telefono` y `cita.indicativo` llegan en `null` si el negocio no le permite ver teléfonos (ver "Teléfono de los clientes para los empleados").
 
 #### Cartera
 
