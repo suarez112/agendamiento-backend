@@ -3,7 +3,7 @@ import { errores } from '../../shared/errores.js';
 import { aIsoEnZona } from '../../shared/zonaHoraria.js';
 import { buscarZonaHoraria } from '../empresas/empresas.repositorio.js';
 import * as repositorio from './clientes.repositorio.js';
-import type { FilaCliente, FilaListaNegra } from './clientes.repositorio.js';
+import type { FilaCliente, FilaListaNegra, PosicionCliente } from './clientes.repositorio.js';
 
 const CLIENTE_NO_ENCONTRADO = 'Cliente no encontrado';
 
@@ -30,9 +30,45 @@ const armarEntrada = (e: FilaListaNegra, zona: string) => ({
   zonaHoraria: zona,
 });
 
+export const CURSOR_INVALIDO = 'El cursor no es válido. Vuelve a pedir la primera página.';
+
+// El cursor es opaco para la app: la posición del último cliente de la página en JSON y base64url.
+// No da acceso a nada: solo indica desde dónde seguir dentro del negocio de la sesión.
+const codificarCursor = (c: FilaCliente) =>
+  Buffer.from(JSON.stringify({ f: c.fecha_ultima_cita, n: c.nombre, i: c.id })).toString('base64url');
+
+const leerCursor = (cursor: string): PosicionCliente => {
+  let datos: unknown;
+  try {
+    datos = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+  } catch {
+    throw errores.solicitudInvalida(CURSOR_INVALIDO);
+  }
+  const { f, n, i } = (datos ?? {}) as Record<string, unknown>;
+  const fechaValida = f === null || (typeof f === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(f) && !Number.isNaN(Date.parse(f)));
+  if (!fechaValida || typeof n !== 'string' || n.length > 200 || typeof i !== 'string' || !i || i.length > 64) {
+    throw errores.solicitudInvalida(CURSOR_INVALIDO);
+  }
+  return { fecha: f as string | null, nombre: n, id: i };
+};
+
 export const crearServicioClientes = ({ pool }: { pool: pg.Pool }) => ({
   async listar(empresaId: string) {
     return (await repositorio.listarClientes(pool, empresaId)).map(armarCliente);
+  },
+
+  // Una página de clientes, en el mismo orden que la lista completa. siguienteCursor = null en la última.
+  async listarPagina(empresaId: string, p: { limite: number; cursor?: string; q?: string }) {
+    const filas = await repositorio.listarClientesPagina(pool, empresaId, {
+      limite: p.limite,
+      despues: p.cursor === undefined ? null : leerCursor(p.cursor),
+      buscar: p.q?.trim() || null,
+    });
+    const pagina = filas.slice(0, p.limite);
+    return {
+      datos: pagina.map(armarCliente),
+      siguienteCursor: filas.length > p.limite ? codificarCursor(pagina[pagina.length - 1]!) : null,
+    };
   },
 
   // Datos del cliente y todas sus citas en el negocio

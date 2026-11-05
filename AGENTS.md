@@ -257,7 +257,7 @@ Todas las respuestas son JSON. Los errores siempre llegan como `{ "error": "mens
 | POST | `/api/v1/mi-cuenta/negocios` | cuenta de cliente, limitado. Guarda un negocio con su código |
 | DELETE | `/api/v1/mi-cuenta/negocios/:id` | cuenta de cliente. Quita un negocio de la lista |
 | GET | `/api/v1/mi-cuenta/citas` | cuenta de cliente. Citas que reservó con su sesión |
-| GET | `/api/v1/clientes` | personal admin, suscripción vigente. Clientes del negocio |
+| GET | `/api/v1/clientes?limite=&cursor=&q=` | personal admin, suscripción vigente. Clientes del negocio; con `limite`, `cursor` o `q`, por páginas y con búsqueda (ver "Clientes") |
 | GET | `/api/v1/clientes/:id/historial` | personal admin, suscripción vigente |
 | GET | `/api/v1/clientes/lista-negra` | personal admin, suscripción vigente |
 | POST | `/api/v1/clientes/lista-negra` | personal admin, suscripción vigente |
@@ -564,6 +564,7 @@ Todos usan `Authorization: Bearer <token>` del barbero o de la cuenta admin. El 
    "enListaNegra": false, "listaNegraId": null }]
 ```
 
+- **Páginas y búsqueda** (opcional): con cualquiera de `limite`, `cursor` o `q` la respuesta es una página, **200** `{ "datos": [ …misma forma… ], "siguienteCursor": "…" | null }`, en el mismo orden (con el `id` como desempate, así recorrer las páginas no repite ni salta clientes). `limite` de 1 a 50, por defecto 20 (**400** `El límite debe ser un número entero entre 1 y 50`). `cursor` = el `siguienteCursor` de la página anterior, tal cual (**400** `El cursor no es válido. Vuelve a pedir la primera página.`); `null` = no hay más. `q` (hasta 100 caracteres; **400** `La búsqueda puede tener hasta 100 caracteres`) busca en el nombre sin distinguir mayúsculas y, si el texto parece un número (solo dígitos, espacios, `+`, `-`, `.` o paréntesis), también en los dígitos del teléfono (`300 123-4567` encuentra `+573001234567`); `%` y `_` se buscan como texto. Para seguir una búsqueda se envían el mismo `q` y el cursor. **Sin ninguno de esos parámetros responde la lista completa, igual que siempre.** Ejemplo: `/clientes?q=juan&limite=20`, luego `/clientes?q=juan&limite=20&cursor=<siguienteCursor>`. Código: `listarClientesPagina` (`clientes.repositorio.ts`); pruebas en `test/clientesPaginacion.test.ts`.
 - `estado`: `"activo"` si el cliente tiene una cita no cancelada desde hace 45 días hasta hoy, o una cita próxima (fecha en la zona del negocio; una visita de hoy cuenta como activo). Si no, `"inactivo"`. Se calcula en cada consulta a partir de sus citas.
 - `citasCompletadas` y `citasCanceladas`: cuántas citas del cliente en el negocio están en cada estado. `totalCitas` son las reservas que hizo.
 - `fechaUltimaCita`: la fecha más lejana que ha reservado (puede ser futura); reservar una fecha anterior ya no la hace retroceder.
