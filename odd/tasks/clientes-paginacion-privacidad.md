@@ -23,7 +23,8 @@ Decisions confirmed by the user (L2):
 - [x] T1 — S1: pagination + search in `GET /clientes`. Route: inline (single unit, no Writer trigger). Commit: 47e02ce. RED 6/8 failing → GREEN 8/8. Assess: medium, under_budget.
 - [x] T2 — S2: migration 034 + `GET`/`PUT /admin/empresa/privacidad-clientes`. Route: inline. Commit: 9fba517. RED 0/5 → GREEN 5/5.
 - [x] T3 — S3, S4: hide phone for employees in every employee-reachable response + sweep tests. Route: inline. Commit: 57d6ade. RED 4/10 failing → GREEN 10/10. Full suite 483/483, typecheck OK. Assess (escalated item 2): high, review_due.
-- [ ] T3-V — independent verifier (Risk item 2): running.
+- [x] T3-V — independent verifier (Risk item 2): no blockers, S1–S6 pass. Advisory (tampered cursor → 500) fixed in bb34a11.
+- [x] T5 — native review (user granted, lenses risk + reliability): approved and acknowledged (lineage review-34c13e9f4e94897c). Three non-blocking advisories, see L7.
 - [x] T4 — S6: docs in AGENTS.md, bundled with each commit (README.md defers API docs to AGENTS.md; `docs/` holds no API reference).
 
 ## Log
@@ -34,3 +35,4 @@ Decisions confirmed by the user (L2):
 - L4: employee-reachable responses with client phones at base: `GET /citas/agenda` (`telefono`) and `POST /citas/panel` (`cita.telefono`, `cita.indicativo`). Notifications carry no phone; no client WhatsApp link exists.
 - L5 (T1): `q=100%` matched phones containing "100"; phone search now applies only when `q` looks like a number (digits, spaces, `+ - . ( )`).
 - L6: migration 034 not applied to `agendamiento_db` (user). Until it is, the running dev server (working tree code) answers 500 to employees on `GET /citas/agenda` and `POST /citas/panel`, and to admins on `/admin/empresa/privacidad-clientes`, because they read the new column (admins skip that read in agenda/panel).
+- L7: native review advisories (informational, not fixed yet): R1-001 and R3-panel-500-after-commit at `citas.servicio.ts:327-328` (the phone-permission read in POST /citas/panel runs after the appointment is committed; a DB failure there answers 500 although the appointment was saved); R3-cursor-length-cap at `clientes.rutas.ts:18` (cursor max 500 chars may reject cursors for very long multibyte names).
