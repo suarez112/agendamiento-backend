@@ -7,6 +7,7 @@ import { cifrarContrasena } from '../../src/modules/auth/contrasenas.js';
 import { cifrarSecreto, codigoTotp, generarSecretoTotp } from '../../src/modules/superadmin/totp.js';
 import { cargarEntorno, type Entorno } from '../../src/config/entorno.js';
 import type { ProveedorPago } from '../../src/modules/pagos/proveedor.js';
+import type { EnviadorCorreo } from '../../src/shared/correo.js';
 import type { ConfigLimites } from '../../src/shared/http/limitadores.js';
 import { type BaseDePrueba, crearBaseDePrueba, FECHA_FUTURA } from './baseDePrueba.js';
 import { leerConfigPruebas } from './configuracionPruebas.js';
@@ -45,7 +46,13 @@ const LIMITES_PRUEBA: ConfigLimites = {
 export type Contexto = { url: string; pool: pg.Pool; cerrar: () => Promise<void> };
 
 // proveedorPago: 'ausente' fuerza una app sin pagos; sin la clave se usa el del entorno (simulado en pruebas)
-type Opciones = { limites?: Partial<ConfigLimites>; entorno?: Partial<Entorno>; proveedorPago?: ProveedorPago | 'ausente' };
+// correo: enviador de correos para la app (por defecto, el que elige el entorno: en pruebas, la consola)
+type Opciones = {
+  limites?: Partial<ConfigLimites>;
+  entorno?: Partial<Entorno>;
+  proveedorPago?: ProveedorPago | 'ausente';
+  correo?: EnviadorCorreo;
+};
 
 const puertoLibre = () =>
   new Promise<number>((resolver) => {
@@ -90,8 +97,15 @@ export const iniciar = async (opciones: Opciones = {}): Promise<Contexto> => {
     };
   }
 
-  // El proveedor de pago lo deciden las pruebas (por defecto, el simulado), no el .env de quien las corre
-  const { PROVEEDOR_PAGO: _delEnv, ...procesoSinProveedor } = process.env;
+  // El proveedor de pago lo deciden las pruebas (por defecto, el simulado), no el .env de quien las corre.
+  // Tampoco se hereda la clave de Resend: una prueba que cambie NODE_ENV a production no debe enviar correos reales.
+  const {
+    PROVEEDOR_PAGO: _delEnv,
+    RESEND_API_KEY: _claveResend,
+    CORREO_REMITENTE: _remitente,
+    CORREO_RESPONDER_A: _responderA,
+    ...procesoSinProveedor
+  } = process.env;
   const entorno: Entorno = {
     ...cargarEntorno({ ...procesoSinProveedor, ...datosDb, DB_NAME: base.nombre, NODE_ENV: 'test',
       JWT_SECRET: SECRETO_PRUEBAS,
@@ -106,6 +120,7 @@ export const iniciar = async (opciones: Opciones = {}): Promise<Contexto> => {
     entorno,
     limites: { ...LIMITES_PRUEBA, ...opciones.limites },
     ...(opciones.proveedorPago ? { proveedorPago: opciones.proveedorPago === 'ausente' ? null : opciones.proveedorPago } : {}),
+    ...(opciones.correo ? { correo: opciones.correo } : {}),
   });
   const servidor: Server = await new Promise((resolver) => {
     const s = app.listen(0, '127.0.0.1', () => resolver(s as unknown as Server));

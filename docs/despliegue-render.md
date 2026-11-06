@@ -32,10 +32,12 @@ una receta que le dice a Render qué crear). No necesitas saber de servidores.
 
 ### Las que llenas tú
 
-Render te las pide al crear el Blueprint. **Las dos son opcionales**: si no tienes el dato, déjalas en blanco.
+Render te las pide al crear el Blueprint. **Todas son opcionales**: si no tienes el dato, déjalas en blanco. Si el Blueprint ya
+estaba creado, Render no las pide: agrégalas a mano en el servicio → **Environment** → **Add Environment Variable** y luego despliega.
 
 | Variable | Qué es | De dónde sale |
 | --- | --- | --- |
+| `RESEND_API_KEY` | Clave secreta de [Resend](https://resend.com) para enviar los correos del sistema (recuperar la contraseña y avisos de la prueba gratuita). **Sin ella no se envía ningún correo** y el registro muestra `correo_sin_proveedor` | En resend.com: **API Keys** → **Create API Key** con permiso **Sending access** (solo enviar) y, si puedes, limitada al dominio `agendality.com`. Empieza con `re_`. Cópiala solo en Render: nunca en el código ni en el repositorio |
 | `URL_PAGOS` | Página donde un administrador activa su plan. Aparece en los correos de la prueba gratuita ("Activa tu plan aquí"). Ej. `https://agendality.com/pagos` | Es una página de tu sitio web o de la app. Si aún no existe, déjala en blanco |
 | `EXPO_ACCESS_TOKEN` | Token para enviar notificaciones push con Expo | En [expo.dev](https://expo.dev): tu cuenta → **Access Tokens** → **Create token**. Solo hace falta si activaste "Enhanced security for push notifications" en Expo; si no, déjala en blanco |
 
@@ -46,6 +48,17 @@ Render te las pide al crear el Blueprint. **Las dos son opcionales**: si no tien
 | `JWT_SECRET` | Firma las sesiones. Si la cambias, todos tienen que volver a iniciar sesión |
 | `RECUPERACION_SECRET` | Protege los códigos para recuperar la contraseña |
 | `TOTP_SECRET` | Cifra la verificación en dos pasos del superadmin. **Nunca la cambies ni la regeneres**: tu app autenticadora dejaría de servir para entrar. Si algún día hace falta cambiarla, lee "TOTP_SECRET" en `AGENTS.md` (`npm run db:recifrar-2fa`) |
+
+### Correo (ya vienen en `render.yaml`)
+
+| Variable | Valor | Qué es |
+| --- | --- | --- |
+| `CORREO_REMITENTE` | `Agendality <no-reply@agendality.com>` | Quién envía los correos. Es obligatoria cuando hay `RESEND_API_KEY` (sin ella el servidor no arranca) |
+| `CORREO_RESPONDER_A` | `soporte@agendality.com` | A dónde llegan las respuestas de las personas (reply-to) |
+
+**Antes de poner la clave, verifica el dominio en Resend**: **Domains** → **Add Domain** → `agendality.com`, y crea en tu DNS los
+registros que Resend te muestre (SPF, DKIM y, recomendado, DMARC). Hasta que aparezca como **Verified**, Resend rechaza los
+correos; el usuario sigue recibiendo la respuesta de siempre y el registro muestra `correo_no_enviado` con el código HTTP.
 
 Render crea cada una una sola vez, al azar (44 caracteres), y las guarda. Puedes verlas en el servicio → **Environment**, pero no
 las copies en ningún archivo ni las compartas.
@@ -167,5 +180,6 @@ Mensajes comunes:
 - **Usuario de la base**: Render da un solo usuario (el dueño de la base), que usan la app y las migraciones. Para más seguridad puedes
   crear después el rol limitado `agendamiento_app` con `db/mantenimiento/crear-rol-aplicacion.sql` y usarlo como `DB_USER` (el de
   Render pasaría a `DB_MIGRACION_USER`).
-- **Correos**: todavía no hay proveedor de correo en producción, así que la recuperación de contraseña por correo no envía nada
-  (ver "Recuperar contraseña" en `AGENTS.md`).
+- **Correos**: se envían por Resend cuando `RESEND_API_KEY` está definida (ver "Correo" arriba y "Recuperar contraseña" en
+  `AGENTS.md`). Para comprobarlo, pide un código en la app con tu correo: debe llegar desde `no-reply@agendality.com`. Si no
+  llega, busca `correo_no_enviado` en **Logs** (trae el código HTTP de Resend; nunca el correo ni el código de 6 dígitos).

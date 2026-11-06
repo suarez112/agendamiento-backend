@@ -141,7 +141,7 @@ describe('avisos de la prueba gratuita', () => {
     const original = console.log;
     console.log = (...a: unknown[]) => void lineas.push(a.join(' '));
     try {
-      await crearEnviadorCorreo('development').enviar({ para: 'a@b.co', asunto: 'Asunto', texto: `Activa tu plan aquí: ${URL_PAGOS}` });
+      await crearEnviadorCorreo({ NODE_ENV: 'development' }).enviar({ para: 'a@b.co', asunto: 'Asunto', texto: `Activa tu plan aquí: ${URL_PAGOS}` });
     } finally {
       console.log = original;
     }

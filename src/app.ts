@@ -72,7 +72,7 @@ export type Dependencias = {
   pool: pg.Pool;
   entorno: Entorno;
   limites?: ConfigLimites;
-  // Por defecto: imprime en la consola (desarrollo) o solo avisa en el log (producción sin proveedor)
+  // Por defecto: Resend si hay RESEND_API_KEY; si no, imprime en la consola (desarrollo) o solo avisa en el log (producción)
   correo?: EnviadorCorreo;
   // Por defecto: Expo Push (en las pruebas no envía nada)
   push?: EnviadorPush;
@@ -87,7 +87,7 @@ export const crearApp = ({
   pool,
   entorno,
   limites = LIMITES_POR_DEFECTO,
-  correo = crearEnviadorCorreo(entorno.NODE_ENV),
+  correo = crearEnviadorCorreo(entorno),
   push = crearEnviadorPush(entorno.NODE_ENV, entorno.EXPO_ACCESS_TOKEN),
   proveedorPago = crearProveedorDePago(entorno, pool) ?? null,
 }: Dependencias): Express => {

@@ -88,6 +88,15 @@ services:
       - key: EXPO_ACCESS_TOKEN
         sync: false
 
+      # System emails (password recovery, trial notices) through Resend. Without the key nothing is sent.
+      # The sender's domain (agendality.com) must be verified in Resend.
+      - key: RESEND_API_KEY
+        sync: false
+      - key: CORREO_REMITENTE
+        value: Agendality <no-reply@agendality.com>
+      - key: CORREO_RESPONDER_A
+        value: soporte@agendality.com
+
 databases:
   - name: agendality-db
     plan: basic-256mb

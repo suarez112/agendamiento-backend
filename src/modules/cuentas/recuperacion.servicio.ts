@@ -1,7 +1,7 @@
 import { createHmac, randomInt, timingSafeEqual } from 'node:crypto';
 import type pg from 'pg';
 import { enTransaccion } from '../../db/pool.js';
-import type { EnviadorCorreo } from '../../shared/correo.js';
+import { type EnviadorCorreo, motivoFalloCorreo } from '../../shared/correo.js';
 import { errores } from '../../shared/errores.js';
 import { registro } from '../../shared/registro.js';
 import { cifrarContrasena } from '../auth/contrasenas.js';
@@ -44,7 +44,8 @@ export const crearServicioRecuperacion = ({ pool, secreto, correo, intentos }: D
             minutos: MINUTOS_CODIGO,
           }),
         );
-        // Sin esperar el envío: el tiempo de respuesta no debe revelar si la cuenta existe
+        // Sin esperar el envío: el tiempo de respuesta no debe revelar si la cuenta existe, y un fallo del
+        // proveedor no cambia la respuesta. El fallo queda en el registro sin el correo ni el código.
         correo
           .enviar({
             para: usuario.correo,
@@ -54,7 +55,9 @@ export const crearServicioRecuperacion = ({ pool, secreto, correo, intentos }: D
               `Vence en ${MINUTOS_CODIGO} minutos y sirve una sola vez. Si no lo pediste, ignora este correo: ` +
               'tu contraseña no cambia.',
           })
-          .catch((error: unknown) => registro.error('correo_no_enviado', { mensaje: (error as Error).message }));
+          .catch((error: unknown) =>
+            registro.error('correo_no_enviado', { proposito: 'recuperacion_contrasena', mensaje: motivoFalloCorreo(error) }),
+          );
       }
       return { mensaje: MENSAJE_SOLICITUD };
     },
