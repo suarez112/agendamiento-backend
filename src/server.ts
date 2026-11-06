@@ -35,7 +35,7 @@ const detenerRecordatorios = iniciarRecordatorios(
   crearServicioNotificaciones({
     pool,
     push: crearEnviadorPush(entorno.NODE_ENV, entorno.EXPO_ACCESS_TOKEN),
-    correo: crearEnviadorCorreo(entorno.NODE_ENV),
+    correo: crearEnviadorCorreo(entorno),
     urlPagos: entorno.URL_PAGOS,
   }),
 );

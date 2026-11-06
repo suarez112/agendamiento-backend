@@ -20,6 +20,13 @@ const esquemaBaseDeDatos = z.object({
 // Una variable opcional escrita en blanco (por ejemplo, dejada vacía en el panel de Render) cuenta como no definida
 const vaciaComoAusente = (valor: unknown) => (typeof valor === 'string' && valor.trim() === '' ? undefined : valor);
 
+// Dirección de correo: "Nombre <correo@dominio>" o solo "correo@dominio"
+const esCorreo = (valor: string) => z.email().safeParse(valor).success;
+const esRemitente = (valor: string) => {
+  const conNombre = /^[^<>]*\S\s*<([^<>\s]+)>$/.exec(valor);
+  return esCorreo(conNombre ? conNombre[1] : valor);
+};
+
 const LLAVES_WOMPI = {
   WOMPI_LLAVE_PUBLICA: { produccion: 'pub_prod_', prueba: 'pub_test_' },
   WOMPI_LLAVE_PRIVADA: { produccion: 'prv_prod_', prueba: 'prv_test_' },
@@ -125,6 +132,26 @@ const esquemaEntorno = esquemaBaseDeDatos
       .transform((base) => (/^https?:\/\//.test(base) ? base : `https://${base}`).replace(/\/+$/, '')),
     // Token de acceso de Expo para enviar notificaciones push (opcional: sin él también funciona)
     EXPO_ACCESS_TOKEN: z.preprocess(vaciaComoAusente, z.string().min(1).optional()),
+    // Correos del sistema por Resend (opcional). Sin RESEND_API_KEY no se envía nada: en desarrollo se imprimen en
+    // la consola y en producción solo queda correo_sin_proveedor en el log. Con la clave, CORREO_REMITENTE es
+    // obligatorio (ej. "Agendality <no-reply@agendality.com>", de un dominio verificado en Resend).
+    RESEND_API_KEY: z.preprocess(
+      vaciaComoAusente,
+      z.string().trim().startsWith('re_', 'no es una clave de Resend (empieza con re_)').optional(),
+    ),
+    CORREO_REMITENTE: z.preprocess(
+      vaciaComoAusente,
+      z
+        .string()
+        .trim()
+        .refine(esRemitente, 'debe ser un correo o "Nombre <correo@dominio>", ej. Agendality <no-reply@agendality.com>')
+        .optional(),
+    ),
+    // Dirección a la que llegan las respuestas de las personas (reply-to), ej. soporte@agendality.com
+    CORREO_RESPONDER_A: z.preprocess(
+      vaciaComoAusente,
+      z.string().trim().refine(esCorreo, 'debe ser un correo, ej. soporte@agendality.com').optional(),
+    ),
     // Pagos de la suscripción. PROVEEDOR_PAGO: "manual" (Nequi, llave Bre-B o QR con comprobante por WhatsApp; es el
     // valor por defecto), "wompi" (pasarela) o "simulado" (solo desarrollo y pruebas; es el valor por defecto en
     // las pruebas y en producción impide arrancar).
@@ -164,6 +191,13 @@ const esquemaEntorno = esquemaBaseDeDatos
       }
     }
     revisarPagos(e, ctx);
+    if (e.RESEND_API_KEY && !e.CORREO_REMITENTE) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['CORREO_REMITENTE'],
+        message: 'falta: es obligatorio con RESEND_API_KEY, ej. Agendality <no-reply@agendality.com>',
+      });
+    }
     if (e.RECUPERACION_SECRET === e.TOTP_SECRET) {
       ctx.addIssue({ code: 'custom', path: ['TOTP_SECRET'], message: 'debe ser distinto de RECUPERACION_SECRET' });
     }
