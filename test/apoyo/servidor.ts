@@ -97,8 +97,15 @@ export const iniciar = async (opciones: Opciones = {}): Promise<Contexto> => {
     };
   }
 
-  // El proveedor de pago lo deciden las pruebas (por defecto, el simulado), no el .env de quien las corre
-  const { PROVEEDOR_PAGO: _delEnv, ...procesoSinProveedor } = process.env;
+  // El proveedor de pago lo deciden las pruebas (por defecto, el simulado), no el .env de quien las corre.
+  // Tampoco se hereda la clave de Resend: una prueba que cambie NODE_ENV a production no debe enviar correos reales.
+  const {
+    PROVEEDOR_PAGO: _delEnv,
+    RESEND_API_KEY: _claveResend,
+    CORREO_REMITENTE: _remitente,
+    CORREO_RESPONDER_A: _responderA,
+    ...procesoSinProveedor
+  } = process.env;
   const entorno: Entorno = {
     ...cargarEntorno({ ...procesoSinProveedor, ...datosDb, DB_NAME: base.nombre, NODE_ENV: 'test',
       JWT_SECRET: SECRETO_PRUEBAS,
