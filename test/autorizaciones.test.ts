@@ -98,8 +98,8 @@ describe('prueba de las autorizaciones', () => {
         indicativo: '57',
         empresa_id: 'emp_a',
         usuario_id: null,
-        version_politica: '1.0',
-        version_terminos: '1.0',
+        version_politica: '1.1',
+        version_terminos: '1.1',
       },
     );
     assert.ok(filas[0].ip && filas[0].user_agent && filas[0].aceptado_en);
@@ -149,7 +149,7 @@ describe('prueba de las autorizaciones', () => {
     assert.equal(aceptando.estado, 201, aceptando.texto);
     const pruebas = await consulta('SELECT canal, version_politica, version_terminos FROM auditoria_autorizaciones WHERE usuario_id = $1 ORDER BY id', [usuarioId]);
     assert.deepEqual(pruebas, [
-      { canal: 'registro_cliente', version_politica: '1.0', version_terminos: '1.0' },
+      { canal: 'registro_cliente', version_politica: '1.1', version_terminos: '1.1' },
       { canal: 'nueva_version', version_politica: '2.0', version_terminos: '2.0' },
     ]);
     assert.equal((await estado()).json.vigente, true);

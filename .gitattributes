@@ -1,0 +1,3 @@
+# Migrations and legal sources are stored as-is in the database: keep LF on every OS
+db/migraciones/*.sql text eol=lf
+docs/legal/*.md text eol=lf
