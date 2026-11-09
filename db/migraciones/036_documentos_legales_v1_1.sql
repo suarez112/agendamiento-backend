@@ -205,7 +205,7 @@ Estos Términos se rigen por las leyes de la República de Colombia. Cualquier c
 (
 'aviso_privacidad',
 '1.1',
-NULL,
+'2026-11-09',
 $doc$Aviso de Privacidad$doc$,
 $doc$> **Eduar Suarez**, responsable de la plataforma **Agendality** (soporte@agendality.com, WhatsApp 316 278 1393), tratará tus datos personales (nombre, teléfono, correo e historial de citas) para gestionar tu cuenta, procesar tus reservas, enviarte recordatorios de tus citas y atender tus solicitudes. Los datos de tus reservas también son tratados por el negocio donde agendas el servicio. Tienes derecho a conocer, actualizar, rectificar y suprimir tus datos personales desde `Ayuda → PQRS` en la aplicación o escribiendo al correo indicado. Puedes consultar la Política de Tratamiento de Datos Personales completa en https://agendality.com/legales/politica-de-datos.$doc$
 );

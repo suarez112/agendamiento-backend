@@ -19,14 +19,15 @@ describe('documentos legales 1.1 (migraciones 035 y 036)', () => {
     const docs = separarDocumentosLegales(md, '1.1');
     const lineaVersion = /^\*\*Versión 1\.1 · Vigentes? desde el .+\*\*$/;
     const sinMarcas = md.replace(/^# DOCUMENTO \d+ · /gm, '').split('\n');
-    assert.equal(sinMarcas.filter((l) => lineaVersion.test(l)).length, 2, 'la política y los términos tienen su línea de versión');
+    assert.equal(sinMarcas.filter((l) => lineaVersion.test(l)).length, 3, 'los tres documentos tienen su línea de versión');
     const esperado = palabras(sinMarcas.filter((l) => l.trim() !== '---' && !lineaVersion.test(l)).join('\n'));
     assert.deepEqual(palabras(docs.map((d) => `${d.titulo}\n${d.contenido}`).join('\n')), esperado);
     for (const d of docs) assert.doesNotMatch(d.contenido, /Vigentes? desde/, d.tipo);
     assert.deepEqual(
       docs.map((d) => [d.tipo, d.vigenteDesde]),
-      [['politica_datos', '2026-11-09'], ['terminos', '2026-11-09'], ['aviso_privacidad', null]],
+      [['politica_datos', '2026-11-09'], ['terminos', '2026-11-09'], ['aviso_privacidad', '2026-11-09']],
     );
+    for (const d of docs) assert.ok(d.vigenteDesde, `${d.tipo} must have an effective date`);
   });
 
   test('una línea de versión con otra versión o una fecha inválida detiene el script', () => {
@@ -62,7 +63,7 @@ describe('documentos legales 1.1 (migraciones 035 y 036)', () => {
     );
     assert.deepEqual(rows, [
       { tipo: 'aviso_privacidad', version: '1.0', vigente_desde: null },
-      { tipo: 'aviso_privacidad', version: '1.1', vigente_desde: null },
+      { tipo: 'aviso_privacidad', version: '1.1', vigente_desde: '2026-11-09' },
       { tipo: 'politica_datos', version: '0.1-borrador', vigente_desde: null },
       { tipo: 'politica_datos', version: '1.0', vigente_desde: null },
       { tipo: 'politica_datos', version: '1.1', vigente_desde: '2026-11-09' },
