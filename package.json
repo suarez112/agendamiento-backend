@@ -20,7 +20,8 @@
     "dev:crear-superadmin": "tsx src/db/crearSuperadmin.ts",
     "dev:restablecer-superadmin": "tsx src/db/restablecerSuperadmin.ts",
     "dev:eliminar-superadmin": "tsx src/db/eliminarSuperadmin.ts",
-    "fotos:optimizar": "tsx src/db/optimizarFotos.ts"
+    "fotos:optimizar": "tsx src/db/optimizarFotos.ts",
+    "legal:generar-migracion": "tsx src/db/generarMigracionLegal.ts"
   },
   "keywords": [],
   "author": "",
