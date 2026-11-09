@@ -61,6 +61,8 @@ import { crearEnviadorCorreo, type EnviadorCorreo } from './shared/correo.js';
 import { crearEnviadorPush, type EnviadorPush } from './shared/push.js';
 import { crearCors } from './shared/http/cors.js';
 import { crearRutaSalud } from './shared/http/salud.js';
+import { crearDiagnosticoIp, type EscribirDiagnosticoIp } from './shared/http/diagnosticoIp.js';
+import { registro } from './shared/registro.js';
 import { AJUSTE_CLOUDFLARE } from './shared/http/ip.js';
 import { type ConfigLimites, crearLimitadores, LIMITES_POR_DEFECTO } from './shared/http/limitadores.js';
 import { manejadorErrores, rutaNoEncontrada } from './shared/http/manejadorErrores.js';
@@ -79,6 +81,8 @@ export type Dependencias = {
   // Por defecto: el que dice el entorno (simulado fuera de producción; wompi con sus llaves). undefined = sin pagos
   // null = sin pagos en línea
   proveedorPago?: ProveedorPago | null;
+  // Dónde se escribe el diagnóstico de IP (solo con DIAGNOSTICO_IP=true). Por defecto, el registro del servidor
+  diagnosticoIp?: EscribirDiagnosticoIp;
 };
 
 // Punto de composición: aquí se crean los servicios y se conectan con sus rutas.
@@ -90,6 +94,7 @@ export const crearApp = ({
   correo = crearEnviadorCorreo(entorno),
   push = crearEnviadorPush(entorno.NODE_ENV, entorno.EXPO_ACCESS_TOKEN),
   proveedorPago = crearProveedorDePago(entorno, pool) ?? null,
+  diagnosticoIp = (datos) => registro.info('diagnostico_ip', datos),
 }: Dependencias): Express => {
   const tokens = crearServicioTokens(entorno.JWT_SECRET, entorno.JWT_EXPIRA_EN);
   const auth = crearServicioAuth({ pool, tokens });
@@ -134,6 +139,8 @@ export const crearApp = ({
   app.use(express.json({ limit: '10kb' }));
   app.use('/salud', crearRutaSalud(pool));
   app.use('/api', limitadores.general);
+  // Solo si se pidió, y después del límite general para que un exceso de solicitudes no llene el registro
+  if (entorno.DIAGNOSTICO_IP) app.use('/api', crearDiagnosticoIp(diagnosticoIp));
 
   // Fotos subidas (empresas, equipo y productos). Los nombres son aleatorios y nunca se reutilizan, así que se
   // pueden guardar en caché. Cross-origin permite mostrarlas en la app web.

@@ -8,6 +8,7 @@ import { cifrarSecreto, codigoTotp, generarSecretoTotp } from '../../src/modules
 import { cargarEntorno, type Entorno } from '../../src/config/entorno.js';
 import type { ProveedorPago } from '../../src/modules/pagos/proveedor.js';
 import type { EnviadorCorreo } from '../../src/shared/correo.js';
+import type { EscribirDiagnosticoIp } from '../../src/shared/http/diagnosticoIp.js';
 import type { ConfigLimites } from '../../src/shared/http/limitadores.js';
 import { type BaseDePrueba, crearBaseDePrueba, FECHA_FUTURA } from './baseDePrueba.js';
 import { leerConfigPruebas } from './configuracionPruebas.js';
@@ -52,6 +53,8 @@ type Opciones = {
   entorno?: Partial<Entorno>;
   proveedorPago?: ProveedorPago | 'ausente';
   correo?: EnviadorCorreo;
+  // Recibe lo que registra el diagnóstico de IP (solo si el entorno tiene DIAGNOSTICO_IP=true)
+  diagnosticoIp?: EscribirDiagnosticoIp;
 };
 
 const puertoLibre = () =>
@@ -104,6 +107,8 @@ export const iniciar = async (opciones: Opciones = {}): Promise<Contexto> => {
     RESEND_API_KEY: _claveResend,
     CORREO_REMITENTE: _remitente,
     CORREO_RESPONDER_A: _responderA,
+    // El diagnóstico de IP lo decide cada prueba, no la terminal de quien las corre
+    DIAGNOSTICO_IP: _diagnosticoIp,
     ...procesoSinProveedor
   } = process.env;
   const entorno: Entorno = {
@@ -121,6 +126,7 @@ export const iniciar = async (opciones: Opciones = {}): Promise<Contexto> => {
     limites: { ...LIMITES_PRUEBA, ...opciones.limites },
     ...(opciones.proveedorPago ? { proveedorPago: opciones.proveedorPago === 'ausente' ? null : opciones.proveedorPago } : {}),
     ...(opciones.correo ? { correo: opciones.correo } : {}),
+    ...(opciones.diagnosticoIp ? { diagnosticoIp: opciones.diagnosticoIp } : {}),
   });
   const servidor: Server = await new Promise((resolver) => {
     const s = app.listen(0, '127.0.0.1', () => resolver(s as unknown as Server));

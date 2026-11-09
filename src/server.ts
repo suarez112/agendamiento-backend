@@ -21,6 +21,12 @@ if (entorno.NODE_ENV === 'production' && entorno.TRUST_PROXY === 0) {
   });
 }
 
+if (entorno.DIAGNOSTICO_IP) {
+  registro.warn('diagnostico_ip_activo', {
+    aviso: 'DIAGNOSTICO_IP=true: se registra la IP de cada solicitud a /api. Es solo para medir; apágalo al terminar. Ver docs/despliegue/trust-proxy.md',
+  });
+}
+
 const pool = crearPool(entorno);
 const servidor = crearApp({ pool, entorno }).listen(entorno.PORT, (error) => {
   if (error) {
