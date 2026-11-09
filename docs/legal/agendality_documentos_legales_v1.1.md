@@ -117,7 +117,7 @@ Agendality puede actualizar esta Política. Cuando cambie, se publicará la nuev
 
 # DOCUMENTO 2 · Términos y Condiciones de Uso
 
-**Versión 1.1 · Vigentes desde el 5 de noviembre de 2026**
+**Versión 1.1 · Vigentes desde el 9 de noviembre de 2026**
 
 Estos Términos rigen el acceso y el uso de **Agendality**, plataforma de software operada por Eduar Suarez (persona natural), con domicilio en Bucaramanga, Santander (Colombia), correo soporte@agendality.com.
 

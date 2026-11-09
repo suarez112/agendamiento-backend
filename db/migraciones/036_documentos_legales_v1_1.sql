@@ -5,14 +5,13 @@
 -- of each type becomes the current one, so accounts that accepted an older version
 -- must accept this one again (legal/estado, debeAceptarDocumentos, next booking).
 
-INSERT INTO documentos_legales (tipo, version, titulo, contenido) VALUES
+INSERT INTO documentos_legales (tipo, version, vigente_desde, titulo, contenido) VALUES
 (
 'politica_datos',
 '1.1',
+'2026-11-09',
 $doc$Política de Tratamiento de Datos Personales$doc$,
-$doc$**Versión 1.1 · Vigente desde el 9 de noviembre de 2026**
-
-Esta Política explica qué datos personales recoge **Agendality**, para qué los usa y cómo puedes ejercer tus derechos, en cumplimiento de la Ley 1581 de 2012 y sus decretos reglamentarios (Decreto 1377 de 2013, compilado en el Decreto 1074 de 2015).
+$doc$Esta Política explica qué datos personales recoge **Agendality**, para qué los usa y cómo puedes ejercer tus derechos, en cumplimiento de la Ley 1581 de 2012 y sus decretos reglamentarios (Decreto 1377 de 2013, compilado en el Decreto 1074 de 2015).
 
 ### 1. Responsable del Tratamiento
 
@@ -126,10 +125,9 @@ Agendality puede actualizar esta Política. Cuando cambie, se publicará la nuev
 (
 'terminos',
 '1.1',
+'2026-11-09',
 $doc$Términos y Condiciones de Uso$doc$,
-$doc$**Versión 1.1 · Vigentes desde el 5 de noviembre de 2026**
-
-Estos Términos rigen el acceso y el uso de **Agendality**, plataforma de software operada por Eduar Suarez (persona natural), con domicilio en Bucaramanga, Santander (Colombia), correo soporte@agendality.com.
+$doc$Estos Términos rigen el acceso y el uso de **Agendality**, plataforma de software operada por Eduar Suarez (persona natural), con domicilio en Bucaramanga, Santander (Colombia), correo soporte@agendality.com.
 
 ### 1. Aceptación de los Términos
 
@@ -207,6 +205,7 @@ Estos Términos se rigen por las leyes de la República de Colombia. Cualquier c
 (
 'aviso_privacidad',
 '1.1',
+NULL,
 $doc$Aviso de Privacidad$doc$,
 $doc$> **Eduar Suarez**, responsable de la plataforma **Agendality** (soporte@agendality.com, WhatsApp 316 278 1393), tratará tus datos personales (nombre, teléfono, correo e historial de citas) para gestionar tu cuenta, procesar tus reservas, enviarte recordatorios de tus citas y atender tus solicitudes. Los datos de tus reservas también son tratados por el negocio donde agendas el servicio. Tienes derecho a conocer, actualizar, rectificar y suprimir tus datos personales desde `Ayuda → PQRS` en la aplicación o escribiendo al correo indicado. Puedes consultar la Política de Tratamiento de Datos Personales completa en https://agendality.com/legales/politica-de-datos.$doc$
 );

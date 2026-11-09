@@ -174,14 +174,14 @@ export const crearRutasLegal = ({
   rutas.get('/:documento', async (req, res) => {
     const tipo = RUTA_TIPO[String(req.params.documento)];
     if (!tipo) throw errores.noEncontrado('Documento no encontrado');
-    const { rows } = await pool.query<{ version: string; titulo: string; contenido: string; publicado_en: Date }>(
-      `SELECT version, titulo, contenido, publicado_en FROM documentos_legales
+    const { rows } = await pool.query<{ version: string; vigente_desde: string | null; titulo: string; contenido: string; publicado_en: Date }>(
+      `SELECT version, to_char(vigente_desde, 'YYYY-MM-DD') AS vigente_desde, titulo, contenido, publicado_en FROM documentos_legales
        WHERE tipo = $1 ORDER BY publicado_en DESC, version DESC LIMIT 1`,
       [tipo],
     );
     if (!rows[0]) throw errores.noEncontrado('Documento no encontrado');
     const d = rows[0];
-    res.json({ tipo, version: d.version, titulo: d.titulo, contenido: d.contenido, publicadoEn: d.publicado_en });
+    res.json({ tipo, version: d.version, vigenteDesde: d.vigente_desde, titulo: d.titulo, contenido: d.contenido, publicadoEn: d.publicado_en });
   });
 
   return rutas;

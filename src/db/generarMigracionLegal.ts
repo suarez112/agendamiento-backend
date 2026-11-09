@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { separarDocumentosLegales, sqlPublicarVersion } from './documentosLegales.js';
 
 // npm run legal:generar-migracion -- <source .md> <version> <migration file name>
-// e.g. -- docs/legal/agendality_documentos_legales_v1.1.md 1.1 035_documentos_legales_v1_1.sql
+// e.g. -- docs/legal/agendality_documentos_legales_v1.1.md 1.1 036_documentos_legales_v1_1.sql
 // Reads the legal source file and writes a new SQL migration with its exact text, so
 // nothing is copied by hand. Never overwrites an existing migration.
 const [fuente, version, nombre] = process.argv.slice(2);
@@ -18,6 +18,6 @@ if (existsSync(destino)) {
   process.exit(1);
 }
 
-const documentos = separarDocumentosLegales(readFileSync(fuente, 'utf8'));
+const documentos = separarDocumentosLegales(readFileSync(fuente, 'utf8'), version);
 writeFileSync(destino, sqlPublicarVersion(version, documentos, fuente.replace(/\\/g, '/')), 'utf8');
-console.log(`✔ db/migraciones/${nombre}: ${documentos.map((d) => `${d.tipo} (${d.contenido.length} chars)`).join(', ')}`);
+console.log(`✔ db/migraciones/${nombre}: ${documentos.map((d) => `${d.tipo} (${d.contenido.length} chars, vigente desde ${d.vigenteDesde ?? '—'})`).join(', ')}`);
