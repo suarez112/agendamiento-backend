@@ -111,6 +111,12 @@ const esquemaEntorno = esquemaBaseDeDatos
       .enum(['true', 'false'], { error: 'debe ser true o false' })
       .default('false')
       .transform((v) => v === 'true'),
+    // Diagnóstico temporal: con true registra, por cada solicitud a /api, solo las IP y las cabeceras de IP
+    // (ver src/shared/http/diagnosticoIp.ts). Apagado por defecto; no se deja encendido de forma permanente.
+    DIAGNOSTICO_IP: z
+      .enum(['true', 'false'], { error: 'debe ser true o false' })
+      .default('false')
+      .transform((v) => v === 'true'),
     // Máximo de citas pendientes por teléfono en cada negocio (frena las reservas falsas)
     MAX_CITAS_PENDIENTES: z.coerce.number().int().min(1).max(50).default(MAX_CITAS_PENDIENTES_POR_TELEFONO),
     // Carpeta donde se guardan las fotos subidas (relativa a donde arranca el servidor)

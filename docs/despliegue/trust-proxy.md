@@ -36,4 +36,12 @@ guardada como prueba legal es la del proxy): es molesto, pero no es un agujero.
 
 Si ves la IP del proxy, sube `TRUST_PROXY` de uno en uno hasta que aparezca la IP real; si ves la inventada, bájalo.
 
+## Diagnóstico temporal de la IP (`DIAGNOSTICO_IP`)
+
+Para saber cuántos proxies hay de verdad y qué cabecera trae la IP real, ponlo en `true` **solo el rato que dure la medición** (nunca va en `render.yaml`; por defecto está apagado y reiniciar con el valor quitado lo apaga).
+
+Con `DIAGNOSTICO_IP=true`, cada solicitud a `/api` deja una línea `diagnostico_ip` en el registro con solo estos cinco datos: `conexion` (IP del salto directo), `xForwardedFor`, `cfConnectingIp`, `trueClientIp` y `reqIp` (la IP que resolvió Express con el `TRUST_PROXY` actual). Nunca otras cabeceras, ni `Authorization`, ni cookies, ni la ruta. Cada valor se recorta a 300 caracteres. Son IP de personas: bórralas del registro al terminar.
+
+Cómo medir: (1) activa la variable y reinicia; (2) haz una solicitud desde tu celular con datos móviles (por ejemplo `GET /api/v1/planes`) y otra con `curl -H "X-Forwarded-For: 1.2.3.4" https://<tu-api>/api/v1/planes`; (3) busca `diagnostico_ip` en los logs de Render; (4) con `xForwardedFor`, cuenta cuántas IP hay a la derecha de la tuya: ese es el número real de saltos de confianza; (5) vuelve a poner la variable en `false` o bórrala.
+
 Al arrancar con `NODE_ENV=production` y `TRUST_PROXY=0`, el servidor deja el aviso `trust_proxy_sin_configurar` en el registro como recordatorio.
