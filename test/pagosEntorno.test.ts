@@ -27,15 +27,15 @@ const LLAVES_PRUEBA = {
 const cargar = (extra: Record<string, string>) => cargarEntorno({ ...BASE, ...extra } as NodeJS.ProcessEnv);
 
 describe('pagos: configuración del entorno', () => {
-  test('el proveedor por defecto es el manual (Nequi, llave Bre-B o QR); en las pruebas, el simulado', () => {
-    assert.equal(proveedorDePagoActivo(cargar({ NODE_ENV: 'development' })), 'manual');
-    assert.equal(proveedorDePagoActivo(cargar({ NODE_ENV: 'production' })), 'manual');
+  test('sin PROVEEDOR_PAGO los pagos quedan desactivados; en las pruebas, el simulado', () => {
+    assert.equal(proveedorDePagoActivo(cargar({ NODE_ENV: 'development' })), undefined);
+    assert.equal(proveedorDePagoActivo(cargar({ NODE_ENV: 'production' })), undefined);
     assert.equal(proveedorDePagoActivo(cargar({ NODE_ENV: 'test' })), 'simulado');
   });
 
-  test('PROVEEDOR_PAGO=manual se acepta en producción sin llaves ni URL_PAGOS; wompi sigue disponible', () => {
-    assert.equal(cargar({ NODE_ENV: 'production', PROVEEDOR_PAGO: 'manual' }).PROVEEDOR_PAGO, 'manual');
-    assert.throws(() => cargar({ NODE_ENV: 'production', PROVEEDOR_PAGO: 'otro' }), /PROVEEDOR_PAGO: debe ser manual, wompi o simulado/);
+  test('PROVEEDOR_PAGO solo acepta wompi o simulado (el flujo manual se retiró)', () => {
+    assert.throws(() => cargar({ NODE_ENV: 'production', PROVEEDOR_PAGO: 'manual' }), /PROVEEDOR_PAGO: debe ser wompi o simulado/);
+    assert.throws(() => cargar({ NODE_ENV: 'production', PROVEEDOR_PAGO: 'otro' }), /PROVEEDOR_PAGO: debe ser wompi o simulado/);
   });
 
   test('en producción se niega a arrancar con el proveedor simulado', () => {

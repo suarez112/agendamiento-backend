@@ -464,3 +464,58 @@ describe('pagos desactivados (sin proveedor)', () => {
     await assert.rejects(servicio.crearOrden('x', { profesionales: 1, periodo: 'mensual' }), (e: { estado?: number }) => e.estado === 503);
   });
 });
+
+describe('flujo manual retirado: el historial se conserva y las rutas ya no existen', () => {
+  let ctx: Contexto;
+  let superadmin: string;
+  before(async () => {
+    ctx = await iniciar({ entorno: { URL_PAGOS, PROVEEDOR_PAGO: 'simulado' } });
+    superadmin = await crearSuperadmin(ctx);
+  });
+  after(() => ctx.cerrar());
+
+  test('una orden manual de antes se sigue leyendo y confirmar no la cambia', async () => {
+    const { token, empresaId } = await negocioNuevo(ctx);
+    await ctx.pool.query(
+      `INSERT INTO ordenes_pago (referencia, empresa_id, empresa_codigo, proveedor, profesionales, periodo, monto_centavos, estado)
+       VALUES ('AGD-HISTORICA-MANUAL', $1, 'X', 'manual', 2, 'mensual', 6000000, 'pendiente')`,
+      [empresaId],
+    );
+    const leida = await pedir(ctx, '/api/v1/pagos/ordenes/AGD-HISTORICA-MANUAL', { token });
+    assert.equal(leida.estado, 200);
+    assert.equal(leida.json.proveedor, 'manual');
+    assert.equal(leida.json.estado, 'pendiente');
+    const confirmada = await confirmar(ctx, token, 'AGD-HISTORICA-MANUAL');
+    assert.equal(confirmada.estado, 200);
+    assert.equal(confirmada.json.estado, 'pendiente');
+    assert.equal(await estadoEmpresa(ctx, empresaId), 'trial');
+  });
+
+  test("la base sigue aceptando el origen 'manual' en el historial de activaciones", async () => {
+    const { empresaId } = await negocioNuevo(ctx);
+    await ctx.pool.query(
+      `INSERT INTO activaciones_plan (empresa_id, empresa_codigo, empresa_nombre, plan_equipo, periodo, precio, fecha, origen, profesionales)
+       VALUES ($1, 'X', 'Negocio', 'equipo', 'mensual', 60000, CURRENT_DATE, 'manual', 2)`,
+      [empresaId],
+    );
+    const ingresos = await pedir(ctx, '/api/v1/superadmin/ingresos', { token: superadmin });
+    assert.equal(ingresos.estado, 200);
+    assert.ok(ingresos.json.bruto >= 60000);
+  });
+
+  test('las rutas de formas de pago, QR, lista de órdenes y revisión del superadmin ya no existen (404)', async () => {
+    const { token } = await negocioNuevo(ctx);
+    for (const ruta of ['/api/v1/pagos/formas-pago', '/api/v1/pagos/formas-pago/qr/nequi', '/api/v1/pagos/ordenes']) {
+      assert.equal((await pedir(ctx, ruta, { token })).estado, 404, ruta);
+    }
+    for (const [metodo, ruta] of [
+      ['GET', '/api/v1/superadmin/pagos/formas-pago'],
+      ['PATCH', '/api/v1/superadmin/pagos/formas-pago'],
+      ['GET', '/api/v1/superadmin/pagos/ordenes'],
+      ['POST', '/api/v1/superadmin/pagos/ordenes/AGD-X/aprobar'],
+      ['POST', '/api/v1/superadmin/pagos/ordenes/AGD-X/rechazar'],
+    ] as const) {
+      assert.equal((await pedir(ctx, ruta, { method: metodo, token: superadmin, body: metodo === 'GET' ? undefined : {} })).estado, 404, `${metodo} ${ruta}`);
+    }
+  });
+});
