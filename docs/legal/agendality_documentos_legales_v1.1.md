@@ -1,6 +1,6 @@
 # DOCUMENTO 1 · Política de Tratamiento de Datos Personales
 
-**Versión 1.1 · Vigente desde el 9 de noviembre de 2026**
+**Versión 1.1 · Vigente desde el 10 de noviembre de 2026**
 
 Esta Política explica qué datos personales recoge **Agendality**, para qué los usa y cómo puedes ejercer tus derechos, en cumplimiento de la Ley 1581 de 2012 y sus decretos reglamentarios (Decreto 1377 de 2013, compilado en el Decreto 1074 de 2015).
 
@@ -118,7 +118,7 @@ Agendality puede actualizar esta Política. Cuando cambie, se publicará la nuev
 
 # DOCUMENTO 2 · Términos y Condiciones de Uso
 
-**Versión 1.1 · Vigentes desde el 9 de noviembre de 2026**
+**Versión 1.1 · Vigentes desde el 10 de noviembre de 2026**
 
 Estos Términos rigen el acceso y el uso de **Agendality**, plataforma de software operada por Eduar Suarez (persona natural), con domicilio en Bucaramanga, Santander (Colombia), correo soporte@agendality.com.
 
@@ -199,6 +199,6 @@ Estos Términos se rigen por las leyes de la República de Colombia. Cualquier c
 
 # DOCUMENTO 3 · Aviso de Privacidad
 
-**Versión 1.1 · Vigente desde el 9 de noviembre de 2026**
+**Versión 1.1 · Vigente desde el 10 de noviembre de 2026**
 
 > **Eduar Suarez**, responsable de la plataforma **Agendality** (soporte@agendality.com, WhatsApp 316 278 1393), tratará tus datos personales (nombre, teléfono, correo e historial de citas) para gestionar tu cuenta, procesar tus reservas, enviarte recordatorios de tus citas y atender tus solicitudes. Los datos de tus reservas también son tratados por el negocio donde agendas el servicio. Si administras un negocio, los pagos de tu suscripción los procesa Wompi, que recibe los datos necesarios para el pago; Agendality no recibe ni almacena los datos de tu medio de pago. Tienes derecho a conocer, actualizar, rectificar y suprimir tus datos personales desde `Ayuda → PQRS` en la aplicación o escribiendo al correo indicado. Puedes consultar la Política de Tratamiento de Datos Personales completa en https://agendality.com/legales/politica-de-datos.

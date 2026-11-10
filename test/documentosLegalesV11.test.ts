@@ -25,7 +25,7 @@ describe('documentos legales 1.1 (migraciones 035 y 036)', () => {
     for (const d of docs) assert.doesNotMatch(d.contenido, /Vigentes? desde/, d.tipo);
     assert.deepEqual(
       docs.map((d) => [d.tipo, d.vigenteDesde]),
-      [['politica_datos', '2026-11-09'], ['terminos', '2026-11-09'], ['aviso_privacidad', '2026-11-09']],
+      [['politica_datos', '2026-11-10'], ['terminos', '2026-11-10'], ['aviso_privacidad', '2026-11-10']],
     );
     for (const d of docs) assert.ok(d.vigenteDesde, `${d.tipo} must have an effective date`);
   });
@@ -63,13 +63,13 @@ describe('documentos legales 1.1 (migraciones 035 y 036)', () => {
     );
     assert.deepEqual(rows, [
       { tipo: 'aviso_privacidad', version: '1.0', vigente_desde: null },
-      { tipo: 'aviso_privacidad', version: '1.1', vigente_desde: '2026-11-09' },
+      { tipo: 'aviso_privacidad', version: '1.1', vigente_desde: '2026-11-10' },
       { tipo: 'politica_datos', version: '0.1-borrador', vigente_desde: null },
       { tipo: 'politica_datos', version: '1.0', vigente_desde: null },
-      { tipo: 'politica_datos', version: '1.1', vigente_desde: '2026-11-09' },
+      { tipo: 'politica_datos', version: '1.1', vigente_desde: '2026-11-10' },
       { tipo: 'terminos', version: '0.1-borrador', vigente_desde: null },
       { tipo: 'terminos', version: '1.0', vigente_desde: null },
-      { tipo: 'terminos', version: '1.1', vigente_desde: '2026-11-09' },
+      { tipo: 'terminos', version: '1.1', vigente_desde: '2026-11-10' },
     ]);
   });
 
