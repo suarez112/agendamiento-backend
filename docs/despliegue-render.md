@@ -32,19 +32,13 @@ una receta que le dice a Render qué crear). No necesitas saber de servidores.
 
 ### Las que llenas tú
 
-Render te las pide al crear el Blueprint. **Las de Wompi y `URL_PAGOS` son obligatorias en producción**: con `PROVEEDOR_PAGO=wompi` el
-servidor no arranca si falta alguna o si una llave no es de producción. El resto son opcionales: si no tienes el dato, déjalas en blanco.
-Si el Blueprint ya estaba creado, Render no las pide: agrégalas a mano en el servicio → **Environment** → **Add Environment Variable** y
-luego despliega.
+Render te las pide al crear el Blueprint. **Todas son opcionales**: si no tienes el dato, déjalas en blanco. Si el Blueprint ya
+estaba creado, Render no las pide: agrégalas a mano en el servicio → **Environment** → **Add Environment Variable** y luego despliega.
 
 | Variable | Qué es | De dónde sale |
 | --- | --- | --- |
 | `RESEND_API_KEY` | Clave secreta de [Resend](https://resend.com) para enviar los correos del sistema (recuperar la contraseña y avisos de la prueba gratuita). **Sin ella no se envía ningún correo** y el registro muestra `correo_sin_proveedor` | En resend.com: **API Keys** → **Create API Key** con permiso **Sending access** (solo enviar) y, si puedes, limitada al dominio `agendality.com`. Empieza con `re_`. Cópiala solo en Render: nunca en el código ni en el repositorio |
-| `WOMPI_LLAVE_PUBLICA` | Llave pública de Wompi. Va en la dirección del pago. En producción empieza con `pub_prod_` | Panel de Wompi → **Desarrolladores** → llaves del ambiente de **producción**. Cópiala solo en Render |
-| `WOMPI_LLAVE_PRIVADA` | Llave privada de Wompi: consulta el estado de cada pago. Nunca sale del servidor. Empieza con `prv_prod_` | Mismo lugar. Cópiala solo en Render |
-| `WOMPI_SECRETO_EVENTOS` | Secreto con el que se verifica la firma de los avisos (webhook) de Wompi. Empieza con `prod_events_` | Mismo lugar. Cópiala solo en Render |
-| `WOMPI_SECRETO_INTEGRIDAD` | Secreto que firma la dirección del pago. Empieza con `prod_integrity_` | Mismo lugar. Cópiala solo en Render |
-| `URL_PAGOS` | A dónde vuelve la persona después de pagar (la app o tu sitio web). Se le agrega `/<referencia>` y Wompi agrega `?id=<transacción>`. También se enlaza en los correos de la prueba gratuita ("Activa tu plan aquí"). Ej. `https://agendality.com/pagos` | Es una página de tu sitio web o de la app. **Obligatoria en producción** |
+| `URL_PAGOS` | Página donde un administrador activa su plan. Aparece en los correos de la prueba gratuita ("Activa tu plan aquí"). Ej. `https://agendality.com/pagos` | Es una página de tu sitio web o de la app. Si aún no existe, déjala en blanco |
 | `EXPO_ACCESS_TOKEN` | Token para enviar notificaciones push con Expo | En [expo.dev](https://expo.dev): tu cuenta → **Access Tokens** → **Create token**. Solo hace falta si activaste "Enhanced security for push notifications" en Expo; si no, déjala en blanco |
 
 ### Las que genera Render (no las toques)
@@ -87,14 +81,10 @@ no queda expuesta a internet.
 | `URL_PUBLICA` | `https://api.agendality.com` | Para armar las direcciones de las fotos |
 | `ENLACE_PUBLICO_BASE` | `agendality.com` | Enlace que comparte cada negocio: `https://agendality.com/CODIGO` |
 | `CARPETA_SUBIDAS` | `/var/data/uploads` | Carpeta de las fotos, dentro del disco |
-| `PROVEEDOR_PAGO` | `wompi` | Los pagos de la suscripción se cobran con Wompi. Sin esta variable los pagos quedan desactivados (crear una orden responde 503) |
+| `PROVEEDOR_PAGO` | `manual` | Pagos por Nequi, llave Bre-B o QR, verificados por ti en el panel |
 | `JWT_EXPIRA_EN` | `12h` | Cuánto dura una sesión |
 
 Si cambias una variable en Render, el servicio se reinicia solo con el valor nuevo.
-
-**Aviso de Wompi (webhook):** en el panel de Wompi, ambiente de producción, pon como **URL de eventos**
-`https://api.agendality.com/api/v1/pagos/webhook`. Con ella, el plan se activa aunque la persona cierre la app antes de volver.
-Las llaves de prueba (`*_test_*`) no sirven en producción: el servidor se niega a arrancar con ellas.
 
 ## 3. Conectar el dominio `api.agendality.com`
 
