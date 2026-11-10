@@ -79,9 +79,20 @@ services:
       - key: CARPETA_SUBIDAS
         value: /var/data/uploads
 
+      # Subscription payments go through Wompi. The server refuses to start in production without the four
+      # production keys (pub_prod_, prv_prod_, prod_events_, prod_integrity_) and URL_PAGOS. Values are set in the
+      # Render dashboard only (sync: false); never commit them.
       - key: PROVEEDOR_PAGO
-        value: manual
-      # Optional: page where admins activate their plan (linked in trial emails). Leave blank if none.
+        value: wompi
+      - key: WOMPI_LLAVE_PUBLICA
+        sync: false
+      - key: WOMPI_LLAVE_PRIVADA
+        sync: false
+      - key: WOMPI_SECRETO_EVENTOS
+        sync: false
+      - key: WOMPI_SECRETO_INTEGRIDAD
+        sync: false
+      # Where the payer returns after paying (the app or the website); "/<reference>" is appended. Required with Wompi.
       - key: URL_PAGOS
         sync: false
       # Optional: Expo access token for push notifications. Leave blank if not enabled in Expo.
