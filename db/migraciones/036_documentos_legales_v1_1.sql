@@ -9,7 +9,7 @@ INSERT INTO documentos_legales (tipo, version, vigente_desde, titulo, contenido)
 (
 'politica_datos',
 '1.1',
-'2026-11-09',
+'2026-11-10',
 $doc$Política de Tratamiento de Datos Personales$doc$,
 $doc$Esta Política explica qué datos personales recoge **Agendality**, para qué los usa y cómo puedes ejercer tus derechos, en cumplimiento de la Ley 1581 de 2012 y sus decretos reglamentarios (Decreto 1377 de 2013, compilado en el Decreto 1074 de 2015).
 
@@ -39,14 +39,14 @@ Los términos *Autorización, Base de Datos, Dato Personal, Encargado, Responsab
 
 | Titular | Datos recolectados | Fuente / método de obtención |
 | ----- | ----- | ----- |
-| **Administrador del negocio** | Nombre, correo electrónico, nombre de usuario, contraseña (almacenada con cifrado irreversible) y comprobantes de pago que envía por WhatsApp para activar su suscripción. | Formulario de registro del negocio y mensajes que el propio administrador envía. |
+| **Administrador del negocio** | Nombre, correo electrónico, nombre de usuario, contraseña (almacenada con cifrado irreversible) y registro de los pagos de su suscripción (referencia, valor, plan, estado del pago e identificador de la transacción que informa Wompi). | Formulario de registro del negocio y confirmación de los pagos que envía Wompi. |
 | **Negocio** | Nombre comercial, categoría, dirección, municipio, departamento, horario de atención, ubicación en el mapa, foto de perfil o logo, código del negocio y número de WhatsApp de contacto (opcional, visible para sus clientes). | Configuración de "Mi negocio". |
 | **Integrante del equipo** | Nombre, usuario, contraseña cifrada, foto de perfil, rol, porcentaje de comisión y citas atendidas. | Registro hecho por el administrador. |
 | **Cliente con cuenta** | Nombre, teléfono de contacto, correo electrónico o usuario, contraseña cifrada, negocios guardados e historial de citas. | Formulario de registro de cliente. |
 | **Cliente invitado** | Nombre, teléfono de contacto y citas reservadas. | Formulario de reserva rápida. |
 | **Todos los usuarios** | Fecha, hora, versión y canal de la autorización otorgada; registros técnicos de seguridad (dirección IP, fecha y hora de acceso, registros de error) e identificadores de dispositivo para notificaciones push. | Uso de la plataforma. |
 
-**Agendality** no solicita ni procesa datos sensibles (origen étnico, convicciones políticas o religiosas, salud, orientación sexual o datos biométricos). Las fotos de perfil o del negocio se usan únicamente para la identificación gráfica dentro de la interfaz. Agendality no almacena datos de tarjetas de crédito ni credenciales bancarias.
+**Agendality** no solicita ni procesa datos sensibles (origen étnico, convicciones políticas o religiosas, salud, orientación sexual o datos biométricos). Las fotos de perfil o del negocio se usan únicamente para la identificación gráfica dentro de la interfaz. Agendality no almacena datos de tarjetas de crédito ni credenciales bancarias: los datos del medio de pago los recibe y trata directamente Wompi, el procesador de pagos de Agendality.
 
 ### 5. Finalidades del Tratamiento
 
@@ -58,7 +58,7 @@ Los datos personales se utilizan estrictamente para:
 4. Permitir al negocio administrar su equipo, su catálogo de servicios, sus bloqueos de horario y sus métricas.
 5. Permitir al negocio restringir reservas desde un número telefónico (lista de bloqueados) ante inasistencias reiteradas.
 6. Enviar avisos sobre las citas mediante notificaciones dentro de la aplicación y notificaciones push: recordatorios a los clientes con cuenta y avisos de nuevas reservas a los profesionales y administradores del negocio. El correo electrónico se usa para recuperar la contraseña y para los avisos de la prueba gratuita.
-7. Gestionar el período de prueba gratuita y la verificación manual de los pagos de la suscripción del negocio, incluida la revisión de los comprobantes que el administrador envía.
+7. Gestionar el período de prueba gratuita y los pagos de la suscripción del negocio, que se procesan a través de Wompi, y activar el plan cuando Wompi confirma el pago.
 8. Atender peticiones, quejas, reclamos y sugerencias (PQRS).
 9. Garantizar la seguridad técnica de la plataforma, prevenir fraudes y cumplir requerimientos legales.
 10. Generar estadísticas internas anónimas para mejorar el servicio.
@@ -110,7 +110,8 @@ Para prestar el servicio, **Agendality** usa proveedores tecnológicos que puede
 * **Cloudflare** (Cloudflare, Inc.): administración del dominio, DNS y reenvío del correo de soporte.
 * **Resend** (Resend, Inc.): envío de los correos de la plataforma, como la recuperación de contraseña y los avisos de la prueba gratuita.
 * **Google (Gmail):** recepción y atención de los mensajes enviados a soporte@agendality.com.
-* **WhatsApp (Meta):** cuando el usuario toca un enlace de WhatsApp o envía por ese medio un comprobante de pago; en esos casos se aplican las políticas de privacidad de WhatsApp.
+* **Wompi:** único procesador de los pagos de la suscripción. Agendality le envía solo los datos necesarios para el pago (referencia, valor y moneda). Los datos del medio de pago y de quien paga los ingresa el administrador directamente en Wompi, que los trata según sus propias políticas; Agendality no los recibe ni los almacena.
+* **WhatsApp (Meta):** cuando el usuario toca un enlace de WhatsApp; en ese caso se aplican las políticas de privacidad de WhatsApp.
 
 Al aceptar esta Política, el Titular autoriza la transmisión y transferencia de sus datos a estos proveedores, que pueden estar ubicados fuera de Colombia, para los fines descritos en esta Política y bajo medidas de seguridad adecuadas, de acuerdo con la Ley 1581 de 2012.
 
@@ -125,7 +126,7 @@ Agendality puede actualizar esta Política. Cuando cambie, se publicará la nuev
 (
 'terminos',
 '1.1',
-'2026-11-09',
+'2026-11-10',
 $doc$Términos y Condiciones de Uso$doc$,
 $doc$Estos Términos rigen el acceso y el uso de **Agendality**, plataforma de software operada por Eduar Suarez (persona natural), con domicilio en Bucaramanga, Santander (Colombia), correo soporte@agendality.com.
 
@@ -147,13 +148,13 @@ Al marcar la casilla de aceptación durante el registro o al agendar una cita, e
 ### 4. Período de prueba, suscripción y pagos
 
 * **Período de prueba:** todo negocio nuevo recibe quince (15) días calendario de prueba gratuita, sin necesidad de tarjeta.
-* **Suscripción:** al terminar la prueba, el administrador debe contratar un plan (mensual o anual) para mantener habilitadas la gestión y la recepción de reservas. El valor depende del número de profesionales que atienden clientes. Los precios vigentes se muestran en la página principal y en la pantalla "Plan y pagos", antes de confirmar cualquier pago.
-* **Cómo se paga:** el pago se hace por transferencia a las cuentas que Agendality indica en la pantalla "Plan y pagos" (Nequi, llave Bre-B o código QR). Luego, el administrador envía el comprobante por WhatsApp al número indicado en esa misma pantalla.
-* **Verificación y activación:** Agendality verifica cada pago de forma manual. Si el pago es válido, activa o extiende la suscripción sumando el período contratado a la fecha de vencimiento vigente. Si el pago es rechazado, se informa el motivo al administrador.
+* **Suscripción:** al terminar la prueba, el administrador debe contratar un plan (mensual o anual) para mantener habilitadas la gestión y la recepción de reservas. El valor depende del número de profesionales que atienden clientes. Los precios vigentes se muestran en la página principal y en la sección de suscripción de tu negocio en la versión web, antes de confirmar cualquier pago.
+* **Cómo se paga:** el pago se hace en línea, solo desde la sección de suscripción de tu negocio en la versión web (en la aplicación para Android y iOS no hay pagos), a través de **Wompi**, el único procesador de pagos de Agendality. Los medios de pago disponibles son los que Wompi ofrece en su pantalla de pago.
+* **Verificación y activación:** Agendality consulta a Wompi el estado de cada pago. Cuando Wompi confirma que el pago fue aprobado, Agendality activa o extiende la suscripción sumando el período contratado a la fecha de vencimiento vigente. Si Wompi rechaza o anula el pago, la suscripción no se activa.
 * **Vencimiento:** si la suscripción vence sin renovarse, el negocio pierde el acceso a las funciones de gestión hasta que renueve. No hay cobros automáticos ni débitos sobre cuentas del usuario.
 * **Reembolsos y retracto:** si crees que hubo un error en un pago, escribe a soporte@agendality.com. Los derechos de retracto y reembolso se aplican conforme a la Ley 1480 de 2011 cuando corresponda.
-* **Datos de pago:** Agendality no almacena datos de tarjetas ni credenciales bancarias.
-* **Otros medios de pago:** Agendality podrá incorporar otros medios de pago, como pasarelas de pago. En ese caso lo informará previamente en la plataforma.
+* **Datos de pago:** los datos del medio de pago (como tarjetas, cuentas o credenciales bancarias) los ingresa el administrador directamente en Wompi y los trata Wompi, no Agendality. Agendality no almacena esos datos; solo guarda la referencia, el valor, el plan, el estado y el identificador de la transacción de cada pago que informa Wompi.
+* **Otros procesadores de pago:** Agendality podrá incorporar otros procesadores de pago. En ese caso lo informará previamente en la plataforma.
 
 ### 5. Obligaciones de los negocios
 
@@ -205,7 +206,7 @@ Estos Términos se rigen por las leyes de la República de Colombia. Cualquier c
 (
 'aviso_privacidad',
 '1.1',
-'2026-11-09',
+'2026-11-10',
 $doc$Aviso de Privacidad$doc$,
-$doc$> **Eduar Suarez**, responsable de la plataforma **Agendality** (soporte@agendality.com, WhatsApp 316 278 1393), tratará tus datos personales (nombre, teléfono, correo e historial de citas) para gestionar tu cuenta, procesar tus reservas, enviarte recordatorios de tus citas y atender tus solicitudes. Los datos de tus reservas también son tratados por el negocio donde agendas el servicio. Tienes derecho a conocer, actualizar, rectificar y suprimir tus datos personales desde `Ayuda → PQRS` en la aplicación o escribiendo al correo indicado. Puedes consultar la Política de Tratamiento de Datos Personales completa en https://agendality.com/legales/politica-de-datos.$doc$
+$doc$> **Eduar Suarez**, responsable de la plataforma **Agendality** (soporte@agendality.com, WhatsApp 316 278 1393), tratará tus datos personales (nombre, teléfono, correo e historial de citas) para gestionar tu cuenta, procesar tus reservas, enviarte recordatorios de tus citas y atender tus solicitudes. Los datos de tus reservas también son tratados por el negocio donde agendas el servicio. Si administras un negocio, los pagos de tu suscripción los procesa Wompi, que recibe los datos necesarios para el pago; Agendality no recibe ni almacena los datos de tu medio de pago. Tienes derecho a conocer, actualizar, rectificar y suprimir tus datos personales desde `Ayuda → PQRS` en la aplicación o escribiendo al correo indicado. Puedes consultar la Política de Tratamiento de Datos Personales completa en https://agendality.com/legales/politica-de-datos.$doc$
 );
