@@ -1,8 +1,8 @@
 // Interfaz de proveedor de pago. El resto del backend solo conoce esto: cambiar de pasarela es escribir otra
-// implementación ("simulado" para desarrollo, "wompi" para la pasarela y "manual" para los pagos por Nequi, llave
-// Bre-B o código QR que el superadmin verifica a mano).
+// implementación ("simulado" para desarrollo y "wompi" para la pasarela). Las órdenes con proveedor "manual" de
+// antes (flujo retirado) solo existen como historial en la base y no tienen implementación.
 
-export type NombreProveedor = 'simulado' | 'wompi' | 'manual';
+export type NombreProveedor = 'simulado' | 'wompi';
 export type EstadoPago = 'pendiente' | 'aprobada' | 'rechazada' | 'anulada';
 
 export type OrdenParaPago = {

@@ -43,8 +43,6 @@ import { crearRutasMiCuenta, crearServicioMiCuenta } from './modules/micuenta/mi
 import { crearRutasPqrs } from './modules/pqrs/pqrs.rutas.js';
 import { crearServicioPqrs } from './modules/pqrs/pqrs.servicio.js';
 import { crearProveedorDePago } from './modules/pagos/proveedores.js';
-import { crearServicioFormasPago } from './modules/pagos/formasPago.servicio.js';
-import { crearServicioPagosManuales } from './modules/pagos/pagos.manual.servicio.js';
 import { crearRutasPagos } from './modules/pagos/pagos.rutas.js';
 import { crearServicioPagos } from './modules/pagos/pagos.servicio.js';
 import { crearRutasPlanes } from './modules/planes/planes.js';
@@ -125,9 +123,6 @@ export const crearApp = ({
   });
   const notificaciones = crearServicioNotificaciones({ pool, push, correo, urlPagos: entorno.URL_PAGOS });
   const funciones = crearServicioFunciones({ pool });
-  // Pagos manuales (Nequi, llave Bre-B y código QR): las formas de pago las configura el superadmin y las órdenes las verifica él
-  const formasPago = crearServicioFormasPago({ pool });
-  const pagosManuales = crearServicioPagosManuales({ pool, formas: formasPago, avisos: notificaciones });
   const servicioCartera = crearServicioCartera({ pool });
   const servicioReportes = crearServicioReportes({ pool });
 
@@ -162,7 +157,7 @@ export const crearApp = ({
   app.use('/api/v1/cuentas', crearRutasCuentas(cuentas, recuperacion, crearServicioEliminacion({ pool, fotos: fotos.barberos }), guardiasCuenta, limitadores, intentosPorCuenta));
   app.use('/api/v1/ubicaciones', crearRutasUbicaciones());
   app.use('/api/v1/planes', crearRutasPlanes());
-  // Pagos de la suscripción (administradores): manuales por defecto, o con pasarela, y el webhook de la pasarela
+  // Pagos de la suscripción (administradores): con la pasarela (Wompi) y su webhook
   app.use(
     '/api/v1/pagos',
     crearRutasPagos(
@@ -170,7 +165,6 @@ export const crearApp = ({
       guardias,
       limitadores,
       proveedorPago ?? undefined,
-      { ordenes: pagosManuales, formas: formasPago, urlBase },
     ),
   );
   // Funciones que incluye el plan del negocio de la sesión
@@ -180,7 +174,7 @@ export const crearApp = ({
   // Panel del dueño de la plataforma: sesión propia, con verificación en dos pasos
   app.use(
     '/api/v1/superadmin',
-    crearRutasSuperadmin(crearServicioSuperadmin({ pool, tokens, secreto: entorno.TOTP_SECRET, intentos: intentosSuperadmin }), categorias, limitadores, { formas: formasPago, ordenes: pagosManuales }),
+    crearRutasSuperadmin(crearServicioSuperadmin({ pool, tokens, secreto: entorno.TOTP_SECRET, intentos: intentosSuperadmin }), categorias, limitadores),
   );
   // Celulares con sesión para recibir notificaciones push
   const titularDe = crearResolverTitular(auth, cuentas, tokens);

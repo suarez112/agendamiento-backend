@@ -27,6 +27,8 @@ const base = (extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: 'test', JWT_SECRET: JWT, ...extra };
   // El proveedor de pago del .env de quien corre las pruebas no debe influir en estas
   delete env.PROVEEDOR_PAGO;
+  // Tampoco las llaves de Wompi (de prueba) del .env: en producción impedirían arrancar y no son lo que se prueba aquí
+  for (const llave of ['WOMPI_LLAVE_PUBLICA', 'WOMPI_LLAVE_PRIVADA', 'WOMPI_SECRETO_EVENTOS', 'WOMPI_SECRETO_INTEGRIDAD']) delete env[llave];
   if (!('RECUPERACION_SECRET' in extra)) delete env.RECUPERACION_SECRET;
   if (!('TOTP_SECRET' in extra)) delete env.TOTP_SECRET;
   return env;

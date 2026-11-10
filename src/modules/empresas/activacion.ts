@@ -3,7 +3,9 @@ import { type Periodo, planParaPersonas, precioPara } from '../../config/planes.
 import { contarEquipoCobrable, marcarCargosPagados } from './cobro.js';
 
 export type { Periodo };
-export type OrigenActivacion = 'panel' | 'comando' | 'pasarela' | 'manual';
+// Origen de una activación nueva. La base sigue aceptando 'manual' (activaciones de antes del retiro del flujo manual):
+// esas filas se conservan como historial y se leen sin importar su origen.
+export type OrigenActivacion = 'panel' | 'comando' | 'pasarela';
 
 // Lo que realmente se cobró (pasarela): profesionales cubiertos y precio pagado. Sin esto, salen del equipo de hoy.
 export type PagoRecibido = { profesionales: number; precio: number };
