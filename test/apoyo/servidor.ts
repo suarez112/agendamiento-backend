@@ -36,6 +36,8 @@ const LIMITES_PRUEBA: ConfigLimites = {
   recuperacionPorCorreo: 1_000,
   pqrs: 1_000,
   estadoPago: 1_000,
+  citasPanelPorMinuto: 1_000,
+  citasPanelPorHora: 1_000,
   fallosPorCuenta: 1_000,
   fallosSuperadmin: 1_000,
   bloqueoCuentaMs: 60_000,

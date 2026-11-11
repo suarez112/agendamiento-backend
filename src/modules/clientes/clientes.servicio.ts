@@ -1,9 +1,11 @@
 import type pg from 'pg';
 import { errores } from '../../shared/errores.js';
 import { aIsoEnZona } from '../../shared/zonaHoraria.js';
+import type { Sesion } from '../auth/auth.servicio.js';
 import { buscarZonaHoraria } from '../empresas/empresas.repositorio.js';
 import * as repositorio from './clientes.repositorio.js';
 import type { FilaCliente, FilaListaNegra } from './clientes.repositorio.js';
+import { puedeVerTelefonos, telefonoVisible } from './privacidad.js';
 
 const CLIENTE_NO_ENCONTRADO = 'Cliente no encontrado';
 
@@ -29,6 +31,11 @@ const armarEntrada = (e: FilaListaNegra, zona: string) => ({
   agregadoEn: aIsoEnZona(e.agregado_en, zona),
   zonaHoraria: zona,
 });
+
+// Selector de "cliente existente": máximo de resultados por búsqueda y mínimo de dígitos para buscar por teléfono,
+// para que no se pueda recorrer toda la lista de clientes del negocio
+export const MAXIMO_SELECTOR = 10;
+const MINIMO_DIGITOS_SELECTOR = 3;
 
 export const CURSOR_INVALIDO = 'El cursor no es válido. Vuelve a pedir la primera página.';
 
@@ -66,6 +73,34 @@ export const crearServicioClientes = ({ pool }: { pool: pg.Pool }) => ({
     return {
       datos: pagina.map(armarCliente),
       siguienteCursor: filas.length > p.limite ? codificarCursor(pagina[pagina.length - 1]!) : null,
+    };
+  },
+
+  // Selector de "cliente existente" (administradores y empleados del negocio de la sesión):
+  // - administrador: todos los clientes del negocio, con teléfono e indicativo, y busca también por teléfono;
+  // - empleado: SOLO los clientes que tienen o tuvieron citas (de cualquier estado) con él; los demás no aparecen ni
+  //   por nombre ni por teléfono. De esos, teléfono e indicativo solo con la opción del negocio encendida (si no,
+  //   null) y solo con esa opción busca también por teléfono.
+  async buscarParaSelector(sesion: Sesion, q: string) {
+    // Niega por defecto: un empleado sin profesional asociado no debería existir (el tipo Sesion lo impide), pero si
+    // llegara uno no ve ningún cliente, en vez de tratarlo como administrador
+    if (!sesion.esAdmin && !sesion.barberoId) return { datos: [], hayMas: false, telefonosVisibles: false };
+    const verTelefonos = await puedeVerTelefonos(pool, sesion);
+    const filas = await repositorio.buscarClientesSelector(pool, sesion.empresaId, {
+      buscar: q,
+      porTelefono: verTelefonos ? { minimoDigitos: MINIMO_DIGITOS_SELECTOR } : null,
+      soloDelProfesional: sesion.esAdmin ? null : sesion.barberoId,
+      limite: MAXIMO_SELECTOR,
+    });
+    return {
+      datos: filas.slice(0, MAXIMO_SELECTOR).map((c) => ({
+        id: c.id,
+        nombre: c.nombre,
+        telefono: telefonoVisible(c.telefono, verTelefonos),
+        indicativo: telefonoVisible(c.indicativo, verTelefonos),
+      })),
+      hayMas: filas.length > MAXIMO_SELECTOR,
+      telefonosVisibles: verTelefonos,
     };
   },
 

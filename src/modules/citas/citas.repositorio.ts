@@ -1,3 +1,4 @@
+import { nombreParaProfesional } from '../clientes/clientes.repositorio.js';
 import type { Consultable } from '../../db/pool.js';
 
 // Formatos de salida compartidos por la agenda y las horas ocupadas
@@ -83,12 +84,24 @@ export const registrarCliente = async (
     )
   ).rows[0].id;
 
-// Cliente de ese negocio (nunca de otro)
-export const buscarClienteDelNegocio = async (db: Consultable, empresaId: string, clienteId: string) =>
+// Cliente de ese negocio (nunca de otro). Con `soloDelProfesional`, solo si ese profesional tiene o tuvo al menos una
+// cita (de cualquier estado) con el cliente (si no, es como si no existiera), y con el nombre que ese profesional ve.
+export const buscarClienteDelNegocio = async (
+  db: Consultable,
+  empresaId: string,
+  clienteId: string,
+  soloDelProfesional: string | null = null,
+) =>
   (
     await db.query<{ nombre: string; telefono: string; indicativo: string }>(
-      'SELECT nombre, telefono, indicativo FROM clientes WHERE id = $1 AND empresa_id = $2',
-      [clienteId, empresaId],
+      `SELECT CASE WHEN $3::varchar IS NULL THEN c.nombre ELSE ${nombreParaProfesional('$3')} END AS nombre,
+              c.telefono, c.indicativo
+       FROM clientes c
+       WHERE c.id = $1 AND c.empresa_id = $2
+         AND ($3::varchar IS NULL OR EXISTS (
+           SELECT 1 FROM citas ci
+           WHERE ci.empresa_id = c.empresa_id AND ci.cliente_id = c.id AND ci.barbero_id = $3::varchar))`,
+      [clienteId, empresaId, soloDelProfesional],
     )
   ).rows[0];
 
@@ -120,13 +133,16 @@ export const insertarCita = (
     precio: string;
     // Cuenta del cliente que reservó con su sesión; null = invitado
     usuarioId: string | null;
+    // Nombre del cliente tal como lo escribió (o lo vio) quien agendó desde el panel; null en las demás reservas
+    clienteNombre?: string | null;
   },
 ) =>
   db.query(
     `INSERT INTO citas (id, empresa_id, barbero_id, servicio_id, cliente_id, fecha, hora_inicio, hora_fin, precio,
-       estado, usuario_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'CONFIRMADA', $10)`,
-    [c.id, c.empresaId, c.barberoId, c.servicioId, c.clienteId, c.fecha, c.horaInicio, c.horaFin, c.precio, c.usuarioId],
+       estado, usuario_id, cliente_nombre)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'CONFIRMADA', $10, $11)`,
+    [c.id, c.empresaId, c.barberoId, c.servicioId, c.clienteId, c.fecha, c.horaInicio, c.horaFin, c.precio, c.usuarioId,
+      c.clienteNombre ?? null],
   );
 
 // Bloquea la fila del profesional hasta que termine la transacción: así las reservas de un
@@ -375,6 +391,8 @@ export type FilaAgenda = {
   cancelada_en: Date | null;
   zona_horaria: string;
   cliente: string;
+  // Nombre escrito al agendar desde el panel (null en las demás citas y en las anteriores a la migración 037)
+  cliente_nombre: string | null;
   telefono: string;
   servicio: string;
   barbero_nombre: string;
@@ -389,7 +407,7 @@ export const listarAgenda = async (db: Consultable, empresaId: string, barberoId
               ${FECHA} AS fecha, ${HORA} AS hora, ${DURACION} AS duracion_min,
               ${QUIEN('bc', 'uc', 'e')} AS completada_por, c.completada_en,
               ${QUIEN('bx', 'ux', 'e')} AS cancelada_por, c.cancelada_en, e.zona_horaria,
-              cl.nombre AS cliente, cl.telefono,
+              cl.nombre AS cliente, c.cliente_nombre, cl.telefono,
               s.nombre AS servicio, b.nombre AS barbero_nombre,
               (SELECT count(*)::int FROM citas_reprogramaciones r WHERE r.cita_id = c.id) AS veces_reprogramada
        FROM citas c

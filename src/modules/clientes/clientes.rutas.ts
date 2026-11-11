@@ -24,12 +24,29 @@ const esquemaPagina = z.object({
 });
 // Con cualquiera de estos parámetros la respuesta es una página; sin ninguno, la lista completa de siempre
 const PARAMETROS_PAGINA = ['limite', 'cursor', 'q'];
+// Selector: de 3 a 100 caracteres, los dos sin contar los espacios de los extremos (sin "q" también es el 400 del mínimo)
+const MINIMO_BUSQUEDA = 'Escribe al menos 3 caracteres para buscar';
+const esquemaSelector = z.object({
+  q: z
+    .string({ error: (i) => (i.input === undefined ? MINIMO_BUSQUEDA : 'La búsqueda debe ser un texto') })
+    .refine((q) => !q.includes('\u0000'), 'La búsqueda debe ser un texto')
+    .transform((q) => q.trim())
+    .refine((q) => q.length <= 100, 'La búsqueda puede tener hasta 100 caracteres')
+    .refine((q) => q.length >= 3, MINIMO_BUSQUEDA),
+});
 const esquemaIdCliente = esquemaId('Identificador de cliente inválido');
 const esquemaIdEntrada = esquemaId('Identificador de la lista negra inválido');
 
-// Clientes del negocio de la sesión. Solo administradores (tienen datos personales).
+// Clientes del negocio de la sesión. Solo administradores (tienen datos personales), salvo el selector.
 export const crearRutasClientes = (clientes: ServicioClientes, permisos: Permisos) => {
   const rutas = Router();
+
+  // Selector de "cliente existente": administradores y empleados del negocio de la sesión (nunca de la URL).
+  // Máximo 10 resultados; el teléfono, y buscar por él, solo si la sesión puede ver teléfonos.
+  rutas.get('/buscar', ...permisos.personal, async (req, res) => {
+    const { q } = parsear(esquemaSelector, req.query);
+    res.json(await clientes.buscarParaSelector(sesionDe(res), q));
+  });
 
   rutas.get('/', ...permisos.admin, async (req, res) => {
     const { empresaId } = sesionDe(res);

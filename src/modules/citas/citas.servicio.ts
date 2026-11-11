@@ -251,7 +251,11 @@ export const crearServicioCitas = ({
     }
     let cliente: { nombre: string; telefono: string; indicativo: string };
     if (datos.clienteId) {
-      const existente = await repositorio.buscarClienteDelNegocio(pool, empresaId, datos.clienteId);
+      // Un empleado solo puede elegir clientes que tienen o tuvieron citas con él (con la opción de teléfonos
+      // encendida o apagada); los de otro empleado o de nadie responden igual que uno que no existe. Para un
+      // empleado, `barberoId` es siempre el suyo (profesionalDelPanel). El administrador elige cualquiera del negocio.
+      const soloDelProfesional = sesion.esAdmin ? null : barberoId;
+      const existente = await repositorio.buscarClienteDelNegocio(pool, empresaId, datos.clienteId, soloDelProfesional);
       if (!existente) throw errores.noEncontrado('Cliente no encontrado');
       cliente = existente;
     } else {
@@ -260,6 +264,10 @@ export const crearServicioCitas = ({
       }
       cliente = { nombre: datos.nombre, telefono: datos.telefono, indicativo: datos.indicativo };
     }
+    // Nombre que queda en la cita: el que escribió quien agenda o, si un empleado eligió un cliente suyo, el que él ve.
+    // Un administrador que elige un cliente existente no escribe nombre: la cita muestra el guardado (null).
+    // La respuesta solo usa lo escrito o lo que ya ve quien agenda: es igual exista o no un cliente con ese teléfono.
+    const clienteNombre = datos.clienteId && sesion.esAdmin ? null : cliente.nombre;
 
     const reserva = await repositorio.buscarDatosReserva(pool, { empresaId, barberoId, servicioId, fecha });
     if (!reserva) throw errores.noEncontrado('Servicio o profesional no encontrado');
@@ -304,6 +312,7 @@ export const crearServicioCitas = ({
           ...horario,
           precio: reserva.precio,
           usuarioId: cuentaId,
+          clienteNombre,
         });
         // Prueba de la autorización, a nombre del teléfono del cliente (no de su cuenta: esa aceptación no la dio él en la app)
         await registrarAutorizacion(tx, {
@@ -405,7 +414,9 @@ export const crearServicioCitas = ({
     ]);
     return filas.map((r) => ({
       id: r.id,
-      cliente: r.cliente,
+      // Un empleado ve el nombre que se escribió al agendar desde el panel (el guardado solo en las demás citas);
+      // el administrador, siempre el nombre guardado del cliente
+      cliente: esAdmin ? r.cliente : (r.cliente_nombre ?? r.cliente),
       telefono: telefonoVisible(r.telefono, verTelefonos),
       servicio: r.servicio,
       barberoId: r.barbero_id,

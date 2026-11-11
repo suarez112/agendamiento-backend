@@ -102,6 +102,7 @@ describe('barrido: el teléfono de los clientes no llega a un empleado sin permi
   // Cliente conocido del negocio A con citas con el empleado barb_a
   const DIGITOS = '3156667788';
   const TELEFONO = `+57${DIGITOS}`;
+  const DIGITOS_AJENO = '3154445566'; // cliente que no es del empleado barb_a
   const CLIENTE = 'cli_privado';
   const CITA = 'cita_privada';
   const FECHA = fechaEnDias(3);
@@ -129,6 +130,17 @@ describe('barrido: el teléfono de los clientes no llega a un empleado sin permi
       `INSERT INTO citas (id, empresa_id, barbero_id, servicio_id, cliente_id, fecha, hora_inicio, hora_fin, precio, estado)
        VALUES ($1, 'emp_a', 'barb_a', 'serv_a', $2, $3, '09:00', '09:30', 20000, 'CONFIRMADA')`,
       [CITA, CLIENTE, FECHA],
+    );
+    // Cliente del mismo negocio que solo tiene citas con otro empleado (barb_a2): no es del empleado barb_a
+    await ctx.pool.query(
+      `INSERT INTO clientes (id, empresa_id, telefono, indicativo, nombre, total_citas, fecha_ultima_cita)
+       VALUES ('cli_ajeno', 'emp_a', $1, '57', 'Cliente Ajeno', 1, $2)`,
+      [`+57${DIGITOS_AJENO}`, FECHA],
+    );
+    await ctx.pool.query(
+      `INSERT INTO citas (id, empresa_id, barbero_id, servicio_id, cliente_id, fecha, hora_inicio, hora_fin, precio, estado)
+       VALUES ('cita_ajena', 'emp_a', 'barb_a2', 'serv_a', 'cli_ajeno', $1, '10:00', '10:30', 20000, 'CONFIRMADA')`,
+      [FECHA],
     );
     tokenAdmin = await iniciarSesion(ctx, 'admin.a', '1234');
     tokenEmpleado = await iniciarSesion(ctx, 'barbero.a', 'clave-a');
@@ -166,6 +178,8 @@ describe('barrido: el teléfono de los clientes no llega a un empleado sin permi
     '/api/v1/clientes',
     `/api/v1/clientes?q=${DIGITOS}`,
     '/api/v1/clientes?q=privado',
+    '/api/v1/clientes/buscar?q=privado',
+    `/api/v1/clientes/buscar?q=${DIGITOS}`,
     `/api/v1/clientes/${CLIENTE}/historial`,
     '/api/v1/clientes/lista-negra',
     `/api/v1/bloqueos/calendario?desde=${fechaEnDias(0)}&hasta=${fechaEnDias(7)}`,
@@ -247,7 +261,10 @@ describe('barrido: el teléfono de los clientes no llega a un empleado sin permi
     assert.equal(encendida.json.cita.telefono, TELEFONO);
     assert.equal(encendida.json.cita.indicativo, '57');
     // Control del barrido: encendida, sí detecta el teléfono (no pasa vacío por estar mal armado)
-    assert.ok((await barrer()).includes('GET /api/v1/citas/agenda'));
+    const encendidas = await barrer();
+    assert.ok(encendidas.includes('GET /api/v1/citas/agenda'));
+    assert.ok(encendidas.includes('GET /api/v1/clientes/buscar?q=privado'));
+    assert.ok(encendidas.includes(`GET /api/v1/clientes/buscar?q=${DIGITOS}`));
 
     await opcion(false);
     assert.equal(await telefonoEnAgenda(tokenEmpleado), null);
@@ -284,6 +301,31 @@ describe('barrido: el teléfono de los clientes no llega a un empleado sin permi
       assert.equal(await telefonoEnAgenda(tokenAdmin), TELEFONO);
     } finally {
       await ctx.pool.query('ALTER TABLE empresas RENAME COLUMN empleados_ven_telefono_x TO empleados_ven_telefono');
+      await opcion(false);
+    }
+  });
+
+  test('encendida: ninguna respuesta GET al empleado trae el teléfono (ni el nombre en el selector) de un cliente que no es suyo', async () => {
+    await opcion(true);
+    try {
+      const rutas = [
+        ...RUTAS_GET,
+        '/api/v1/clientes/buscar?q=ajeno',
+        `/api/v1/clientes/buscar?q=${DIGITOS_AJENO}`,
+        '/api/v1/clientes/buscar?q=315444',
+        '/api/v1/clientes/buscar?q=cliente',
+      ];
+      for (const ruta of rutas) {
+        const r = await pedir(ctx, ruta, { token: tokenEmpleado });
+        assert.ok(r.estado < 500, `GET ${ruta}: ${r.estado} ${r.texto}`);
+        assert.ok(!r.texto.replace(/\D/g, '').includes(DIGITOS_AJENO), `GET ${ruta} trae el teléfono de un cliente ajeno`);
+      }
+      // Control: el selector no devuelve al cliente ajeno ni por nombre, y los suyos sí traen el teléfono
+      const porNombre = await pedir(ctx, '/api/v1/clientes/buscar?q=cliente', { token: tokenEmpleado });
+      const filas: { id: string; telefono: string | null }[] = porNombre.json.datos;
+      assert.equal(filas.find((c) => c.id === 'cli_ajeno'), undefined);
+      assert.equal(filas.find((c) => c.id === CLIENTE)?.telefono, TELEFONO);
+    } finally {
       await opcion(false);
     }
   });

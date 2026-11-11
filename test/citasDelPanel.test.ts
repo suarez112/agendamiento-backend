@@ -393,3 +393,110 @@ describe('crear citas desde el panel', () => {
     });
   });
 });
+
+// Un empleado solo puede elegir (clienteId) clientes que tienen o tuvieron citas con él; el administrador, cualquiera
+describe('crear citas desde el panel: el empleado solo elige clientes suyos', () => {
+  let ctx: Contexto;
+  let tokenAdmin: string;
+  let tokenBarbero: string;
+  let tokenBarbero2: string;
+  const FECHA = fechaEnDias(4);
+  const NO_ENCONTRADO = { error: 'Cliente no encontrado' };
+
+  before(async () => {
+    ctx = await iniciar();
+    tokenAdmin = await iniciarSesion(ctx, 'admin.a', '1234');
+    tokenBarbero = await iniciarSesion(ctx, 'barbero.a', 'clave-a');
+    tokenBarbero2 = await iniciarSesion(ctx, 'barbero.a2', 'secreta');
+    // cli_propio: citas con barb_a (completada); cli_cancelado: solo una cita cancelada con barb_a;
+    // cli_de_otro: citas solo con barb_a2; cli_sin_citas: ninguna cita
+    await ctx.pool.query(
+      `INSERT INTO clientes (id, empresa_id, telefono, indicativo, nombre, total_citas) VALUES
+         ('cli_propio', 'emp_a', '+573157001001', '57', 'Cliente Propio', 1),
+         ('cli_cancelado', 'emp_a', '+573157001002', '57', 'Cliente Cancelado', 1),
+         ('cli_de_otro', 'emp_a', '+573157001003', '57', 'Cliente De Otro', 1),
+         ('cli_sin_citas', 'emp_a', '+573157001004', '57', 'Cliente Sin Citas', 0)`,
+    );
+    await ctx.pool.query(
+      `INSERT INTO citas (id, empresa_id, barbero_id, servicio_id, cliente_id, fecha, hora_inicio, hora_fin, precio, estado, porcentaje_ganancia) VALUES
+         ('cita_propia', 'emp_a', 'barb_a', 'serv_a', 'cli_propio', $1, '08:00', '08:30', 20000, 'COMPLETADA', 50),
+         ('cita_cancelada', 'emp_a', 'barb_a', 'serv_a', 'cli_cancelado', $1, '08:30', '09:00', 20000, 'CANCELADA', NULL),
+         ('cita_de_otro', 'emp_a', 'barb_a2', 'serv_a', 'cli_de_otro', $1, '09:00', '09:30', 20000, 'CONFIRMADA', NULL)`,
+      [FECHA],
+    );
+  });
+  after(() => ctx.cerrar());
+
+  const opcion = (valor: boolean) =>
+    ctx.pool.query("UPDATE empresas SET empleados_ven_telefono = $1 WHERE id = 'emp_a'", [valor]);
+  const totalCitas = async () => (await ctx.pool.query('SELECT count(*)::int AS n FROM citas')).rows[0].n;
+
+  let hora = 0; // 10:00 AM en adelante, de 30 en 30
+  const agendar = (token: string, clienteId: string, barberoId = 'barb_a') => {
+    const minutos = 10 * 60 + 30 * hora++;
+    const h = Math.floor(minutos / 60);
+    return pedir(ctx, '/api/v1/citas/panel', {
+      method: 'POST',
+      token,
+      body: {
+        barberoId,
+        servicioId: 'serv_a',
+        fecha: FECHA,
+        hora: `${String(((h + 11) % 12) + 1).padStart(2, '0')}:${String(minutos % 60).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`,
+        clienteId,
+        autorizacion_registrada_por_negocio: true,
+      },
+    });
+  };
+
+  for (const encendida of [false, true]) {
+    const estado = encendida ? 'encendida' : 'apagada';
+
+    test(`opción de teléfonos ${estado}: un cliente propio (cualquier estado de sus citas) se puede agendar`, async () => {
+      await opcion(encendida);
+      for (const cliente of ['cli_propio', 'cli_cancelado']) {
+        const r = await agendar(tokenBarbero, cliente);
+        assert.equal(r.estado, 201, `${cliente}: ${r.texto}`);
+      }
+    });
+
+    test(`opción de teléfonos ${estado}: un cliente de otro empleado, uno sin citas y uno inexistente responden 404 igual, sin guardar nada`, async () => {
+      await opcion(encendida);
+      const citasAntes = await totalCitas();
+      const respuestas = [];
+      for (const cliente of ['cli_de_otro', 'cli_sin_citas', 'cli_no_existe', 'cli_b']) {
+        const r = await agendar(tokenBarbero, cliente);
+        assert.equal(r.estado, 404, `${cliente}: ${r.texto}`);
+        assert.deepEqual(r.json, NO_ENCONTRADO);
+        respuestas.push(r.texto);
+      }
+      assert.equal(new Set(respuestas).size, 1, 'la respuesta no distingue por qué es 404');
+      assert.equal(await totalCitas(), citasAntes);
+      const cliente = await ctx.pool.query("SELECT total_citas FROM clientes WHERE id = 'cli_de_otro'");
+      assert.equal(cliente.rows[0].total_citas, 1);
+    });
+  }
+
+  test('la relación es con cada empleado: el cliente de barb_a2 es suyo, no de barb_a', async () => {
+    await opcion(true);
+    const deBarb2 = await agendar(tokenBarbero2, 'cli_de_otro', 'barb_a2');
+    assert.equal(deBarb2.estado, 201, deBarb2.texto);
+    const deBarb1 = await agendar(tokenBarbero2, 'cli_propio', 'barb_a2');
+    assert.equal(deBarb1.estado, 404, deBarb1.texto);
+    await opcion(false);
+  });
+
+  test('el administrador (integrante y cuenta de administración) sigue pudiendo elegir cualquier cliente del negocio', async () => {
+    for (const encendida of [false, true]) {
+      await opcion(encendida);
+      for (const cliente of ['cli_sin_citas', 'cli_de_otro']) {
+        const r = await agendar(tokenAdmin, cliente);
+        assert.equal(r.estado, 201, `${cliente}: ${r.texto}`);
+        assert.equal(r.json.cita.telefono !== null, true);
+      }
+    }
+    await opcion(false);
+    // Un cliente de otro negocio sigue siendo 404 para el administrador
+    assert.deepEqual((await agendar(tokenAdmin, 'cli_b')).json, NO_ENCONTRADO);
+  });
+});

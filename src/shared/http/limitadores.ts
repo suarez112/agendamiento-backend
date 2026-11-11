@@ -38,6 +38,9 @@ export type ConfigLimites = {
   recuperacionPorCorreo: number; // solicitudes de código para un mismo correo
   pqrs: number; // PQRS radicadas por IP
   estadoPago: number; // consultas públicas del resultado de un pago, por IP
+  // Citas creadas desde el panel por cada empleado (no por IP; los administradores no tienen este tope)
+  citasPanelPorMinuto: number;
+  citasPanelPorHora: number;
   // Contador por cuenta (base de datos)
   fallosPorCuenta: number; // fallos seguidos de una cuenta antes de bloquearla un rato
   fallosSuperadmin: number; // fallos seguidos de una cuenta del superadmin desde la misma IP
@@ -61,6 +64,8 @@ export const LIMITES_POR_DEFECTO: ConfigLimites = {
   recuperacionPorCorreo: 3,
   pqrs: 10,
   estadoPago: 30,
+  citasPanelPorMinuto: 10,
+  citasPanelPorHora: 60,
   fallosPorCuenta: 10,
   fallosSuperadmin: 5,
   bloqueoCuentaMs: 15 * 60_000,
@@ -96,6 +101,28 @@ const limitar = (ventanaMs: number, limite: number, mensaje: string, o: Opciones
 
 const MENSAJE_LOGIN = 'Demasiados intentos de inicio de sesión. Intenta de nuevo en unos minutos.';
 
+// Tope de citas creadas desde el panel por cada empleado. Va después de la guardia de sesión: la clave es el
+// profesional de la sesión (res.locals.sesion), no la IP. Solo cuentan las citas que se guardaron; los errores no.
+// La ventana es fija por empleado (MemoryStore de express-rate-limit): el contador vuelve a cero un minuto (o una
+// hora) después de la primera solicitud de esa ventana; no es deslizante. Por eso los mensajes no dicen "en la
+// última hora" ni "en menos de un minuto".
+type SesionLimitada = { esAdmin: boolean; barberoId: string | null; usuarioId?: string | null } | undefined;
+const sesionLimitada = (res: Response) => res.locals.sesion as SesionLimitada;
+const citasPanel = (ventanaMs: number, limite: number, mensaje: string) =>
+  rateLimit({
+    windowMs: ventanaMs,
+    limit: limite,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    skip: (_req, res) => sesionLimitada(res)?.esAdmin !== false,
+    keyGenerator: (_req, res) => `empleado:${sesionLimitada(res)?.barberoId ?? ''}`,
+    skipFailedRequests: true,
+    requestWasSuccessful: (_req: Request, res: Response) => res.statusCode < 400,
+    handler: (_req, res, _next, opciones) => {
+      res.status(opciones.statusCode).json({ error: mensaje });
+    },
+  });
+
 export const crearLimitadores = (c: ConfigLimites) => ({
   pqrs: limitar(c.ventanaMs, c.pqrs, 'Enviaste varias PQRS seguidas. Intenta de nuevo en unos minutos.'),
   estadoPago: limitar(c.ventanaMs, c.estadoPago, 'Demasiadas consultas del pago. Intenta de nuevo en unos minutos.'),
@@ -107,6 +134,16 @@ export const crearLimitadores = (c: ConfigLimites) => ({
   loginSuperadmin: limitar(c.ventanaMs, c.loginSuperadmin, MENSAJE_LOGIN, { soloFallidos: true }),
   codigoNegocio: limitar(c.ventanaMs, c.codigoNegocio, 'Demasiados intentos. Intenta de nuevo en unos minutos.'),
   reservas: limitar(c.ventanaMs, c.reservas, 'Demasiadas reservas seguidas. Intenta de nuevo en unos minutos.'),
+  citasPanelPorMinuto: citasPanel(
+    60_000,
+    c.citasPanelPorMinuto,
+    'Llegaste al máximo de citas por minuto. Espera un momento antes de agendar otra.',
+  ),
+  citasPanelPorHora: citasPanel(
+    60 * 60_000,
+    c.citasPanelPorHora,
+    'Llegaste al máximo de citas por hora. Intenta de nuevo más tarde o pídele al administrador que la agende.',
+  ),
   // Tope por conexión de reservas realmente guardadas, en una ventana más larga: frena a quien llena la agenda
   reservasCreadas: limitar(
     c.ventanaLargaMs,

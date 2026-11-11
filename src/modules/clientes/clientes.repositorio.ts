@@ -65,8 +65,43 @@ export const buscarPosicionCliente = async (db: Consultable, empresaId: string, 
 // Escapa los comodines de LIKE para buscar el texto tal cual ("100%" no trae a todos)
 const textoLiteral = (texto: string) => texto.replace(/[\\%_]/g, (c) => `\\${c}`);
 
+// Búsqueda por nombre (sin distinguir mayúsculas) y, si se permite y el texto parece un número ("300 123-4567",
+// "+57 300"), también por los dígitos del teléfono: así "100%" o "Sala 2" buscan solo en el nombre.
+// porTelefono = null: solo por nombre; si no, cuántos dígitos hacen falta como mínimo para buscar en el teléfono.
+// columnaNombre: el nombre sobre el que se busca (por defecto el guardado; para un empleado, el que él ve).
+const condicionBusqueda = (
+  buscar: string,
+  param: (valor: unknown) => string,
+  porTelefono: { minimoDigitos: number } | null,
+  columnaNombre = 'c.nombre',
+) => {
+  const nombre = `${columnaNombre} ILIKE ${param(`%${textoLiteral(buscar)}%`)} ESCAPE '\\'`;
+  const digitos = porTelefono && /^[\d\s+().-]+$/.test(buscar) ? buscar.replace(/\D/g, '') : '';
+  if (!porTelefono || digitos.length < Math.max(1, porTelefono.minimoDigitos)) return nombre;
+  const telefono = `regexp_replace(c.telefono, '[^0-9]', '', 'g') LIKE ${param(`%${digitos}%`)}`;
+  return `(${nombre} OR ${telefono})`;
+};
+
+// El cliente tiene o tuvo al menos una cita (de cualquier estado) con ese profesional
+const citaConElProfesional = (profesional: string) =>
+  `EXISTS (SELECT 1 FROM citas ci WHERE ci.empresa_id = c.empresa_id AND ci.cliente_id = c.id AND ci.barbero_id = ${profesional}::varchar)`;
+
+// Fecha más lejana de las citas (de cualquier estado) del cliente con ese profesional; puede ser futura. A diferencia
+// de clientes.fecha_ultima_cita (que nunca retrocede), usa la fecha actual de cada cita, también si se reprogramó.
+const ultimaCitaConElProfesional = (profesional: string) =>
+  `(SELECT max(ci.fecha) FROM citas ci WHERE ci.empresa_id = c.empresa_id AND ci.cliente_id = c.id AND ci.barbero_id = ${profesional}::varchar)`;
+
+// Nombre del cliente (alias c) que ve un profesional: el que se escribió en su cita más reciente con él
+// (citas.cliente_nombre); si ninguna lo tiene (citas anteriores a la migración 037), el nombre guardado. Así un
+// empleado que agendó con el teléfono de un cliente de otro no ve cómo está guardado ese cliente.
+export const nombreParaProfesional = (profesional: string) =>
+  `COALESCE((SELECT ci.cliente_nombre FROM citas ci
+              WHERE ci.empresa_id = c.empresa_id AND ci.cliente_id = c.id AND ci.barbero_id = ${profesional}::varchar
+                AND ci.cliente_nombre IS NOT NULL
+              ORDER BY ci.created_at DESC, ci.id DESC LIMIT 1), c.nombre)`;
+
 // Una página de clientes (keyset): los que van después de "despues" en el orden de la lista. "buscar" filtra por
-// nombre (sin distinguir mayúsculas) o, si es un número, por los dígitos del teléfono. Trae limite + 1 filas para saber si hay más.
+// nombre o, si es un número, por los dígitos del teléfono. Trae limite + 1 filas para saber si hay más.
 export const listarClientesPagina = async (
   db: Consultable,
   empresaId: string,
@@ -76,17 +111,7 @@ export const listarClientesPagina = async (
   const condiciones = ['c.empresa_id = $1'];
   const param = (valor: unknown) => `$${parametros.push(valor)}`;
 
-  if (p.buscar) {
-    const nombre = `c.nombre ILIKE ${param(`%${textoLiteral(p.buscar)}%`)} ESCAPE '\\'`;
-    // Se busca también por teléfono solo si el texto parece un número ("300 123-4567", "+57 300"): así "100%"
-    // o "Sala 2" buscan solo en el nombre
-    const digitos = /^[\d\s+().-]+$/.test(p.buscar) ? p.buscar.replace(/\D/g, '') : '';
-    condiciones.push(
-      digitos
-        ? `(${nombre} OR regexp_replace(c.telefono, '[^0-9]', '', 'g') LIKE ${param(`%${digitos}%`)})`
-        : nombre,
-    );
-  }
+  if (p.buscar) condiciones.push(condicionBusqueda(p.buscar, param, { minimoDigitos: 1 }));
   if (p.despues) {
     const mismoOrden = `(c.nombre, c.id) > (${param(p.despues.nombre)}::varchar, ${param(p.despues.id)}::varchar)`;
     if (p.despues.fecha === null) {
@@ -105,6 +130,48 @@ export const listarClientesPagina = async (
       `SELECT ${COLUMNAS_CLIENTE} ${DESDE_CLIENTES}
        WHERE ${condiciones.join(' AND ')}
        ORDER BY c.fecha_ultima_cita DESC NULLS LAST, c.nombre, c.id
+       LIMIT ${limite}`,
+      parametros,
+    )
+  ).rows;
+};
+
+export type FilaClienteSelector = {
+  id: string;
+  nombre: string;
+  telefono: string;
+  indicativo: string;
+};
+
+// Selector de "cliente existente" (admin y empleado): solo id, nombre y contacto, sin estadísticas del negocio.
+// Siempre del negocio indicado y en el orden de la lista; trae limite + 1 filas para saber si hay más.
+// Con soloDelProfesional (un empleado), solo devuelve (y solo busca entre) los clientes que tienen o tuvieron citas con él,
+// con el nombre que él ve (nombreParaProfesional), y busca por ese mismo nombre.
+export const buscarClientesSelector = async (
+  db: Consultable,
+  empresaId: string,
+  p: {
+    buscar: string;
+    porTelefono: { minimoDigitos: number } | null;
+    soloDelProfesional: string | null;
+    limite: number;
+  },
+) => {
+  const parametros: unknown[] = [empresaId];
+  const param = (valor: unknown) => `$${parametros.push(valor)}`;
+  const profesional = p.soloDelProfesional ? param(p.soloDelProfesional) : null;
+  const nombre = profesional ? nombreParaProfesional(profesional) : 'c.nombre';
+  const condiciones = ['c.empresa_id = $1', condicionBusqueda(p.buscar, param, p.porTelefono, nombre)];
+  if (profesional) condiciones.push(citaConElProfesional(profesional));
+  // Orden: el administrador, por la última cita del cliente en el negocio; el empleado, por su última cita con él
+  // (la del negocio puede ser con otro profesional y revelaría actividad ajena)
+  const ultimaCita = profesional ? ultimaCitaConElProfesional(profesional) : 'c.fecha_ultima_cita';
+  const limite = param(p.limite + 1);
+  return (
+    await db.query<FilaClienteSelector>(
+      `SELECT c.id, ${nombre} AS nombre, c.telefono, c.indicativo FROM clientes c
+       WHERE ${condiciones.join(' AND ')}
+       ORDER BY ${ultimaCita} DESC NULLS LAST, ${nombre}, c.id
        LIMIT ${limite}`,
       parametros,
     )
