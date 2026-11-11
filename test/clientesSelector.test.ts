@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 import bcrypt from 'bcryptjs';
+import type { Sesion } from '../src/modules/auth/auth.servicio.js';
+import { crearServicioClientes } from '../src/modules/clientes/clientes.servicio.js';
 import { fechaEnDias } from './apoyo/baseDePrueba.js';
 import {
   CLAVE_CLIENTE,
@@ -278,6 +280,23 @@ describe('búsqueda de clientes para el selector (admin y empleado)', () => {
     const r = await pedir(ctx, `${RUTA}?q=valeria`, { token: cliente });
     assert.equal(r.estado, 403, r.texto);
     assert.ok(!r.texto.includes('Valeria'));
+  });
+
+  test('niega por defecto: un empleado sin profesional asociado no ve ni busca teléfonos, aunque la opción esté encendida', async () => {
+    // El tipo Sesion impide esta sesión; se fuerza para comprobar que no cae a la visibilidad de administrador
+    const sinProfesional = { barberoId: null, usuarioId: null, empresaId: 'emp_a', esAdmin: false } as unknown as Sesion;
+    const servicio = crearServicioClientes({ pool: ctx.pool });
+    await opcion(true);
+    try {
+      const porNombre = await servicio.buscarParaSelector(sinProfesional, 'mixto');
+      assert.equal(porNombre.telefonosVisibles, false);
+      assert.equal(porNombre.datos.length, 3);
+      assert.ok(porNombre.datos.every((c) => c.telefono === null && c.indicativo === null));
+      assert.deepEqual((await servicio.buscarParaSelector(sinProfesional, '3158880001')).datos, []);
+      assert.deepEqual((await servicio.buscarParaSelector(sinProfesional, DIGITOS)).datos, []);
+    } finally {
+      await opcion(false);
+    }
   });
 
   test('con la suscripción del negocio vencida responde 402, también al administrador', async () => {

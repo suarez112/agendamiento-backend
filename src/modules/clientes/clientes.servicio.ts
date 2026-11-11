@@ -83,7 +83,10 @@ export const crearServicioClientes = ({ pool }: { pool: pg.Pool }) => ({
   // - empleado con la opción encendida: solo de los clientes que tienen o tuvieron citas con él; los demás salen en
   //   null y buscar por su teléfono no los encuentra (si no, la búsqueda confirmaría de quién es cada número).
   async buscarParaSelector(sesion: Sesion, q: string) {
-    const verTelefonos = await puedeVerTelefonos(pool, sesion);
+    // Niega por defecto: un empleado sin profesional asociado no debería existir (el tipo Sesion lo impide), pero si
+    // llegara uno no se le muestra ni se le deja buscar ningún teléfono, en vez de tratarlo como administrador
+    const sinProfesional = !sesion.esAdmin && !sesion.barberoId;
+    const verTelefonos = !sinProfesional && (await puedeVerTelefonos(pool, sesion));
     const filas = await repositorio.buscarClientesSelector(pool, sesion.empresaId, {
       buscar: q,
       porTelefono: verTelefonos ? { minimoDigitos: MINIMO_DIGITOS_SELECTOR } : null,
