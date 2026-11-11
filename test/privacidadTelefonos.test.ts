@@ -166,6 +166,8 @@ describe('barrido: el teléfono de los clientes no llega a un empleado sin permi
     '/api/v1/clientes',
     `/api/v1/clientes?q=${DIGITOS}`,
     '/api/v1/clientes?q=privado',
+    '/api/v1/clientes/buscar?q=privado',
+    `/api/v1/clientes/buscar?q=${DIGITOS}`,
     `/api/v1/clientes/${CLIENTE}/historial`,
     '/api/v1/clientes/lista-negra',
     `/api/v1/bloqueos/calendario?desde=${fechaEnDias(0)}&hasta=${fechaEnDias(7)}`,
@@ -247,7 +249,10 @@ describe('barrido: el teléfono de los clientes no llega a un empleado sin permi
     assert.equal(encendida.json.cita.telefono, TELEFONO);
     assert.equal(encendida.json.cita.indicativo, '57');
     // Control del barrido: encendida, sí detecta el teléfono (no pasa vacío por estar mal armado)
-    assert.ok((await barrer()).includes('GET /api/v1/citas/agenda'));
+    const encendidas = await barrer();
+    assert.ok(encendidas.includes('GET /api/v1/citas/agenda'));
+    assert.ok(encendidas.includes('GET /api/v1/clientes/buscar?q=privado'));
+    assert.ok(encendidas.includes(`GET /api/v1/clientes/buscar?q=${DIGITOS}`));
 
     await opcion(false);
     assert.equal(await telefonoEnAgenda(tokenEmpleado), null);

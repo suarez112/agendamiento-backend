@@ -1,9 +1,11 @@
 import type pg from 'pg';
 import { errores } from '../../shared/errores.js';
 import { aIsoEnZona } from '../../shared/zonaHoraria.js';
+import type { Sesion } from '../auth/auth.servicio.js';
 import { buscarZonaHoraria } from '../empresas/empresas.repositorio.js';
 import * as repositorio from './clientes.repositorio.js';
 import type { FilaCliente, FilaListaNegra } from './clientes.repositorio.js';
+import { puedeVerTelefonos, telefonoVisible } from './privacidad.js';
 
 const CLIENTE_NO_ENCONTRADO = 'Cliente no encontrado';
 
@@ -29,6 +31,11 @@ const armarEntrada = (e: FilaListaNegra, zona: string) => ({
   agregadoEn: aIsoEnZona(e.agregado_en, zona),
   zonaHoraria: zona,
 });
+
+// Selector de "cliente existente": máximo de resultados por búsqueda y mínimo de dígitos para buscar por teléfono,
+// para que no se pueda recorrer toda la lista de clientes del negocio
+export const MAXIMO_SELECTOR = 10;
+const MINIMO_DIGITOS_SELECTOR = 3;
 
 export const CURSOR_INVALIDO = 'El cursor no es válido. Vuelve a pedir la primera página.';
 
@@ -66,6 +73,28 @@ export const crearServicioClientes = ({ pool }: { pool: pg.Pool }) => ({
     return {
       datos: pagina.map(armarCliente),
       siguienteCursor: filas.length > p.limite ? codificarCursor(pagina[pagina.length - 1]!) : null,
+    };
+  },
+
+  // Selector de "cliente existente" (administradores y empleados del negocio de la sesión). El nombre se ve siempre;
+  // el teléfono y la búsqueda por teléfono, solo si la sesión puede ver teléfonos (puedeVerTelefonos): un empleado
+  // con la opción del negocio apagada recibe telefono e indicativo en null y busca solo por nombre.
+  async buscarParaSelector(sesion: Sesion, q: string) {
+    const verTelefonos = await puedeVerTelefonos(pool, sesion);
+    const filas = await repositorio.buscarClientesSelector(pool, sesion.empresaId, {
+      buscar: q,
+      porTelefono: verTelefonos ? { minimoDigitos: MINIMO_DIGITOS_SELECTOR } : null,
+      limite: MAXIMO_SELECTOR,
+    });
+    return {
+      datos: filas.slice(0, MAXIMO_SELECTOR).map((c) => ({
+        id: c.id,
+        nombre: c.nombre,
+        telefono: telefonoVisible(c.telefono, verTelefonos),
+        indicativo: telefonoVisible(c.indicativo, verTelefonos),
+      })),
+      hayMas: filas.length > MAXIMO_SELECTOR,
+      telefonosVisibles: verTelefonos,
     };
   },
 
