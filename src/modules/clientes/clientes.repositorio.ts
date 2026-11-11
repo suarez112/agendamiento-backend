@@ -67,18 +67,23 @@ const textoLiteral = (texto: string) => texto.replace(/[\\%_]/g, (c) => `\\${c}`
 
 // Búsqueda por nombre (sin distinguir mayúsculas) y, si se permite y el texto parece un número ("300 123-4567",
 // "+57 300"), también por los dígitos del teléfono: así "100%" o "Sala 2" buscan solo en el nombre.
-// porTelefono = null: solo por nombre; si no, cuántos dígitos hacen falta como mínimo para buscar en el teléfono.
+// porTelefono = null: solo por nombre; si no, cuántos dígitos hacen falta como mínimo para buscar en el teléfono y,
+// opcionalmente (soloSi), una condición SQL que limita la búsqueda por teléfono a ciertos clientes.
 const condicionBusqueda = (
   buscar: string,
   param: (valor: unknown) => string,
-  porTelefono: { minimoDigitos: number } | null,
+  porTelefono: { minimoDigitos: number; soloSi?: string | null } | null,
 ) => {
   const nombre = `c.nombre ILIKE ${param(`%${textoLiteral(buscar)}%`)} ESCAPE '\\'`;
   const digitos = porTelefono && /^[\d\s+().-]+$/.test(buscar) ? buscar.replace(/\D/g, '') : '';
-  return porTelefono && digitos.length >= Math.max(1, porTelefono.minimoDigitos)
-    ? `(${nombre} OR regexp_replace(c.telefono, '[^0-9]', '', 'g') LIKE ${param(`%${digitos}%`)})`
-    : nombre;
+  if (!porTelefono || digitos.length < Math.max(1, porTelefono.minimoDigitos)) return nombre;
+  const telefono = `regexp_replace(c.telefono, '[^0-9]', '', 'g') LIKE ${param(`%${digitos}%`)}`;
+  return `(${nombre} OR ${porTelefono.soloSi ? `(${porTelefono.soloSi} AND ${telefono})` : telefono})`;
 };
+
+// El cliente tiene o tuvo al menos una cita (de cualquier estado) con ese profesional
+const citaConElProfesional = (profesional: string) =>
+  `EXISTS (SELECT 1 FROM citas ci WHERE ci.empresa_id = c.empresa_id AND ci.cliente_id = c.id AND ci.barbero_id = ${profesional}::varchar)`;
 
 // Una página de clientes (keyset): los que van después de "despues" en el orden de la lista. "buscar" filtra por
 // nombre o, si es un número, por los dígitos del teléfono. Trae limite + 1 filas para saber si hay más.
@@ -116,22 +121,36 @@ export const listarClientesPagina = async (
   ).rows;
 };
 
-export type FilaClienteSelector = { id: string; nombre: string; telefono: string; indicativo: string };
+export type FilaClienteSelector = {
+  id: string;
+  nombre: string;
+  telefono: string;
+  indicativo: string;
+  // El cliente tiene o tuvo citas con el profesional indicado en "soloDelProfesional" (true si no se indicó ninguno)
+  es_propio: boolean;
+};
 
 // Selector de "cliente existente" (admin y empleado): solo id, nombre y contacto, sin estadísticas del negocio.
 // Siempre del negocio indicado y en el orden de la lista; trae limite + 1 filas para saber si hay más.
+// Con soloDelProfesional (un empleado), es_propio marca a sus clientes y la búsqueda por teléfono solo alcanza a ellos.
 export const buscarClientesSelector = async (
   db: Consultable,
   empresaId: string,
-  p: { buscar: string; porTelefono: { minimoDigitos: number } | null; limite: number },
+  p: {
+    buscar: string;
+    porTelefono: { minimoDigitos: number } | null;
+    soloDelProfesional: string | null;
+    limite: number;
+  },
 ) => {
   const parametros: unknown[] = [empresaId];
   const param = (valor: unknown) => `$${parametros.push(valor)}`;
-  const condicion = condicionBusqueda(p.buscar, param, p.porTelefono);
+  const propio = p.soloDelProfesional ? citaConElProfesional(param(p.soloDelProfesional)) : null;
+  const condicion = condicionBusqueda(p.buscar, param, p.porTelefono && { ...p.porTelefono, soloSi: propio });
   const limite = param(p.limite + 1);
   return (
     await db.query<FilaClienteSelector>(
-      `SELECT c.id, c.nombre, c.telefono, c.indicativo FROM clientes c
+      `SELECT c.id, c.nombre, c.telefono, c.indicativo, ${propio ?? 'true'} AS es_propio FROM clientes c
        WHERE c.empresa_id = $1 AND ${condicion}
        ORDER BY c.fecha_ultima_cita DESC NULLS LAST, c.nombre, c.id
        LIMIT ${limite}`,

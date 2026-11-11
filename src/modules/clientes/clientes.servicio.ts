@@ -76,23 +76,30 @@ export const crearServicioClientes = ({ pool }: { pool: pg.Pool }) => ({
     };
   },
 
-  // Selector de "cliente existente" (administradores y empleados del negocio de la sesión). El nombre se ve siempre;
-  // el teléfono y la búsqueda por teléfono, solo si la sesión puede ver teléfonos (puedeVerTelefonos): un empleado
-  // con la opción del negocio apagada recibe telefono e indicativo en null y busca solo por nombre.
+  // Selector de "cliente existente" (administradores y empleados del negocio de la sesión). El nombre se ve siempre.
+  // Teléfono e indicativo (y la búsqueda por teléfono):
+  // - administrador: de todos los clientes del negocio;
+  // - empleado con la opción del negocio apagada: de ninguno (null y busca solo por nombre);
+  // - empleado con la opción encendida: solo de los clientes que tienen o tuvieron citas con él; los demás salen en
+  //   null y buscar por su teléfono no los encuentra (si no, la búsqueda confirmaría de quién es cada número).
   async buscarParaSelector(sesion: Sesion, q: string) {
     const verTelefonos = await puedeVerTelefonos(pool, sesion);
     const filas = await repositorio.buscarClientesSelector(pool, sesion.empresaId, {
       buscar: q,
       porTelefono: verTelefonos ? { minimoDigitos: MINIMO_DIGITOS_SELECTOR } : null,
+      soloDelProfesional: verTelefonos && !sesion.esAdmin ? sesion.barberoId : null,
       limite: MAXIMO_SELECTOR,
     });
     return {
-      datos: filas.slice(0, MAXIMO_SELECTOR).map((c) => ({
-        id: c.id,
-        nombre: c.nombre,
-        telefono: telefonoVisible(c.telefono, verTelefonos),
-        indicativo: telefonoVisible(c.indicativo, verTelefonos),
-      })),
+      datos: filas.slice(0, MAXIMO_SELECTOR).map((c) => {
+        const ver = verTelefonos && c.es_propio;
+        return {
+          id: c.id,
+          nombre: c.nombre,
+          telefono: telefonoVisible(c.telefono, ver),
+          indicativo: telefonoVisible(c.indicativo, ver),
+        };
+      }),
       hayMas: filas.length > MAXIMO_SELECTOR,
       telefonosVisibles: verTelefonos,
     };

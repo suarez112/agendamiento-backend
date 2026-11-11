@@ -18,23 +18,29 @@ No hay `limite` ni `cursor`: la respuesta trae como máximo **10 clientes**. Par
 ## Qué busca
 
 - **Nombre**: siempre, sin distinguir mayúsculas, en cualquier parte del nombre. `%` y `_` se buscan como texto.
-- **Teléfono**: solo si la sesión puede ver teléfonos (ver abajo) y el texto parece un número (solo dígitos, espacios, `+`, `-`, `.` o paréntesis) con **al menos 3 dígitos**. Compara los dígitos, así `315 777-1234` encuentra `+573157771234`. `+57` (2 dígitos) no busca por teléfono.
+- **Teléfono**: solo si la sesión puede ver teléfonos (ver abajo) y el texto parece un número (solo dígitos, espacios, `+`, `-`, `.` o paréntesis) con **al menos 3 dígitos**. Compara los dígitos, así `315 777-1234` encuentra `+573157771234`. `+57` (2 dígitos) no busca por teléfono. Un empleado solo encuentra por teléfono a **sus propios clientes** (ver abajo).
 - Orden: el de la lista de clientes (última cita más reciente primero, luego nombre).
 
 ## Privacidad del teléfono
 
 La regla es la misma de toda la API (`puedeVerTelefonos` + `telefonoVisible`, `src/modules/clientes/privacidad.ts`):
 
-| Quién | Opción `empleadosVenTelefono` | `telefono` / `indicativo` | Busca por teléfono |
-| --- | --- | --- | --- |
-| Administrador | apagada o encendida | con valor | sí |
-| Empleado | apagada (por defecto) | `null` | **no**: solo por nombre |
-| Empleado | encendida | con valor | sí |
+| Quién | Opción `empleadosVenTelefono` | Cliente | `telefono` / `indicativo` | Busca por su teléfono |
+| --- | --- | --- | --- | --- |
+| Administrador | apagada o encendida | cualquiera del negocio | con valor | sí |
+| Empleado | apagada (por defecto) | cualquiera | `null` | **no**: solo por nombre |
+| Empleado | encendida | **propio** (tiene o tuvo citas con él) | con valor | sí |
+| Empleado | encendida | **ajeno** (sin citas con él) | `null` | **no** |
 
-- Con la opción encendida, el empleado ve el teléfono de **cualquier cliente del negocio** que encuentre la búsqueda (no solo de sus citas), con el mismo tope de 10 por búsqueda. En la agenda y en `POST /citas/panel` sigue viendo solo los de sus propias citas.
-- Con la opción apagada los campos `telefono` e `indicativo` **siguen en la respuesta**, en `null`: la forma es siempre la misma.
-- Un número escrito por un empleado con la opción apagada se busca solo en el nombre (normalmente responde `datos: []`).
-- La opción se lee en cada solicitud: un cambio aplica en la siguiente, con el mismo token.
+- **Propio**: el cliente tiene o tuvo al menos una cita con ese empleado, de cualquier estado (pendiente, completada o cancelada). La relación es con cada empleado: lo que ve uno no lo ve otro.
+- El nombre del cliente ajeno **siempre aparece** (para poder elegirlo), pero buscar por su teléfono, completo o parcial, no lo encuentra y responde igual que un número que no existe: la búsqueda no confirma de quién es un número.
+- Con la opción apagada, y con un cliente ajeno aunque esté encendida, los campos `telefono` e `indicativo` **siguen en la respuesta**, en `null`: la forma es siempre la misma.
+- La opción y la relación se leen en cada solicitud: un cambio aplica en la siguiente, con el mismo token.
+- En la agenda y en la respuesta de `POST /citas/panel` el empleado ve solo los teléfonos de las citas que son suyas, como antes.
+
+### Límite conocido
+
+Si un empleado agenda con `clienteId` a un cliente que **no era suyo**, esa cita lo convierte en cliente suyo: la respuesta de `POST /citas/panel` y, desde ese momento, la agenda y el selector le muestran su teléfono (con la opción encendida). Obtener el teléfono así exige crear una cita real (queda en la agenda del negocio y avisa al cliente si tiene cuenta). No hay hoy ningún control adicional sobre esto.
 
 ## Respuesta
 
@@ -52,7 +58,7 @@ La regla es la misma de toda la API (`puedeVerTelefonos` + `telefonoVisible`, `s
 
 - `datos`: hasta 10 clientes.
 - `hayMas`: `true` si hay más de 10 coincidencias (la app puede pedir que se escriba más).
-- `telefonosVisibles`: si esta sesión ve teléfonos y puede buscar por ellos (para cambiar el texto de ayuda del buscador).
+- `telefonosVisibles`: si esta sesión puede ver teléfonos. Para un empleado con la opción encendida es `true`, pero solo los de sus propios clientes llegan con valor: cada cliente trae su `telefono` o `null`. Sirve para el texto de ayuda del buscador; la app no debe deducir de ahí si un cliente concreto tiene teléfono visible, sino de su propio `telefono`.
 
 ## Errores
 
