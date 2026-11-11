@@ -83,12 +83,22 @@ export const registrarCliente = async (
     )
   ).rows[0].id;
 
-// Cliente de ese negocio (nunca de otro)
-export const buscarClienteDelNegocio = async (db: Consultable, empresaId: string, clienteId: string) =>
+// Cliente de ese negocio (nunca de otro). Con `soloDelProfesional`, solo si ese profesional tiene o tuvo al menos una
+// cita (de cualquier estado) con el cliente; si no, es como si no existiera.
+export const buscarClienteDelNegocio = async (
+  db: Consultable,
+  empresaId: string,
+  clienteId: string,
+  soloDelProfesional: string | null = null,
+) =>
   (
     await db.query<{ nombre: string; telefono: string; indicativo: string }>(
-      'SELECT nombre, telefono, indicativo FROM clientes WHERE id = $1 AND empresa_id = $2',
-      [clienteId, empresaId],
+      `SELECT c.nombre, c.telefono, c.indicativo FROM clientes c
+       WHERE c.id = $1 AND c.empresa_id = $2
+         AND ($3::varchar IS NULL OR EXISTS (
+           SELECT 1 FROM citas ci
+           WHERE ci.empresa_id = c.empresa_id AND ci.cliente_id = c.id AND ci.barbero_id = $3::varchar))`,
+      [clienteId, empresaId, soloDelProfesional],
     )
   ).rows[0];
 

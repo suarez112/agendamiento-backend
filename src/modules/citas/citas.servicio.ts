@@ -251,7 +251,11 @@ export const crearServicioCitas = ({
     }
     let cliente: { nombre: string; telefono: string; indicativo: string };
     if (datos.clienteId) {
-      const existente = await repositorio.buscarClienteDelNegocio(pool, empresaId, datos.clienteId);
+      // Un empleado solo puede elegir clientes que tienen o tuvieron citas con él (con la opción de teléfonos
+      // encendida o apagada); los de otro empleado o de nadie responden igual que uno que no existe. Para un
+      // empleado, `barberoId` es siempre el suyo (profesionalDelPanel). El administrador elige cualquiera del negocio.
+      const soloDelProfesional = sesion.esAdmin ? null : barberoId;
+      const existente = await repositorio.buscarClienteDelNegocio(pool, empresaId, datos.clienteId, soloDelProfesional);
       if (!existente) throw errores.noEncontrado('Cliente no encontrado');
       cliente = existente;
     } else {

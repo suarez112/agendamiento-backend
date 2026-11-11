@@ -1,6 +1,6 @@
 # Selector de cliente existente (`GET /api/v1/clientes/buscar`)
 
-Busca clientes del negocio para elegir un "cliente existente" (por ejemplo en Nueva cita, `POST /citas/panel` con `clienteId`). Sirve al **administrador** (integrante con rol Administrador o cuenta de administración) y al **empleado** del mismo negocio. `GET /clientes` sigue siendo solo para administradores.
+Busca clientes del negocio para elegir un "cliente existente" (por ejemplo en Nueva cita, `POST /citas/panel` con `clienteId`; el empleado solo puede agendar a clientes propios, ver abajo). Sirve al **administrador** (integrante con rol Administrador o cuenta de administración) y al **empleado** del mismo negocio. `GET /clientes` sigue siendo solo para administradores.
 
 ## Acceso
 
@@ -38,9 +38,11 @@ La regla es la misma de toda la API (`puedeVerTelefonos` + `telefonoVisible`, `s
 - La opción y la relación se leen en cada solicitud: un cambio aplica en la siguiente, con el mismo token.
 - En la agenda y en la respuesta de `POST /citas/panel` el empleado ve solo los teléfonos de las citas que son suyas, como antes.
 
-### Límite conocido
+### El selector es para buscar clientes propios
 
-Si un empleado agenda con `clienteId` a un cliente que **no era suyo**, esa cita lo convierte en cliente suyo: la respuesta de `POST /citas/panel` y, desde ese momento, la agenda y el selector le muestran su teléfono (con la opción encendida). Obtener el teléfono así exige crear una cita real (queda en la agenda del negocio y avisa al cliente si tiene cuenta). No hay hoy ningún control adicional sobre esto.
+Un empleado solo puede **agendar** (`POST /citas/panel` con `clienteId`) a clientes que tienen o tuvieron citas con él, de cualquier estado, **con la opción de teléfonos encendida o apagada**. Si el `clienteId` es de un cliente de otro empleado o sin citas con él, responde **404** `Cliente no encontrado`, igual que si el cliente no existiera (no se distingue el motivo). El administrador agenda a cualquier cliente del negocio.
+
+Por eso el selector sirve al empleado para encontrar a **sus** clientes. Aparecen también los demás clientes del negocio por nombre (con `telefono: null`), pero elegirlos para agendar da 404. Un cliente nuevo (nombre y teléfono escritos) sigue permitido.
 
 ## Respuesta
 
