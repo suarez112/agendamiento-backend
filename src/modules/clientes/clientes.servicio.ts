@@ -76,33 +76,29 @@ export const crearServicioClientes = ({ pool }: { pool: pg.Pool }) => ({
     };
   },
 
-  // Selector de "cliente existente" (administradores y empleados del negocio de la sesión). El nombre se ve siempre.
-  // Teléfono e indicativo (y la búsqueda por teléfono):
-  // - administrador: de todos los clientes del negocio;
-  // - empleado con la opción del negocio apagada: de ninguno (null y busca solo por nombre);
-  // - empleado con la opción encendida: solo de los clientes que tienen o tuvieron citas con él; los demás salen en
-  //   null y buscar por su teléfono no los encuentra (si no, la búsqueda confirmaría de quién es cada número).
+  // Selector de "cliente existente" (administradores y empleados del negocio de la sesión):
+  // - administrador: todos los clientes del negocio, con teléfono e indicativo, y busca también por teléfono;
+  // - empleado: SOLO los clientes que tienen o tuvieron citas (de cualquier estado) con él; los demás no aparecen ni
+  //   por nombre ni por teléfono. De esos, teléfono e indicativo solo con la opción del negocio encendida (si no,
+  //   null) y solo con esa opción busca también por teléfono.
   async buscarParaSelector(sesion: Sesion, q: string) {
     // Niega por defecto: un empleado sin profesional asociado no debería existir (el tipo Sesion lo impide), pero si
-    // llegara uno no se le muestra ni se le deja buscar ningún teléfono, en vez de tratarlo como administrador
-    const sinProfesional = !sesion.esAdmin && !sesion.barberoId;
-    const verTelefonos = !sinProfesional && (await puedeVerTelefonos(pool, sesion));
+    // llegara uno no ve ningún cliente, en vez de tratarlo como administrador
+    if (!sesion.esAdmin && !sesion.barberoId) return { datos: [], hayMas: false, telefonosVisibles: false };
+    const verTelefonos = await puedeVerTelefonos(pool, sesion);
     const filas = await repositorio.buscarClientesSelector(pool, sesion.empresaId, {
       buscar: q,
       porTelefono: verTelefonos ? { minimoDigitos: MINIMO_DIGITOS_SELECTOR } : null,
-      soloDelProfesional: verTelefonos && !sesion.esAdmin ? sesion.barberoId : null,
+      soloDelProfesional: sesion.esAdmin ? null : sesion.barberoId,
       limite: MAXIMO_SELECTOR,
     });
     return {
-      datos: filas.slice(0, MAXIMO_SELECTOR).map((c) => {
-        const ver = verTelefonos && c.es_propio;
-        return {
-          id: c.id,
-          nombre: c.nombre,
-          telefono: telefonoVisible(c.telefono, ver),
-          indicativo: telefonoVisible(c.indicativo, ver),
-        };
-      }),
+      datos: filas.slice(0, MAXIMO_SELECTOR).map((c) => ({
+        id: c.id,
+        nombre: c.nombre,
+        telefono: telefonoVisible(c.telefono, verTelefonos),
+        indicativo: telefonoVisible(c.indicativo, verTelefonos),
+      })),
       hayMas: filas.length > MAXIMO_SELECTOR,
       telefonosVisibles: verTelefonos,
     };

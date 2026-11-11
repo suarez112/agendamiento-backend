@@ -1,6 +1,6 @@
 # Selector de cliente existente (`GET /api/v1/clientes/buscar`)
 
-Busca clientes del negocio para elegir un "cliente existente" (por ejemplo en Nueva cita, `POST /citas/panel` con `clienteId`; el empleado solo puede agendar a clientes propios, ver abajo). Sirve al **administrador** (integrante con rol Administrador o cuenta de administración) y al **empleado** del mismo negocio. `GET /clientes` sigue siendo solo para administradores.
+Busca clientes para elegir un "cliente existente" (por ejemplo en Nueva cita, `POST /citas/panel` con `clienteId`). Sirve al **administrador** (integrante con rol Administrador o cuenta de administración), que busca entre **todos** los clientes del negocio, y al **empleado** del mismo negocio, que busca **solo entre sus propios clientes**: los que tienen o tuvieron citas con él. `GET /clientes` sigue siendo solo para administradores.
 
 ## Acceso
 
@@ -17,32 +17,30 @@ No hay `limite` ni `cursor`: la respuesta trae como máximo **10 clientes**. Par
 
 ## Qué busca
 
+- **Quién**: el administrador, a todos los clientes del negocio; el empleado, solo a los que tienen o tuvieron al menos una cita con él, de cualquier estado (pendiente, completada o cancelada). Los demás clientes del negocio **no aparecen para el empleado**, ni por nombre ni por teléfono, con la opción de teléfonos encendida o apagada.
 - **Nombre**: siempre, sin distinguir mayúsculas, en cualquier parte del nombre. `%` y `_` se buscan como texto.
-- **Teléfono**: solo si la sesión puede ver teléfonos (ver abajo) y el texto parece un número (solo dígitos, espacios, `+`, `-`, `.` o paréntesis) con **al menos 3 dígitos**. Compara los dígitos, así `315 777-1234` encuentra `+573157771234`. `+57` (2 dígitos) no busca por teléfono. Un empleado solo encuentra por teléfono a **sus propios clientes** (ver abajo).
+- **Teléfono**: solo si la sesión puede ver teléfonos (ver abajo) y el texto parece un número (solo dígitos, espacios, `+`, `-`, `.` o paréntesis) con **al menos 3 dígitos**. Compara los dígitos, así `315 777-1234` encuentra `+573157771234`. `+57` (2 dígitos) no busca por teléfono. El empleado solo busca por teléfono con la opción encendida, y siempre entre sus propios clientes.
 - Orden: el de la lista de clientes (última cita más reciente primero, luego nombre).
 
 ## Privacidad del teléfono
 
 La regla es la misma de toda la API (`puedeVerTelefonos` + `telefonoVisible`, `src/modules/clientes/privacidad.ts`):
 
-| Quién | Opción `empleadosVenTelefono` | Cliente | `telefono` / `indicativo` | Busca por su teléfono |
+| Quién | Opción `empleadosVenTelefono` | Clientes que ve | `telefono` / `indicativo` | Busca por teléfono |
 | --- | --- | --- | --- | --- |
-| Administrador | apagada o encendida | cualquiera del negocio | con valor | sí |
-| Empleado | apagada (por defecto) | cualquiera | `null` | **no**: solo por nombre |
-| Empleado | encendida | **propio** (tiene o tuvo citas con él) | con valor | sí |
-| Empleado | encendida | **ajeno** (sin citas con él) | `null` | **no** |
+| Administrador | apagada o encendida | todos los del negocio | con valor | sí |
+| Empleado | apagada (por defecto) | solo los suyos | `null` | **no**: solo por nombre |
+| Empleado | encendida | solo los suyos | con valor | sí, entre los suyos |
 
-- **Propio**: el cliente tiene o tuvo al menos una cita con ese empleado, de cualquier estado (pendiente, completada o cancelada). La relación es con cada empleado: lo que ve uno no lo ve otro.
-- El nombre del cliente ajeno **siempre aparece** (para poder elegirlo), pero buscar por su teléfono, completo o parcial, no lo encuentra y responde igual que un número que no existe: la búsqueda no confirma de quién es un número.
-- Con la opción apagada, y con un cliente ajeno aunque esté encendida, los campos `telefono` e `indicativo` **siguen en la respuesta**, en `null`: la forma es siempre la misma.
+- **Suyos**: el cliente tiene o tuvo al menos una cita con ese empleado, de cualquier estado. La relación es con cada empleado: lo que ve uno no lo ve otro.
+- Un cliente de otro empleado o sin citas con el empleado no aparece, y buscar su teléfono, completo o parcial, responde igual que un número que no existe: la búsqueda no confirma de quién es un número ni si existe el cliente.
+- Con la opción apagada los campos `telefono` e `indicativo` **siguen en la respuesta**, en `null`: la forma es siempre la misma. La respuesta no trae ningún campo que marque si un cliente es propio: todos los que llegan al empleado lo son.
 - La opción y la relación se leen en cada solicitud: un cambio aplica en la siguiente, con el mismo token.
 - En la agenda y en la respuesta de `POST /citas/panel` el empleado ve solo los teléfonos de las citas que son suyas, como antes.
 
-### El selector es para buscar clientes propios
+### Agendar con un cliente existente
 
-Un empleado solo puede **agendar** (`POST /citas/panel` con `clienteId`) a clientes que tienen o tuvieron citas con él, de cualquier estado, **con la opción de teléfonos encendida o apagada**. Si el `clienteId` es de un cliente de otro empleado o sin citas con él, responde **404** `Cliente no encontrado`, igual que si el cliente no existiera (no se distingue el motivo). El administrador agenda a cualquier cliente del negocio.
-
-Por eso el selector sirve al empleado para encontrar a **sus** clientes. Aparecen también los demás clientes del negocio por nombre (con `telefono: null`), pero elegirlos para agendar da 404. Un cliente nuevo (nombre y teléfono escritos) sigue permitido.
+Un empleado solo puede **agendar** (`POST /citas/panel` con `clienteId`) a clientes que tienen o tuvieron citas con él, de cualquier estado, **con la opción de teléfonos encendida o apagada**. Si el `clienteId` es de un cliente de otro empleado o sin citas con él, responde **404** `Cliente no encontrado`, igual que si el cliente no existiera (no se distingue el motivo). El administrador agenda a cualquier cliente del negocio. Como el selector solo le muestra al empleado a sus clientes, todo lo que elige ahí se puede agendar. Un cliente nuevo (nombre y teléfono escritos) sigue permitido.
 
 ## Respuesta
 
@@ -60,7 +58,7 @@ Por eso el selector sirve al empleado para encontrar a **sus** clientes. Aparece
 
 - `datos`: hasta 10 clientes.
 - `hayMas`: `true` si hay más de 10 coincidencias (la app puede pedir que se escriba más).
-- `telefonosVisibles`: si esta sesión puede ver teléfonos. Para un empleado con la opción encendida es `true`, pero solo los de sus propios clientes llegan con valor: cada cliente trae su `telefono` o `null`. Sirve para el texto de ayuda del buscador; la app no debe deducir de ahí si un cliente concreto tiene teléfono visible, sino de su propio `telefono`.
+- `telefonosVisibles`: si esta sesión puede ver teléfonos. Para un empleado es `true` solo con la opción del negocio encendida; entonces todos los clientes de la respuesta (son suyos) traen su `telefono`. Sirve para el texto de ayuda del buscador.
 
 ## Errores
 

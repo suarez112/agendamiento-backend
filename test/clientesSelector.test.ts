@@ -18,7 +18,8 @@ const RUTA = '/api/v1/clientes/buscar';
 const OPCION = '/api/v1/admin/empresa/privacidad-clientes';
 
 // GET /clientes/buscar: selector de "cliente existente" para el administrador y el empleado del mismo negocio.
-// El empleado ve siempre el nombre; el teléfono (y la búsqueda por teléfono) solo con la opción del negocio encendida.
+// El empleado solo ve (y solo busca entre) los clientes que tienen o tuvieron citas con él; su teléfono, solo con la
+// opción del negocio encendida. El administrador ve y busca todos.
 describe('búsqueda de clientes para el selector (admin y empleado)', () => {
   let ctx: Contexto;
   let tokenAdmin: string; // integrante con rol Administrador del negocio A
@@ -50,9 +51,10 @@ describe('búsqueda de clientes para el selector (admin y empleado)', () => {
         ('sel_otro', 'emp_b', '+573157779999', '57', 'Valeria de B', 1, NULL),
         ${valores.join(',\n')};
     `);
-    // Regla de privacidad: el empleado (barb_a) ve el teléfono solo de quienes tienen o tuvieron citas con él.
+    // Regla de privacidad: el empleado (barb_a) solo ve a quienes tienen o tuvieron citas con él.
     // Mixto Propio: cita pendiente con barb_a. Mixto Cancelado: cita cancelada con barb_a (también cuenta).
     // Mixto Ajeno: cita solo con otro empleado del mismo negocio (barb_a2). Valeria no tiene citas.
+    // Además barb_a tiene citas con los 15 "Selector NN" y con "Ana 100% Real_".
     await ctx.pool.query(`
       INSERT INTO clientes (id, empresa_id, telefono, indicativo, nombre, total_citas, fecha_ultima_cita) VALUES
         ('sel_propio', 'emp_a', '${PROPIO}', '57', 'Mixto Propio', 1, NULL),
@@ -63,6 +65,16 @@ describe('búsqueda de clientes para el selector (admin y empleado)', () => {
         ('cita_sel_cancelado', 'emp_a', 'barb_a', 'serv_a', 'sel_cancelado', '${fechaEnDias(4)}', '11:00', '11:30', 20000, 'CANCELADA'),
         ('cita_sel_ajeno', 'emp_a', 'barb_a2', 'serv_a', 'sel_ajeno', '${fechaEnDias(4)}', '10:00', '10:30', 20000, 'CONFIRMADA');
     `);
+    const propios = [...Array.from({ length: 15 }, (_, i) => `sel_${String(i + 1).padStart(2, '0')}`), 'sel_pct'];
+    const hora = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+    for (const [i, cliente] of propios.entries()) {
+      const inicio = 8 * 60 + i * 30;
+      await ctx.pool.query(
+        `INSERT INTO citas (id, empresa_id, barbero_id, servicio_id, cliente_id, fecha, hora_inicio, hora_fin, precio, estado)
+         VALUES ($1, 'emp_a', 'barb_a', 'serv_a', $2, $3, $4, $5, 20000, 'CONFIRMADA')`,
+        [`cita_${cliente}`, cliente, fechaEnDias(5), hora(inicio), hora(inicio + 30)],
+      );
+    }
     tokenAdmin = await iniciarSesion(ctx, 'admin.a', '1234');
     tokenEmpleado = await iniciarSesion(ctx, 'barbero.a', 'clave-a');
     tokenEmpleado2 = await iniciarSesion(ctx, 'barbero.a2', 'secreta');
@@ -78,26 +90,24 @@ describe('búsqueda de clientes para el selector (admin y empleado)', () => {
   };
   const ids = (r: Awaited<ReturnType<typeof pedir>>) => r.json.datos.map((c: { id: string }) => c.id);
 
-  test('empleado con la opción apagada: ve el nombre y el teléfono llega en null (mismos campos)', async () => {
-    const r = await buscar('valeria', tokenEmpleado);
-    assert.equal(r.estado, 200, r.texto);
-    assert.equal(r.json.telefonosVisibles, false);
-    assert.equal(r.json.hayMas, false);
-    assert.deepEqual(r.json.datos, [{ id: 'sel_valeria', nombre: 'Valeria Gómez', telefono: null, indicativo: null }]);
-    assert.ok(!r.texto.replace(/\D/g, '').includes(DIGITOS), 'la respuesta no trae los dígitos del teléfono');
-    // Apagada, ni siquiera el teléfono de sus propios clientes: todos en null, con los mismos campos
+  test('empleado con la opción apagada: ve solo a sus clientes, con el teléfono en null (mismos campos, sin esPropio)', async () => {
     const mixtos = await buscar('mixto', tokenEmpleado);
-    assert.equal(mixtos.json.datos.length, 3);
+    assert.equal(mixtos.estado, 200, mixtos.texto);
+    assert.equal(mixtos.json.telefonosVisibles, false);
+    assert.equal(mixtos.json.hayMas, false);
+    assert.deepEqual(ids(mixtos).sort(), ['sel_cancelado', 'sel_propio']);
     for (const c of mixtos.json.datos) {
       assert.deepEqual(Object.keys(c).sort(), ['id', 'indicativo', 'nombre', 'telefono']);
       assert.equal(c.telefono, null);
       assert.equal(c.indicativo, null);
     }
     assert.ok(!mixtos.texto.replace(/\D/g, '').includes('315888000'));
+    // Un cliente sin citas con él no aparece, aunque el nombre coincida
+    assert.deepEqual((await buscar('valeria', tokenEmpleado)).json.datos, []);
   });
 
   test('empleado con la opción apagada: no puede buscar por teléfono, ni completo ni parcial ni con formato', async () => {
-    for (const q of [DIGITOS, TELEFONO, '315777', '+57 315 777 1234', '(315) 777-1234', '777']) {
+    for (const q of ['3158880001', PROPIO, '315888', '+57 315 888 0001', '(315) 888-0001', '888', DIGITOS, '777']) {
       const r = await buscar(q, tokenEmpleado);
       assert.equal(r.estado, 200, `${q}: ${r.texto}`);
       assert.deepEqual(r.json.datos, [], `"${q}" no debe encontrar clientes por teléfono`);
@@ -110,10 +120,11 @@ describe('búsqueda de clientes para el selector (admin y empleado)', () => {
       const r = await buscar('mixto', tokenEmpleado);
       assert.equal(r.estado, 200, r.texto);
       assert.equal(r.json.telefonosVisibles, true);
+      assert.deepEqual(ids(r).sort(), ['sel_cancelado', 'sel_propio']);
       const porId = Object.fromEntries(r.json.datos.map((c: { id: string }) => [c.id, c]));
       assert.deepEqual(porId.sel_propio, { id: 'sel_propio', nombre: 'Mixto Propio', telefono: PROPIO, indicativo: '57' });
       assert.deepEqual(porId.sel_cancelado, { id: 'sel_cancelado', nombre: 'Mixto Cancelado', telefono: CANCELADO, indicativo: '57' });
-      // Busca por teléfono, completo y parcial, solo a sus clientes
+      // Busca por teléfono, completo y parcial, entre sus clientes
       for (const q of [PROPIO, '3158880001', '315888000', '+57 315 888 0001']) {
         assert.ok(ids(await buscar(q, tokenEmpleado)).includes('sel_propio'), `"${q}" encuentra a su cliente`);
       }
@@ -123,57 +134,47 @@ describe('búsqueda de clientes para el selector (admin y empleado)', () => {
     }
   });
 
-  test('empleado con la opción encendida: el cliente ajeno aparece por nombre pero con telefono e indicativo en null', async () => {
-    await opcion(true);
-    try {
-      const r = await buscar('mixto', tokenEmpleado);
-      const ajeno = r.json.datos.find((c: { id: string }) => c.id === 'sel_ajeno');
-      assert.deepEqual(ajeno, { id: 'sel_ajeno', nombre: 'Mixto Ajeno', telefono: null, indicativo: null });
-      assert.ok(!r.texto.replace(/\D/g, '').includes('3158880003'), 'la respuesta no trae los dígitos del cliente ajeno');
-      // Un cliente sin ninguna cita tampoco es suyo, aunque la opción esté encendida
-      const sinCitas = await buscar('valeria', tokenEmpleado);
-      assert.deepEqual(sinCitas.json.datos, [{ id: 'sel_valeria', nombre: 'Valeria Gómez', telefono: null, indicativo: null }]);
-    } finally {
-      await opcion(false);
-    }
-  });
-
-  test('empleado con la opción encendida: no puede buscar por el teléfono de un cliente ajeno (ni parcial)', async () => {
-    await opcion(true);
-    try {
-      for (const q of ['3158880003', AJENO, '888 0003', DIGITOS, '315777']) {
-        const r = await buscar(q, tokenEmpleado);
-        assert.equal(r.estado, 200, `${q}: ${r.texto}`);
-        assert.deepEqual(
-          ids(r).filter((id: string) => id === 'sel_ajeno' || id === 'sel_valeria'),
-          [],
-          `"${q}" no debe revelar a un cliente ajeno por su teléfono`,
-        );
+  test('empleado, apagada o encendida: un cliente ajeno o sin citas no aparece, ni por nombre ni por teléfono', async () => {
+    for (const encendida of [false, true]) {
+      await opcion(encendida);
+      try {
+        for (const q of ['ajeno', 'mixto ajeno', 'valeria', 'Valeria Gómez']) {
+          const r = await buscar(q, tokenEmpleado);
+          assert.equal(r.estado, 200, `${q}: ${r.texto}`);
+          assert.deepEqual(r.json.datos, [], `"${q}" no debe devolver clientes que no son suyos`);
+        }
+        for (const q of ['3158880003', AJENO, '888 0003', DIGITOS, '315777']) {
+          const r = await buscar(q, tokenEmpleado);
+          assert.equal(r.estado, 200, `${q}: ${r.texto}`);
+          assert.deepEqual(r.json.datos, [], `"${q}" no debe revelar a un cliente ajeno por su teléfono`);
+          assert.ok(!r.texto.replace(/\D/g, '').includes('3158880003'));
+        }
+        // Sin oráculo: el teléfono ajeno completo responde lo mismo que uno que no existe
+        assert.deepEqual((await buscar('3158880003', tokenEmpleado)).json, (await buscar('3159999999', tokenEmpleado)).json);
+        // Una búsqueda que mezcla propios y ajenos solo trae a los propios
+        assert.deepEqual(ids(await buscar('mixto', tokenEmpleado)).sort(), ['sel_cancelado', 'sel_propio']);
+      } finally {
+        await opcion(false);
       }
-      // Sin oráculo: el teléfono ajeno completo responde lo mismo que uno que no existe
-      assert.deepEqual((await buscar('3158880003', tokenEmpleado)).json, (await buscar('3159999999', tokenEmpleado)).json);
-    } finally {
-      await opcion(false);
     }
   });
 
-  test('la relación es con cada empleado: el otro empleado ve el teléfono de Mixto Ajeno y no el de Mixto Propio', async () => {
+  test('la relación es con cada empleado: el otro empleado ve solo a Mixto Ajeno (y su teléfono solo con la opción encendida)', async () => {
     await opcion(true);
     try {
       const r = await buscar('mixto', tokenEmpleado2);
       assert.equal(r.estado, 200, r.texto);
-      const porId = Object.fromEntries(r.json.datos.map((c: { id: string }) => [c.id, c]));
-      assert.equal(porId.sel_ajeno.telefono, AJENO);
-      assert.equal(porId.sel_propio.telefono, null);
-      assert.equal(porId.sel_cancelado.telefono, null);
+      assert.deepEqual(r.json.datos, [{ id: 'sel_ajeno', nombre: 'Mixto Ajeno', telefono: AJENO, indicativo: '57' }]);
       assert.deepEqual(ids(await buscar('3158880001', tokenEmpleado2)), []);
+      assert.deepEqual(ids(await buscar('3158880003', tokenEmpleado2)), ['sel_ajeno']);
     } finally {
       await opcion(false);
     }
-    // Apagada, en la siguiente solicitud y con el mismo token, ni siquiera ve el de sus clientes
+    // Apagada, en la siguiente solicitud y con el mismo token: sigue viendo a sus clientes, sin teléfono
     const apagada = await buscar('mixto', tokenEmpleado);
+    assert.deepEqual(ids(apagada).sort(), ['sel_cancelado', 'sel_propio']);
     assert.ok(apagada.json.datos.every((c: { telefono: unknown }) => c.telefono === null));
-    assert.deepEqual((await buscar(DIGITOS, tokenEmpleado)).json.datos, []);
+    assert.deepEqual((await buscar('3158880003', tokenEmpleado2)).json.datos, []);
   });
 
   test('los administradores ven el teléfono y buscan por teléfono aunque la opción esté apagada', async () => {
@@ -215,9 +216,9 @@ describe('búsqueda de clientes para el selector (admin y empleado)', () => {
     const bPorTelefono = await buscar(DIGITOS, tokenAdminB);
     assert.deepEqual(bPorTelefono.json.datos, []);
     // Un empresaId en la URL no cambia el negocio: sale de la sesión
-    const forzado = await pedir(ctx, `${RUTA}?q=valeria&empresaId=emp_b`, { token: tokenEmpleado });
+    const forzado = await pedir(ctx, `${RUTA}?q=mixto&empresaId=emp_b`, { token: tokenEmpleado });
     assert.equal(forzado.estado, 200, forzado.texto);
-    assert.deepEqual(ids(forzado), ['sel_valeria']);
+    assert.deepEqual(ids(forzado).sort(), ['sel_cancelado', 'sel_propio']);
   });
 
   test('máximo 10 resultados por búsqueda, con hayMas cuando hay más coincidencias', async () => {
@@ -282,18 +283,15 @@ describe('búsqueda de clientes para el selector (admin y empleado)', () => {
     assert.ok(!r.texto.includes('Valeria'));
   });
 
-  test('niega por defecto: un empleado sin profesional asociado no ve ni busca teléfonos, aunque la opción esté encendida', async () => {
+  test('niega por defecto: un empleado sin profesional asociado no ve ningún cliente, aunque la opción esté encendida', async () => {
     // El tipo Sesion impide esta sesión; se fuerza para comprobar que no cae a la visibilidad de administrador
     const sinProfesional = { barberoId: null, usuarioId: null, empresaId: 'emp_a', esAdmin: false } as unknown as Sesion;
     const servicio = crearServicioClientes({ pool: ctx.pool });
     await opcion(true);
     try {
-      const porNombre = await servicio.buscarParaSelector(sinProfesional, 'mixto');
-      assert.equal(porNombre.telefonosVisibles, false);
-      assert.equal(porNombre.datos.length, 3);
-      assert.ok(porNombre.datos.every((c) => c.telefono === null && c.indicativo === null));
-      assert.deepEqual((await servicio.buscarParaSelector(sinProfesional, '3158880001')).datos, []);
-      assert.deepEqual((await servicio.buscarParaSelector(sinProfesional, DIGITOS)).datos, []);
+      for (const q of ['mixto', 'valeria', '3158880001', DIGITOS]) {
+        assert.deepEqual(await servicio.buscarParaSelector(sinProfesional, q), { datos: [], hayMas: false, telefonosVisibles: false });
+      }
     } finally {
       await opcion(false);
     }

@@ -305,7 +305,7 @@ describe('barrido: el teléfono de los clientes no llega a un empleado sin permi
     }
   });
 
-  test('encendida: ninguna respuesta GET al empleado trae el teléfono de un cliente que no es suyo', async () => {
+  test('encendida: ninguna respuesta GET al empleado trae el teléfono (ni el nombre en el selector) de un cliente que no es suyo', async () => {
     await opcion(true);
     try {
       const rutas = [
@@ -320,10 +320,10 @@ describe('barrido: el teléfono de los clientes no llega a un empleado sin permi
         assert.ok(r.estado < 500, `GET ${ruta}: ${r.estado} ${r.texto}`);
         assert.ok(!r.texto.replace(/\D/g, '').includes(DIGITOS_AJENO), `GET ${ruta} trae el teléfono de un cliente ajeno`);
       }
-      // Control: el selector sí lo encuentra por nombre (con el teléfono en null) y los suyos sí traen el teléfono
+      // Control: el selector no devuelve al cliente ajeno ni por nombre, y los suyos sí traen el teléfono
       const porNombre = await pedir(ctx, '/api/v1/clientes/buscar?q=cliente', { token: tokenEmpleado });
       const filas: { id: string; telefono: string | null }[] = porNombre.json.datos;
-      assert.equal(filas.find((c) => c.id === 'cli_ajeno')?.telefono, null);
+      assert.equal(filas.find((c) => c.id === 'cli_ajeno'), undefined);
       assert.equal(filas.find((c) => c.id === CLIENTE)?.telefono, TELEFONO);
     } finally {
       await opcion(false);

@@ -67,18 +67,17 @@ const textoLiteral = (texto: string) => texto.replace(/[\\%_]/g, (c) => `\\${c}`
 
 // Búsqueda por nombre (sin distinguir mayúsculas) y, si se permite y el texto parece un número ("300 123-4567",
 // "+57 300"), también por los dígitos del teléfono: así "100%" o "Sala 2" buscan solo en el nombre.
-// porTelefono = null: solo por nombre; si no, cuántos dígitos hacen falta como mínimo para buscar en el teléfono y,
-// opcionalmente (soloSi), una condición SQL que limita la búsqueda por teléfono a ciertos clientes.
+// porTelefono = null: solo por nombre; si no, cuántos dígitos hacen falta como mínimo para buscar en el teléfono.
 const condicionBusqueda = (
   buscar: string,
   param: (valor: unknown) => string,
-  porTelefono: { minimoDigitos: number; soloSi?: string | null } | null,
+  porTelefono: { minimoDigitos: number } | null,
 ) => {
   const nombre = `c.nombre ILIKE ${param(`%${textoLiteral(buscar)}%`)} ESCAPE '\\'`;
   const digitos = porTelefono && /^[\d\s+().-]+$/.test(buscar) ? buscar.replace(/\D/g, '') : '';
   if (!porTelefono || digitos.length < Math.max(1, porTelefono.minimoDigitos)) return nombre;
   const telefono = `regexp_replace(c.telefono, '[^0-9]', '', 'g') LIKE ${param(`%${digitos}%`)}`;
-  return `(${nombre} OR ${porTelefono.soloSi ? `(${porTelefono.soloSi} AND ${telefono})` : telefono})`;
+  return `(${nombre} OR ${telefono})`;
 };
 
 // El cliente tiene o tuvo al menos una cita (de cualquier estado) con ese profesional
@@ -126,13 +125,11 @@ export type FilaClienteSelector = {
   nombre: string;
   telefono: string;
   indicativo: string;
-  // El cliente tiene o tuvo citas con el profesional indicado en "soloDelProfesional" (true si no se indicó ninguno)
-  es_propio: boolean;
 };
 
 // Selector de "cliente existente" (admin y empleado): solo id, nombre y contacto, sin estadísticas del negocio.
 // Siempre del negocio indicado y en el orden de la lista; trae limite + 1 filas para saber si hay más.
-// Con soloDelProfesional (un empleado), es_propio marca a sus clientes y la búsqueda por teléfono solo alcanza a ellos.
+// Con soloDelProfesional (un empleado), solo devuelve (y solo busca entre) los clientes que tienen o tuvieron citas con él.
 export const buscarClientesSelector = async (
   db: Consultable,
   empresaId: string,
@@ -145,13 +142,13 @@ export const buscarClientesSelector = async (
 ) => {
   const parametros: unknown[] = [empresaId];
   const param = (valor: unknown) => `$${parametros.push(valor)}`;
-  const propio = p.soloDelProfesional ? citaConElProfesional(param(p.soloDelProfesional)) : null;
-  const condicion = condicionBusqueda(p.buscar, param, p.porTelefono && { ...p.porTelefono, soloSi: propio });
+  const condiciones = ['c.empresa_id = $1', condicionBusqueda(p.buscar, param, p.porTelefono)];
+  if (p.soloDelProfesional) condiciones.push(citaConElProfesional(param(p.soloDelProfesional)));
   const limite = param(p.limite + 1);
   return (
     await db.query<FilaClienteSelector>(
-      `SELECT c.id, c.nombre, c.telefono, c.indicativo, ${propio ?? 'true'} AS es_propio FROM clientes c
-       WHERE c.empresa_id = $1 AND ${condicion}
+      `SELECT c.id, c.nombre, c.telefono, c.indicativo FROM clientes c
+       WHERE ${condiciones.join(' AND ')}
        ORDER BY c.fecha_ultima_cita DESC NULLS LAST, c.nombre, c.id
        LIMIT ${limite}`,
       parametros,
