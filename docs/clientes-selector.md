@@ -42,6 +42,22 @@ La regla es la misma de toda la API (`puedeVerTelefonos` + `telefonoVisible`, `s
 
 Un empleado solo puede **agendar** (`POST /citas/panel` con `clienteId`) a clientes que tienen o tuvieron citas con él, de cualquier estado, **con la opción de teléfonos encendida o apagada**. Si el `clienteId` es de un cliente de otro empleado o sin citas con él, responde **404** `Cliente no encontrado`, igual que si el cliente no existiera (no se distingue el motivo). El administrador agenda a cualquier cliente del negocio. Como el selector solo le muestra al empleado a sus clientes, todo lo que elige ahí se puede agendar. Un cliente nuevo (nombre y teléfono escritos) sigue permitido.
 
+### Nombre que ve el empleado
+
+Cada cita creada desde el panel guarda el nombre que escribió quien agendó (`citas.cliente_nombre`, migración 037). Si el teléfono escrito ya es de un cliente del negocio (por ejemplo, de otro empleado), se reutiliza ese cliente sin cambiar su nombre guardado, pero el empleado **nunca ve el nombre guardado**:
+
+| Dónde | Empleado | Administrador |
+| --- | --- | --- |
+| Respuesta de `POST /citas/panel` | lo que escribió (o, con `clienteId`, el nombre que él ve) | lo que escribió, o el guardado con `clienteId` |
+| `GET /citas/agenda` | el nombre escrito en esa cita; si no tiene, el guardado | el guardado |
+| Este selector | el nombre escrito en su cita más reciente con ese cliente; si ninguna lo tiene, el guardado | el guardado |
+
+- El empleado **busca por el nombre que ve**: buscar el nombre guardado de un cliente que él registró con otro nombre no lo encuentra.
+- La respuesta de `POST /citas/panel` es idéntica exista o no un cliente con ese teléfono.
+- Las citas anteriores a la migración (y las reservas que hacen los clientes) no tienen nombre escrito: muestran el guardado, como antes.
+- Si el cliente elimina su cuenta, el nombre escrito en sus citas también se borra.
+- Un empleado puede crear hasta 10 citas por minuto y 60 por hora desde el panel (**429** al pasarse); el administrador no tiene este tope.
+
 ## Respuesta
 
 **200**

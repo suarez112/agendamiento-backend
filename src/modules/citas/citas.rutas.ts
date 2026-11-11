@@ -49,7 +49,8 @@ export const crearRutasCitas = (
   });
 
   // El personal agenda una cita desde el panel: el empleado para sí mismo, el administrador para cualquier profesional
-  rutas.post('/panel', ...sesionVigente, async (req, res) => {
+  // Un empleado puede crear hasta 10 citas por minuto y 60 por hora desde el panel (el administrador, sin este tope)
+  rutas.post('/panel', ...sesionVigente, limitadores.citasPanelPorMinuto, limitadores.citasPanelPorHora, async (req, res) => {
     const datos = parsear(esquemaCrearCitaPanel, req.body);
     res.status(201).json(await citas.crearDesdePanel(sesionDe(res), datos, contextoDe(req)));
   });

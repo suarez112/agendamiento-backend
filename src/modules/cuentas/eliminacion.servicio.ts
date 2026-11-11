@@ -35,6 +35,11 @@ export type DatosEliminacion = { clave: string; eliminarNegocio: boolean };
 // Deja a los clientes sin nombre ni teléfono (el teléfono se reemplaza por un valor único y sin formato de número)
 const ANONIMIZAR_CLIENTES = `UPDATE clientes SET nombre = '${ANONIMO}', telefono = 'e' || substr(md5(id), 1, 15)`;
 
+// El nombre escrito al agendar desde el panel (citas.cliente_nombre) también es un dato personal: se borra, y la cita
+// pasa a mostrar el nombre guardado del cliente ("Cliente eliminado"). Va antes de ANONIMIZAR_CLIENTES (usa el teléfono)
+const BORRAR_NOMBRE_EN_CITAS = `UPDATE citas ci SET cliente_nombre = NULL FROM clientes cl
+   WHERE cl.id = ci.cliente_id AND cl.empresa_id = ci.empresa_id AND ci.cliente_nombre IS NOT NULL`;
+
 // Deja a los profesionales sin datos personales. Devuelve las fotos que tenían, para borrar los archivos
 // cuando la transacción termine.
 const ANONIMIZAR_EQUIPO = `UPDATE barberos
@@ -89,6 +94,7 @@ export const crearServicioEliminacion = ({ pool, fotos }: Dependencias) => ({
           // Todo el equipo (activo o no) queda anónimo y sus fotos se borran del servidor
           fotosABorrar.push(...(await anonimizarEquipo(tx, 'empresa_id', empresaId)));
           await tx.query(`${LIMPIAR_NOTIFICACIONES} AND cl.empresa_id = $1`, [empresaId]);
+          await tx.query(`${BORRAR_NOMBRE_EN_CITAS} AND cl.empresa_id = $1`, [empresaId]);
           await tx.query(`${ANONIMIZAR_CLIENTES} WHERE empresa_id = $1`, [empresaId]);
           await tx.query('DELETE FROM lista_negra WHERE empresa_id = $1', [empresaId]);
         } else {
@@ -99,6 +105,7 @@ export const crearServicioEliminacion = ({ pool, fotos }: Dependencias) => ({
         // Cliente: su registro en cada negocio (mismo teléfono) queda sin datos personales, y las notificaciones
         // que el personal recibió con su nombre dejan de nombrarlo
         await tx.query(`${LIMPIAR_NOTIFICACIONES} AND cl.telefono = $1`, [rows[0].telefono]);
+        await tx.query(`${BORRAR_NOMBRE_EN_CITAS} AND cl.telefono = $1`, [rows[0].telefono]);
         await tx.query(`${ANONIMIZAR_CLIENTES} WHERE telefono = $1`, [rows[0].telefono]);
       }
 
