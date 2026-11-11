@@ -11,7 +11,7 @@ Busca clientes del negocio para elegir un "cliente existente" (por ejemplo en Nu
 
 | Parámetro | Regla |
 | --- | --- |
-| `q` | Obligatorio. De **3 a 100 caracteres**, sin contar los espacios de los extremos. |
+| `q` | Obligatorio. De **3 a 100 caracteres**; ninguno de los dos límites cuenta los espacios de los extremos. |
 
 No hay `limite` ni `cursor`: la respuesta trae como máximo **10 clientes**. Para encontrar a alguien que no aparece hay que escribir más.
 
@@ -31,6 +31,7 @@ La regla es la misma de toda la API (`puedeVerTelefonos` + `telefonoVisible`, `s
 | Empleado | apagada (por defecto) | `null` | **no**: solo por nombre |
 | Empleado | encendida | con valor | sí |
 
+- Con la opción encendida, el empleado ve el teléfono de **cualquier cliente del negocio** que encuentre la búsqueda (no solo de sus citas), con el mismo tope de 10 por búsqueda. En la agenda y en `POST /citas/panel` sigue viendo solo los de sus propias citas.
 - Con la opción apagada los campos `telefono` e `indicativo` **siguen en la respuesta**, en `null`: la forma es siempre la misma.
 - Un número escrito por un empleado con la opción apagada se busca solo en el nombre (normalmente responde `datos: []`).
 - La opción se lee en cada solicitud: un cambio aplica en la siguiente, con el mismo token.

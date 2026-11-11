@@ -160,6 +160,9 @@ describe('búsqueda de clientes para el selector (admin y empleado)', () => {
     const largo = await buscar('a'.repeat(101), tokenAdmin);
     assert.equal(largo.estado, 400);
     assert.deepEqual(largo.json, { error: 'La búsqueda puede tener hasta 100 caracteres' });
+    // Los espacios de los extremos tampoco cuentan para el máximo
+    const conEspacios = await buscar(`  ${'a'.repeat(100)}  `, tokenAdmin);
+    assert.equal(conEspacios.estado, 200, conEspacios.texto);
     const repetido = await pedir(ctx, `${RUTA}?q=valeria&q=ana`, { token: tokenAdmin });
     assert.equal(repetido.estado, 400);
     assert.deepEqual(repetido.json, { error: 'La búsqueda debe ser un texto' });
@@ -188,5 +191,24 @@ describe('búsqueda de clientes para el selector (admin y empleado)', () => {
     const r = await pedir(ctx, `${RUTA}?q=valeria`, { token: cliente });
     assert.equal(r.estado, 403, r.texto);
     assert.ok(!r.texto.includes('Valeria'));
+  });
+
+  test('con la suscripción del negocio vencida responde 402, también al administrador', async () => {
+    const antes = (await ctx.pool.query("SELECT estado_suscripcion, trial_ends_at FROM empresas WHERE id = 'emp_a'")).rows[0];
+    await ctx.pool.query("UPDATE empresas SET estado_suscripcion = 'trial', trial_ends_at = now() - interval '1 minute' WHERE id = 'emp_a'");
+    try {
+      for (const token of [tokenAdmin, tokenEmpleado]) {
+        const r = await buscar('valeria', token);
+        assert.equal(r.estado, 402, r.texto);
+        assert.ok(!r.texto.includes('Valeria'));
+      }
+    } finally {
+      await ctx.pool.query('UPDATE empresas SET estado_suscripcion = $1, trial_ends_at = $2 WHERE id = $3', [
+        antes.estado_suscripcion,
+        antes.trial_ends_at,
+        'emp_a',
+      ]);
+    }
+    assert.equal((await buscar('valeria', tokenEmpleado)).estado, 200);
   });
 });
