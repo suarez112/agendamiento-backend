@@ -149,6 +149,31 @@ describe('nombre del cliente en la cita: el empleado ve lo que escribió', () =>
     assert.equal(columna.rows[0].cliente_nombre, null);
   });
 
+  test('el selector del empleado desempata por el nombre que él ve, no por el guardado', async () => {
+    // Misma fecha de última cita: el orden depende del desempate. Guardados: "Aaa…" < "Zzz…"; escritos al revés
+    await ctx.pool.query(
+      `INSERT INTO clientes (id, empresa_id, telefono, indicativo, nombre, total_citas, fecha_ultima_cita) VALUES
+         ('cli_orden_x', 'emp_a', '+573154440011', '57', 'Aaa Guardado Orden', 1, $1),
+         ('cli_orden_y', 'emp_a', '+573154440012', '57', 'Zzz Guardado Orden', 1, $1)`,
+      [FECHA],
+    );
+    await ctx.pool.query(
+      `INSERT INTO citas (id, empresa_id, barbero_id, servicio_id, cliente_id, fecha, hora_inicio, hora_fin, precio, estado, cliente_nombre) VALUES
+         ('cita_orden_x', 'emp_a', 'barb_a', 'serv_a', 'cli_orden_x', $1, '18:00', '18:30', 20000, 'CONFIRMADA', 'Zeta Orden'),
+         ('cita_orden_y', 'emp_a', 'barb_a', 'serv_a', 'cli_orden_y', $1, '18:30', '19:00', 20000, 'CONFIRMADA', 'Alfa Orden')`,
+      [FECHA],
+    );
+    const empleado = await pedir(ctx, '/api/v1/clientes/buscar?q=orden', { token: tokenEmpleado });
+    assert.equal(empleado.estado, 200, empleado.texto);
+    assert.deepEqual(
+      empleado.json.datos.map((c: { id: string; nombre: string }) => [c.id, c.nombre]),
+      [['cli_orden_y', 'Alfa Orden'], ['cli_orden_x', 'Zeta Orden']],
+    );
+    // El administrador sigue ordenando por el nombre guardado
+    const admin = await pedir(ctx, '/api/v1/clientes/buscar?q=guardado orden', { token: tokenAdmin });
+    assert.deepEqual(admin.json.datos.map((c: { id: string }) => c.id), ['cli_orden_x', 'cli_orden_y']);
+  });
+
   test('al eliminar la cuenta del cliente se borra también el nombre escrito en sus citas', async () => {
     const telefono = telefonoValido(7103);
     const cuenta = await registrarCliente(ctx, 'nombre.cita@correo.com', CLAVE_CLIENTE, { telefono, nombre: 'Titular Cuenta' });

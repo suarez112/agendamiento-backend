@@ -163,7 +163,7 @@ export const buscarClientesSelector = async (
     await db.query<FilaClienteSelector>(
       `SELECT c.id, ${nombre} AS nombre, c.telefono, c.indicativo FROM clientes c
        WHERE ${condiciones.join(' AND ')}
-       ORDER BY c.fecha_ultima_cita DESC NULLS LAST, c.nombre, c.id
+       ORDER BY c.fecha_ultima_cita DESC NULLS LAST, ${nombre}, c.id
        LIMIT ${limite}`,
       parametros,
     )
