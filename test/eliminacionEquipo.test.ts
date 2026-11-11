@@ -104,6 +104,61 @@ describe('eliminar la cuenta: equipo, fotos y notificaciones', () => {
     assert.deepEqual(citas, [{ profesional: 'Profesional eliminado', cliente: 'Cliente eliminado' }]);
   });
 
+  test('al cerrar el negocio se borran los nombres escritos en sus citas del panel (citas.cliente_nombre), no los de otro negocio', async () => {
+    const r = await registrarEmpresa(ctx, { correo: 'cierre.nombres@central.co', codigoAcceso: 'CIERRENOM', numeroEmpleados: 2 });
+    assert.equal(r.estado, 201, r.texto);
+    const token = r.json.token as string;
+    const empresaId = r.json.empresa.id as string;
+    const servicio = await pedir(ctx, '/api/v1/servicios', { method: 'POST', token, body: { nombre: 'Corte', duracionMin: 30, precio: 20000 } });
+    const empleado = await pedir(ctx, '/api/v1/equipo', {
+      method: 'POST', token, body: { nombre: 'Empleado Nombres', usuario: 'empleado.nombres', clave: 'Clave-segura-1' },
+    });
+    assert.equal(servicio.estado, 201, servicio.texto);
+    assert.equal(empleado.estado, 201, empleado.texto);
+    const tokenEmpleado = await iniciarSesion(ctx, 'empleado.nombres', 'Clave-segura-1');
+    const fecha = fechaHabilEnDias(2);
+    const libres = await pedir(ctx, `/api/v1/citas/panel/disponibilidad?barberoId=${empleado.json.id}&servicioId=${servicio.json.id}&fecha=${fecha}`, { token });
+    assert.equal(libres.estado, 200, libres.texto);
+    const horas = libres.json.horas.map((h: { hora: string }) => h.hora) as string[];
+    assert.ok(horas.length >= 2, libres.texto);
+
+    // Una cita agendada por la administradora y otra por el empleado, las dos con el nombre escrito
+    const agendar = (t: string, hora: string, nombre: string, telefono: string) =>
+      pedir(ctx, '/api/v1/citas/panel', {
+        method: 'POST',
+        token: t,
+        body: { barberoId: empleado.json.id, servicioId: servicio.json.id, fecha, hora, nombre, telefono, autorizacion_registrada_por_negocio: true },
+      });
+    for (const cita of [
+      await agendar(token, horas[0], 'Escrito Por Admin', '3100000511'),
+      await agendar(tokenEmpleado, horas[1], 'Escrito Por Empleado', '3100000512'),
+    ]) {
+      assert.equal(cita.estado, 201, cita.texto);
+    }
+    const escritos = async () =>
+      (await consulta('SELECT cliente_nombre FROM citas WHERE empresa_id = $1 ORDER BY cliente_nombre', [empresaId])).map((f) => f.cliente_nombre);
+    assert.deepEqual(await escritos(), ['Escrito Por Admin', 'Escrito Por Empleado']);
+
+    // Una cita de otro negocio con nombre escrito no debe tocarse
+    await ctx.pool.query(
+      `INSERT INTO clientes (id, empresa_id, telefono, indicativo, nombre, total_citas, fecha_ultima_cita)
+         VALUES ('cli_ajeno_nombres', 'emp_a', '+573100000513', '57', 'Ajeno Guardado', 1, $1)`,
+      [fecha],
+    );
+    await ctx.pool.query(
+      `INSERT INTO citas (id, empresa_id, barbero_id, servicio_id, cliente_id, fecha, hora_inicio, hora_fin, precio, estado, cliente_nombre)
+         VALUES ('cita_ajena_nombres', 'emp_a', 'barb_a', 'serv_a', 'cli_ajeno_nombres', $1, '20:00', '20:30', 20000, 'CONFIRMADA', 'Ajeno Escrito')`,
+      [fecha],
+    );
+
+    const ok = await eliminar(token, { clave: CLAVE_ADMIN, eliminarNegocio: true });
+    assert.equal(ok.estado, 200, ok.texto);
+
+    assert.deepEqual(await escritos(), [null, null]);
+    const [ajena] = await consulta("SELECT cliente_nombre FROM citas WHERE id = 'cita_ajena_nombres'");
+    assert.equal(ajena.cliente_nombre, 'Ajeno Escrito');
+  });
+
   test('si el negocio sigue, solo se anonimiza el perfil de quien se va y el nombre de la administradora del negocio', async () => {
     const r = await registrarEmpresa(ctx, { correo: 'sigue@central.co', codigoAcceso: 'SIGUEEQ', nombreAdministradora: 'Ana Que Se Va', numeroEmpleados: 3 });
     assert.equal(r.estado, 201, r.texto);

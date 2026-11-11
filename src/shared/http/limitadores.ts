@@ -103,6 +103,9 @@ const MENSAJE_LOGIN = 'Demasiados intentos de inicio de sesión. Intenta de nuev
 
 // Tope de citas creadas desde el panel por cada empleado. Va después de la guardia de sesión: la clave es el
 // profesional de la sesión (res.locals.sesion), no la IP. Solo cuentan las citas que se guardaron; los errores no.
+// La ventana es fija por empleado (MemoryStore de express-rate-limit): el contador vuelve a cero un minuto (o una
+// hora) después de la primera solicitud de esa ventana; no es deslizante. Por eso los mensajes no dicen "en la
+// última hora" ni "en menos de un minuto".
 type SesionLimitada = { esAdmin: boolean; barberoId: string | null; usuarioId?: string | null } | undefined;
 const sesionLimitada = (res: Response) => res.locals.sesion as SesionLimitada;
 const citasPanel = (ventanaMs: number, limite: number, mensaje: string) =>
@@ -134,12 +137,12 @@ export const crearLimitadores = (c: ConfigLimites) => ({
   citasPanelPorMinuto: citasPanel(
     60_000,
     c.citasPanelPorMinuto,
-    `Agendaste ${c.citasPanelPorMinuto} citas en menos de un minuto. Espera un momento antes de agendar otra.`,
+    'Llegaste al máximo de citas por minuto. Espera un momento antes de agendar otra.',
   ),
   citasPanelPorHora: citasPanel(
     60 * 60_000,
     c.citasPanelPorHora,
-    `Agendaste ${c.citasPanelPorHora} citas en la última hora, el máximo para un empleado. Intenta de nuevo más tarde o pídele al administrador que la agende.`,
+    'Llegaste al máximo de citas por hora. Intenta de nuevo más tarde o pídele al administrador que la agende.',
   ),
   // Tope por conexión de reservas realmente guardadas, en una ventana más larga: frena a quien llena la agenda
   reservasCreadas: limitar(

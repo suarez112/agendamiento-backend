@@ -174,6 +174,32 @@ describe('nombre del cliente en la cita: el empleado ve lo que escribió', () =>
     assert.deepEqual(admin.json.datos.map((c: { id: string }) => c.id), ['cli_orden_x', 'cli_orden_y']);
   });
 
+  test('el selector del empleado ordena por su última cita con el cliente; el administrador, por la del negocio', async () => {
+    // Recencia X: con otro profesional (día 6) es la más reciente del negocio, pero con barb_a es la más vieja (día 3).
+    // Recencia Y: con barb_a, día 4.
+    const [dia3, dia4, dia6] = [fechaEnDias(3), fechaEnDias(4), fechaEnDias(6)];
+    await ctx.pool.query(
+      `INSERT INTO clientes (id, empresa_id, telefono, indicativo, nombre, total_citas, fecha_ultima_cita) VALUES
+         ('cli_rec_x', 'emp_a', '+573154440021', '57', 'Recencia X', 2, $2),
+         ('cli_rec_y', 'emp_a', '+573154440022', '57', 'Recencia Y', 1, $1)`,
+      [dia4, dia6],
+    );
+    await ctx.pool.query(
+      `INSERT INTO citas (id, empresa_id, barbero_id, servicio_id, cliente_id, fecha, hora_inicio, hora_fin, precio, estado) VALUES
+         ('cita_rec_x1', 'emp_a', 'barb_a', 'serv_a', 'cli_rec_x', $1, '20:00', '20:30', 20000, 'CONFIRMADA'),
+         ('cita_rec_x2', 'emp_a', 'barb_a2', 'serv_a', 'cli_rec_x', $3, '20:00', '20:30', 20000, 'CONFIRMADA'),
+         ('cita_rec_y', 'emp_a', 'barb_a', 'serv_a', 'cli_rec_y', $2, '20:00', '20:30', 20000, 'CONFIRMADA')`,
+      [dia3, dia4, dia6],
+    );
+    const ids = (r: { json: { datos: { id: string }[] } }) => r.json.datos.map((c) => c.id);
+    const empleado = await pedir(ctx, '/api/v1/clientes/buscar?q=recencia', { token: tokenEmpleado });
+    assert.equal(empleado.estado, 200, empleado.texto);
+    assert.deepEqual(ids(empleado), ['cli_rec_y', 'cli_rec_x']);
+    const admin = await pedir(ctx, '/api/v1/clientes/buscar?q=recencia', { token: tokenAdmin });
+    assert.equal(admin.estado, 200, admin.texto);
+    assert.deepEqual(ids(admin), ['cli_rec_x', 'cli_rec_y']);
+  });
+
   test('al eliminar la cuenta del cliente se borra también el nombre escrito en sus citas', async () => {
     const telefono = telefonoValido(7103);
     const cuenta = await registrarCliente(ctx, 'nombre.cita@correo.com', CLAVE_CLIENTE, { telefono, nombre: 'Titular Cuenta' });
@@ -191,8 +217,8 @@ describe('nombre del cliente en la cita: el empleado ve lo que escribió', () =>
 // Tope de citas creadas desde el panel por cada empleado (10 por minuto y 60 por hora en producción). En las pruebas
 // se usan topes chicos con las mismas reglas.
 describe('límite de citas desde el panel por empleado', () => {
-  const MINUTO = 'Agendaste 3 citas en menos de un minuto. Espera un momento antes de agendar otra.';
-  const HORA = 'Agendaste 4 citas en la última hora, el máximo para un empleado. Intenta de nuevo más tarde o pídele al administrador que la agende.';
+  const MINUTO = 'Llegaste al máximo de citas por minuto. Espera un momento antes de agendar otra.';
+  const HORA = 'Llegaste al máximo de citas por hora. Intenta de nuevo más tarde o pídele al administrador que la agende.';
 
   test('por minuto: al pasarse responde 429 con el mensaje; los errores no cuentan; cada empleado tiene su propio tope', async () => {
     const ctx = await iniciar({ limites: { citasPanelPorMinuto: 3, citasPanelPorHora: 100 } });

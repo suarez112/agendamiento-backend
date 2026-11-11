@@ -20,7 +20,7 @@ No hay `limite` ni `cursor`: la respuesta trae como máximo **10 clientes**. Par
 - **Quién**: el administrador, a todos los clientes del negocio; el empleado, solo a los que tienen o tuvieron al menos una cita con él, de cualquier estado (pendiente, completada o cancelada). Los demás clientes del negocio **no aparecen para el empleado**, ni por nombre ni por teléfono, con la opción de teléfonos encendida o apagada.
 - **Nombre**: siempre, sin distinguir mayúsculas, en cualquier parte del nombre. `%` y `_` se buscan como texto.
 - **Teléfono**: solo si la sesión puede ver teléfonos (ver abajo) y el texto parece un número (solo dígitos, espacios, `+`, `-`, `.` o paréntesis) con **al menos 3 dígitos**. Compara los dígitos, así `315 777-1234` encuentra `+573157771234`. `+57` (2 dígitos) no busca por teléfono. El empleado solo busca por teléfono con la opción encendida, y siempre entre sus propios clientes.
-- Orden: el de la lista de clientes (última cita más reciente primero, luego nombre).
+- Orden: el administrador, el de la lista de clientes (última cita en el negocio más reciente primero, luego nombre). El empleado, por **su** última cita con el cliente (la fecha más lejana de sus citas con él, de cualquier estado), luego el nombre que él ve: las citas del cliente con otros profesionales no cambian su orden.
 
 ## Privacidad del teléfono
 
@@ -56,7 +56,7 @@ Cada cita creada desde el panel guarda el nombre que escribió quien agendó (`c
 - La respuesta de `POST /citas/panel` es idéntica exista o no un cliente con ese teléfono.
 - Las citas anteriores a la migración (y las reservas que hacen los clientes) no tienen nombre escrito: muestran el guardado, como antes.
 - Si el cliente elimina su cuenta, el nombre escrito en sus citas también se borra.
-- Un empleado puede crear hasta 10 citas por minuto y 60 por hora desde el panel (**429** al pasarse); el administrador no tiene este tope.
+- Un empleado puede crear hasta 10 citas por minuto y 60 por hora desde el panel (**429** `Llegaste al máximo de citas por minuto…` o `…por hora…` al pasarse); el administrador no tiene este tope. Las ventanas son fijas, no deslizantes: cada contador vuelve a cero un minuto (o una hora) después de la primera solicitud de su ventana.
 
 ## Respuesta
 
@@ -88,4 +88,8 @@ Cada cita creada desde el panel guarda el nombre que escribió quien agendó (`c
 ## Código y pruebas
 
 - Ruta: `src/modules/clientes/clientes.rutas.ts`; servicio: `buscarParaSelector`; consulta: `buscarClientesSelector` (`clientes.repositorio.ts`), que comparte la condición de búsqueda con `GET /clientes?q=`.
-- Pruebas: `test/clientesSelector.test.ts` y el barrido de `test/privacidadTelefonos.test.ts`.
+- Pruebas: `test/clientesSelector.test.ts`, el barrido de `test/privacidadTelefonos.test.ts` y, para el nombre que ve el empleado y su orden, `test/nombreClienteEnCita.test.ts`.
+
+## Pendiente
+
+- **Rendimiento de la búsqueda: pendiente de medir si hay lentitud.** Para el empleado, cada fila candidata calcula subconsultas sobre `citas` (relación con él, nombre que ve y su última cita), y la búsqueda por nombre o dígitos del teléfono usa `ILIKE` / `LIKE '%…%'`, que no aprovechan un índice normal. No se cambió nada: primero hay que medir con datos reales (`EXPLAIN ANALYZE`) antes de agregar índices.

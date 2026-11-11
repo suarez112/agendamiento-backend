@@ -86,6 +86,11 @@ const condicionBusqueda = (
 const citaConElProfesional = (profesional: string) =>
   `EXISTS (SELECT 1 FROM citas ci WHERE ci.empresa_id = c.empresa_id AND ci.cliente_id = c.id AND ci.barbero_id = ${profesional}::varchar)`;
 
+// Fecha más lejana de las citas (de cualquier estado) del cliente con ese profesional; puede ser futura. A diferencia
+// de clientes.fecha_ultima_cita (que nunca retrocede), usa la fecha actual de cada cita, también si se reprogramó.
+const ultimaCitaConElProfesional = (profesional: string) =>
+  `(SELECT max(ci.fecha) FROM citas ci WHERE ci.empresa_id = c.empresa_id AND ci.cliente_id = c.id AND ci.barbero_id = ${profesional}::varchar)`;
+
 // Nombre del cliente (alias c) que ve un profesional: el que se escribió en su cita más reciente con él
 // (citas.cliente_nombre); si ninguna lo tiene (citas anteriores a la migración 037), el nombre guardado. Así un
 // empleado que agendó con el teléfono de un cliente de otro no ve cómo está guardado ese cliente.
@@ -158,12 +163,15 @@ export const buscarClientesSelector = async (
   const nombre = profesional ? nombreParaProfesional(profesional) : 'c.nombre';
   const condiciones = ['c.empresa_id = $1', condicionBusqueda(p.buscar, param, p.porTelefono, nombre)];
   if (profesional) condiciones.push(citaConElProfesional(profesional));
+  // Orden: el administrador, por la última cita del cliente en el negocio; el empleado, por su última cita con él
+  // (la del negocio puede ser con otro profesional y revelaría actividad ajena)
+  const ultimaCita = profesional ? ultimaCitaConElProfesional(profesional) : 'c.fecha_ultima_cita';
   const limite = param(p.limite + 1);
   return (
     await db.query<FilaClienteSelector>(
       `SELECT c.id, ${nombre} AS nombre, c.telefono, c.indicativo FROM clientes c
        WHERE ${condiciones.join(' AND ')}
-       ORDER BY c.fecha_ultima_cita DESC NULLS LAST, ${nombre}, c.id
+       ORDER BY ${ultimaCita} DESC NULLS LAST, ${nombre}, c.id
        LIMIT ${limite}`,
       parametros,
     )
