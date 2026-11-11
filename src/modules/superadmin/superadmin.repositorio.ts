@@ -197,7 +197,8 @@ const NEGOCIOS = `(
                 THEN CASE e.estado_suscripcion WHEN 'trial' THEN 'prueba' ELSE 'activo' END
               ELSE 'vencido' END AS estado,
          (SELECT count(*)::int FROM barberos b WHERE b.empresa_id = e.id AND b.activo) AS equipo_activo,
-         (SELECT count(*)::int FROM barberos b WHERE b.empresa_id = e.id AND b.activo AND b.atiende_clientes) AS cobrados
+         (SELECT count(*)::int FROM barberos b WHERE b.empresa_id = e.id AND b.activo AND b.atiende_clientes) AS cobrados,
+         r.administradores, r.empleados, r.administradores_sin_atender
   FROM empresas e
   CROSS JOIN LATERAL (
     SELECT CASE e.estado_suscripcion
@@ -206,6 +207,23 @@ const NEGOCIOS = `(
            END AS fin,
            (now() AT TIME ZONE e.zona_horaria)::date AS hoy
   ) f
+  -- Personas activas por rol: integrantes del equipo y cuentas de administración (la de correo). El perfil de
+  -- "Yo también atiendo" (barberos.usuario_id) es la misma cuenta: no cuenta aparte, solo dice si esa cuenta atiende.
+  CROSS JOIN LATERAL (
+    SELECT (SELECT count(*)::int FROM barberos b WHERE b.empresa_id = e.id AND b.activo AND b.usuario_id IS NULL AND b.es_admin)
+             + cu.cuentas AS administradores,
+           (SELECT count(*)::int FROM barberos b WHERE b.empresa_id = e.id AND b.activo AND b.usuario_id IS NULL AND NOT b.es_admin)
+             AS empleados,
+           (SELECT count(*)::int FROM barberos b
+            WHERE b.empresa_id = e.id AND b.activo AND b.usuario_id IS NULL AND b.es_admin AND NOT b.atiende_clientes)
+             + cu.sin_atender AS administradores_sin_atender
+    FROM (
+      SELECT count(*)::int AS cuentas,
+             count(*) FILTER (WHERE NOT EXISTS (
+               SELECT 1 FROM barberos p WHERE p.usuario_id = u.id AND p.activo AND p.atiende_clientes))::int AS sin_atender
+      FROM usuarios u WHERE u.empresa_id = e.id AND u.rol = 'admin'
+    ) cu
+  ) r
 ) n`;
 
 export type FilaNegocio = {
@@ -222,6 +240,10 @@ export type FilaNegocio = {
   equipo_activo: number;
   // Profesionales que atienden clientes (los que se cobran)
   cobrados: number;
+  // Personas activas por rol (integrantes y cuentas de administración)
+  administradores: number;
+  empleados: number;
+  administradores_sin_atender: number;
   zona_horaria: string;
 };
 
@@ -231,7 +253,7 @@ export const listarNegocios = async (db: Consultable, f: FiltrosNegocios) =>
   (
     await db.query<FilaNegocio & { total: number }>(
       `SELECT id, nombre, codigo_acceso, ciudad, departamento, plan_equipo, periodo, estado, dias,
-              to_char(registro, 'YYYY-MM-DD') AS registro, equipo_activo, cobrados, zona_horaria, count(*) OVER ()::int AS total
+              to_char(registro, 'YYYY-MM-DD') AS registro, equipo_activo, cobrados, administradores, empleados, administradores_sin_atender, zona_horaria, count(*) OVER ()::int AS total
        FROM ${NEGOCIOS}
        WHERE ($1::varchar IS NULL OR position(lower($1) in lower(nombre)) > 0 OR position(lower($1) in lower(codigo_acceso)) > 0)
          AND ($2::varchar IS NULL
@@ -286,7 +308,7 @@ export const buscarNegocio = async (db: Consultable, id: string) =>
   (
     await db.query<FilaDetalleNegocio>(
       `SELECT id, nombre, codigo_acceso, ciudad, departamento, plan_equipo, periodo, estado, dias,
-              to_char(registro, 'YYYY-MM-DD') AS registro, equipo_activo, cobrados, zona_horaria, estado_suscripcion, categoria, direccion,
+              to_char(registro, 'YYYY-MM-DD') AS registro, equipo_activo, cobrados, administradores, empleados, administradores_sin_atender, zona_horaria, estado_suscripcion, categoria, direccion,
               nombre_administradora, trial_ends_at, to_char(fecha_pago, 'YYYY-MM-DD') AS fecha_pago,
               to_char(fin, 'YYYY-MM-DD') AS fecha_fin, dias_prueba_sumados, suspendida_en, suspension_motivo
        FROM ${NEGOCIOS} WHERE n.id = $1`,
@@ -299,8 +321,6 @@ export type CifrasNegocio = {
   clientes: number;
   servicios: number;
   productos: number;
-  equipo_admins: number;
-  equipo_empleados: number;
   citas_total: number;
   citas_confirmadas: number;
   citas_completadas: number;
@@ -318,8 +338,6 @@ export const cifrasDeNegocio = async (db: Consultable, empresaId: string) =>
          (SELECT count(*)::int FROM clientes WHERE empresa_id = $1) AS clientes,
          (SELECT count(*)::int FROM servicios WHERE empresa_id = $1 AND activo) AS servicios,
          (SELECT count(*)::int FROM productos WHERE empresa_id = $1) AS productos,
-         (SELECT count(*)::int FROM barberos WHERE empresa_id = $1 AND activo AND es_admin) AS equipo_admins,
-         (SELECT count(*)::int FROM barberos WHERE empresa_id = $1 AND activo AND NOT es_admin) AS equipo_empleados,
          c.total AS citas_total, c.confirmadas AS citas_confirmadas, c.completadas AS citas_completadas,
          c.canceladas AS citas_canceladas, c.mes AS citas_mes,
          c.ventas AS ventas_total, c.ventas_mes, c.ultima AS ultima_cita
